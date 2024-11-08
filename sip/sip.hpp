@@ -1,3 +1,4 @@
+#include <fstream>
 #include <functional>
 
 #include "sparse.hpp"
@@ -10,11 +11,11 @@ enum class Status {
   LINE_SEARCH_FAILURE = 2,
 };
 
+// For nicer googletest outputs.
+auto operator<<(std::ostream &os, Status const &status) -> std::ostream &;
+
 struct ModelCallbackInput {
   double *x;
-  double *s;
-  double *y;
-  double *z;
 };
 
 struct ModelCallbackOutput {
@@ -29,11 +30,16 @@ struct ModelCallbackOutput {
 
   // The equality constraints and their first derivative.
   double *c;
-  SparseMatrix jacobian_c;
+  SparseMatrix jacobian_c_transpose;
 
   // The inequality constraints and their first derivative.
   double *g;
-  SparseMatrix jacobian_g;
+  SparseMatrix jacobian_g_transpose;
+
+  // NOTE: the user may also direct pointers to statically allocated memory.
+  void reserve(int x_dim, int s_dim, int y_dim, int hessian_f_nnz,
+               int jacobian_c_nnz, int jacobian_g_nnz);
+  void free();
 };
 
 struct Input {
@@ -85,9 +91,9 @@ struct QDLDLWorkspace {
   int *Lnz;   // Required size: dim
 
   // Factorization workspace.
-  int *iwork;    // Required size: 3 * dim
-  bool *bwork;   // Required size: dim
-  double *fwork; // Required size: dim
+  int *iwork;           // Required size: 3 * dim
+  unsigned char *bwork; // Required size: dim
+  double *fwork;        // Required size: dim
 
   // Factorizaton output storage.
   int *Lp;      // Required size: L_nnz
@@ -98,6 +104,10 @@ struct QDLDLWorkspace {
 
   // Solve workspace.
   double *x; // Required size: dim
+
+  // NOTE: the user may also direct pointers to statically allocated memory.
+  void reserve(int kkt_dim, int kkt_L_nnz);
+  void free();
 };
 
 struct VariablesWorkspace {
@@ -113,6 +123,19 @@ struct VariablesWorkspace {
   double *next_x;
   // The next slack variables.
   double *next_s;
+
+  // NOTE: the user may also direct pointers to statically allocated memory.
+  void reserve(int x_dim, int s_dim, int y_dim);
+  void free();
+};
+
+struct MiscellaneousWorkspace {
+  // Stores g(x) + s.
+  double *g_plus_s;
+
+  // NOTE: the user may also direct pointers to statically allocated memory.
+  void reserve(int s_dim);
+  void free();
 };
 
 struct KKTWorkspace {
@@ -121,7 +144,11 @@ struct KKTWorkspace {
   SparseMatrix lhs;
   // The (negative) RHS of the KKT system (requires size x_dim + y_dim + 2 *
   // s_dim).
-  double *minus_rhs;
+  double *negative_rhs;
+
+  // NOTE: the user may also direct pointers to statically allocated memory.
+  void reserve(int kkt_dim, int kkt_nnz);
+  void free();
 };
 
 // This data structure is used to avoid doing dynamic memory allocation inside
@@ -139,6 +166,13 @@ struct Workspace {
   QDLDLWorkspace qdldl_workspace;
   // The model callback workspace.
   ModelCallbackOutput model_callback_output;
+  // Stores miscellaneous items.
+  MiscellaneousWorkspace miscellaneous_workspace;
+
+  // NOTE: the user may also direct pointers to statically allocated memory.
+  void reserve(int x_dim, int s_dim, int y_dim, int hessian_f_nnz,
+               int jacobian_c_nnz, int jacobian_g_nnz, int kkt_L_nnz);
+  void free();
 };
 
 auto solve(const Input &input, const Settings &settings, Workspace &workspace,

@@ -5,5 +5,21 @@
 # For more details, please check https://github.com/bazelbuild/bazel/issues/18958
 ###############################################################################
 
-bazel_dep(name = "eigen", version = "3.4.0.bcr.1")
+# A sparse quasi-definite linear system solver (via L D L^T).
+# https://github.com/osqp/qdldl
 bazel_dep(name = "qdldl", version = "0.1.7")
+
+# Hedron's Compile Commands Extractor for Bazel
+# https://github.com/hedronvision/bazel-compile-commands-extractor
+bazel_dep(name = "hedron_compile_commands", dev_dependency = True)
+git_override(
+    module_name = "hedron_compile_commands",
+    remote = "https://github.com/hedronvision/bazel-compile-commands-extractor.git",
+    commit = "4f28899228fb3ad0126897876f147ca15026151e",
+    # Replace the commit hash (above) with the latest (https://github.com/hedronvision/bazel-compile-commands-extractor/commits/main).
+    # Even better, set up Renovate and let it do the work for you (see "Suggestion: Updates" in the README).
+)
+
+# Google Test
+# https://github.com/google/googletest
+bazel_dep(name = "googletest", version = "1.15.2")

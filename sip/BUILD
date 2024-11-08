@@ -1,6 +1,7 @@
 cc_library(
 	name = "sip",
-	srcs = ["sip.cpp",],
+	srcs = ["sip.cpp", "sparse.cpp",],
 	hdrs = ["sip.hpp", "sparse.hpp",],
-  deps = ["@qdldl//:qdldl", "@eigen//:eigen"],
+  deps = ["@qdldl//:qdldl",],
+  visibility = ["//visibility:public",],
 )
