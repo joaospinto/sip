@@ -4,3 +4,5 @@ build --cxxopt=-Wextra
 build --cxxopt=-Wpedantic
 build --cxxopt=-g
 build --cxxopt=-O3
+
+build --client_env=CC=clang
