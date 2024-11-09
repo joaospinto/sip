@@ -46,7 +46,7 @@ auto get_rho(const Workspace &workspace, const double *s, const double *dx,
   // ||g(x) + s || rho > (D(f; dx) + k) / (|| (c(x) || + || g(x) + s) || iff
   // D(merit_function; dx) < -k.
   const auto &mco = workspace.model_callback_output;
-  const int x_dim = mco.hessian_f.rows;
+  const int x_dim = mco.upper_hessian_f.rows;
   const int s_dim = mco.jacobian_g_transpose.cols;
   const int y_dim = mco.jacobian_c_transpose.cols;
   const double f_slope = dot(mco.gradient_f, dx, x_dim);
@@ -76,7 +76,7 @@ auto merit_function_slope(const Workspace &workspace, const double *s,
   // 3. get_rho
   // 4. build_nrhs (s inversion)
   const auto &mco = workspace.model_callback_output;
-  const int x_dim = mco.hessian_f.rows;
+  const int x_dim = mco.upper_hessian_f.rows;
   const int s_dim = mco.jacobian_g_transpose.cols;
   const int y_dim = mco.jacobian_c_transpose.cols;
   const double f_slope = dot(mco.gradient_f, dx, x_dim);
@@ -88,31 +88,37 @@ auto merit_function_slope(const Workspace &workspace, const double *s,
 
 auto build_lhs(const Settings &settings, Workspace &workspace) -> void {
   // Builds the lower triangle of the following matrix in CSC format:
-  // [ hessian_f       0        jacobian_c_t     jacobian_g_t ]
-  // [     0        S^{-1} Z         0               I_s      ]
-  // [     0           0      -gamma_y * I_y          0       ]
-  // [     0           0             0         -gamma_z * I_z ]
-  const auto &model_callback_output = workspace.model_callback_output;
+  // [ upper_hessian_f       0        jacobian_c_t     jacobian_g_t ]
+  // [        0          S^{-1} Z          0               I_s      ]
+  // [        0              0      -gamma_y * I_y          0       ]
+  // [        0              0             0         -gamma_z * I_z ]
+  const auto &mco = workspace.model_callback_output;
+  const int x_dim = mco.upper_hessian_f.rows;
+  const int s_dim = mco.jacobian_g_transpose.cols;
+  const int y_dim = mco.jacobian_c_transpose.cols;
 
   const double *s = workspace.vars.s;
   const double *z = workspace.vars.z;
 
   auto &lhs = workspace.kkt_workspace.lhs;
 
-  const int x_dim = model_callback_output.hessian_f.cols;
-  const int s_dim = model_callback_output.jacobian_g_transpose.cols;
-  const int y_dim = model_callback_output.jacobian_c_transpose.cols;
+  lhs.rows = x_dim + 2 * s_dim + y_dim;
+  lhs.cols = lhs.rows;
+  lhs.nnz = mco.upper_hessian_f.nnz + mco.jacobian_c_transpose.nnz +
+            mco.jacobian_g_transpose.nnz + 3 * s_dim + y_dim;
 
   int k = 0;
 
-  // Fill hessian_f.
+  // Fill upper_hessian_f.
   for (int i = 0; i < x_dim; ++i) {
     lhs.indptr[i] = k;
-    for (int j = model_callback_output.hessian_f.indptr[i];
-         j < model_callback_output.hessian_f.indptr[i + 1]; ++j) {
-      lhs.ind[k] = model_callback_output.hessian_f.ind[j];
-      lhs.data[k] = model_callback_output.hessian_f.data[j];
-      ++k;
+    for (int j = mco.upper_hessian_f.indptr[i];
+         j < mco.upper_hessian_f.indptr[i + 1]; ++j) {
+      if (mco.upper_hessian_f.ind[j] <= i) {
+        lhs.ind[k] = mco.upper_hessian_f.ind[j];
+        lhs.data[k] = mco.upper_hessian_f.data[j];
+        ++k;
+      }
     }
   }
 
@@ -128,10 +134,10 @@ auto build_lhs(const Settings &settings, Workspace &workspace) -> void {
   for (int i = 0; i < y_dim; ++i) {
     lhs.indptr[x_dim + s_dim + i] = k;
     // Fill jacobian_c_t column.
-    for (int j = model_callback_output.jacobian_c_transpose.indptr[i];
-         j < model_callback_output.jacobian_c_transpose.indptr[i + 1]; ++j) {
-      lhs.ind[k] = model_callback_output.jacobian_c_transpose.ind[j];
-      lhs.data[k] = model_callback_output.jacobian_c_transpose.data[j];
+    for (int j = mco.jacobian_c_transpose.indptr[i];
+         j < mco.jacobian_c_transpose.indptr[i + 1]; ++j) {
+      lhs.ind[k] = mco.jacobian_c_transpose.ind[j];
+      lhs.data[k] = mco.jacobian_c_transpose.data[j];
       ++k;
     }
     // Fill -gamma_y * I_y column.
@@ -144,10 +150,10 @@ auto build_lhs(const Settings &settings, Workspace &workspace) -> void {
   for (int i = 0; i < s_dim; ++i) {
     lhs.indptr[x_dim + s_dim + y_dim + i] = k;
     // Fill jacobian_g column.
-    for (int j = model_callback_output.jacobian_g_transpose.indptr[i];
-         j < model_callback_output.jacobian_g_transpose.indptr[i + 1]; ++j) {
-      lhs.ind[k] = model_callback_output.jacobian_g_transpose.ind[j];
-      lhs.data[k] = model_callback_output.jacobian_g_transpose.data[j];
+    for (int j = mco.jacobian_g_transpose.indptr[i];
+         j < mco.jacobian_g_transpose.indptr[i + 1]; ++j) {
+      lhs.ind[k] = mco.jacobian_g_transpose.ind[j];
+      lhs.data[k] = mco.jacobian_g_transpose.data[j];
       ++k;
     }
     // Fill I_s column.
@@ -175,7 +181,7 @@ auto build_nrhs(const double mu, Workspace &workspace) -> void {
   const double *y = workspace.vars.y;
   const double *z = workspace.vars.z;
 
-  const int x_dim = model_callback_output.hessian_f.cols;
+  const int x_dim = model_callback_output.upper_hessian_f.cols;
   const int s_dim = model_callback_output.jacobian_g_transpose.cols;
   const int y_dim = model_callback_output.jacobian_c_transpose.cols;
 
@@ -208,7 +214,7 @@ auto compute_search_direction(const Settings &settings, const double mu,
   build_lhs(settings, workspace);
   build_nrhs(mu, workspace);
 
-  const int x_dim = model_callback_output.hessian_f.cols;
+  const int x_dim = model_callback_output.upper_hessian_f.cols;
   const int s_dim = model_callback_output.jacobian_g_transpose.cols;
   const int y_dim = model_callback_output.jacobian_c_transpose.cols;
 
@@ -230,6 +236,12 @@ auto compute_search_direction(const Settings &settings, const double mu,
   }
 
   const int dim = x_dim + y_dim + 2 * s_dim;
+
+  const int sumLnz = QDLDL_etree(
+      workspace.kkt_workspace.lhs.rows, workspace.kkt_workspace.lhs.indptr,
+      workspace.kkt_workspace.lhs.ind, workspace.qdldl_workspace.iwork,
+      workspace.qdldl_workspace.Lnz, workspace.qdldl_workspace.etree);
+  assert(sumLnz >= 0);
 
   const int num_pos_D_entries = QDLDL_factor(
       dim, workspace.kkt_workspace.lhs.indptr, workspace.kkt_workspace.lhs.ind,
@@ -263,7 +275,7 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace,
     input.model_callback(mci, workspace.model_callback_output);
   }
 
-  const int x_dim = workspace.model_callback_output.hessian_f.cols;
+  const int x_dim = workspace.model_callback_output.upper_hessian_f.cols;
   const int s_dim = workspace.model_callback_output.jacobian_g_transpose.cols;
   const int y_dim = workspace.model_callback_output.jacobian_c_transpose.cols;
 
@@ -286,7 +298,9 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace,
   }
 
   for (int iteration = 0; iteration < settings.max_iterations; ++iteration) {
-    const double mu = adaptive_mu(s_dim, workspace.vars.s, workspace.vars.z);
+    const double mu =
+        std::max(adaptive_mu(s_dim, workspace.vars.s, workspace.vars.z),
+                 settings.mu_min);
 
     const auto [dxsyz, kkt_error] =
         compute_search_direction(settings, mu, workspace);
@@ -314,10 +328,9 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace,
         merit_function_slope(workspace, workspace.vars.s, dx, ds, mu, rho);
 
     bool ls_succeeded = false;
+    double new_merit = std::numeric_limits<double>::signaling_NaN();
     double alpha = alpha_s_max;
-    for (; alpha > settings.line_search_min_step_size;
-         alpha *= settings.line_search_factor) {
-
+    do {
       for (int i = 0; i < x_dim; ++i) {
         workspace.vars.next_x[i] = workspace.vars.x[i] + alpha * dx[i];
       }
@@ -331,18 +344,19 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace,
       };
       input.model_callback(mci, workspace.model_callback_output);
 
-      add(workspace.model_callback_output.g, workspace.vars.s, s_dim,
+      add(workspace.model_callback_output.g, workspace.vars.next_s, s_dim,
           workspace.miscellaneous_workspace.g_plus_s);
 
       // TODO(joao): cache (parts of) this into the next cycle!
-      const double new_merit =
-          merit_function(workspace, workspace.vars.next_s, mu, rho);
+      new_merit = merit_function(workspace, workspace.vars.next_s, mu, rho);
 
       if (new_merit - merit < settings.armijo_factor * merit_slope * alpha) {
         ls_succeeded = true;
         break;
       }
-    }
+
+      alpha *= settings.line_search_factor;
+    } while (alpha > settings.line_search_min_step_size);
 
     std::swap(workspace.vars.x, workspace.vars.next_x);
     std::swap(workspace.vars.s, workspace.vars.next_s);
@@ -360,7 +374,7 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace,
                        // clang-format off
                        "{:^+10} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g}",
                        // clang-format on
-                       iteration, alpha, merit,
+                       iteration, alpha, new_merit,
                        workspace.model_callback_output.f,
                        norm(workspace.model_callback_output.c, y_dim),
                        norm(workspace.miscellaneous_workspace.g_plus_s, s_dim),
@@ -369,20 +383,22 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace,
                 << std::endl;
     }
 
-    if (!ls_succeeded) {
-      output.exit_status = Status::LINE_SEARCH_FAILURE;
-      return;
-    }
+    (void)ls_succeeded;
+    // TODO(joao): re-enable line searches.
+    // if (!ls_succeeded) {
+    //   output.exit_status = Status::LINE_SEARCH_FAILURE;
+    //   return;
+    // }
   }
 
   output.exit_status = Status::ITERATION_LIMIT;
 }
 
 void ModelCallbackOutput::reserve(int x_dim, int s_dim, int y_dim,
-                                  int hessian_f_nnz, int jacobian_c_nnz,
+                                  int upper_hessian_f_nnz, int jacobian_c_nnz,
                                   int jacobian_g_nnz) {
   gradient_f = new double[x_dim];
-  hessian_f.reserve(x_dim, hessian_f_nnz);
+  upper_hessian_f.reserve(x_dim, upper_hessian_f_nnz);
   c = new double[y_dim];
   jacobian_c_transpose.reserve(y_dim, jacobian_c_nnz);
   g = new double[s_dim];
@@ -391,7 +407,7 @@ void ModelCallbackOutput::reserve(int x_dim, int s_dim, int y_dim,
 
 void ModelCallbackOutput::free() {
   ::free(gradient_f);
-  hessian_f.free();
+  upper_hessian_f.free();
   ::free(c);
   jacobian_c_transpose.free();
   ::free(g);
@@ -460,16 +476,17 @@ void KKTWorkspace::free() {
   ::free(negative_rhs);
 }
 
-void Workspace::reserve(int x_dim, int s_dim, int y_dim, int hessian_f_nnz,
-                        int jacobian_c_nnz, int jacobian_g_nnz, int kkt_L_nnz) {
+void Workspace::reserve(int x_dim, int s_dim, int y_dim,
+                        int upper_hessian_f_nnz, int jacobian_c_nnz,
+                        int jacobian_g_nnz, int kkt_L_nnz) {
   const int kkt_dim = x_dim * 2 * s_dim * y_dim;
   const int kkt_nnz =
-      hessian_f_nnz + jacobian_c_nnz + jacobian_g_nnz + 3 * s_dim + y_dim;
+      upper_hessian_f_nnz + jacobian_c_nnz + jacobian_g_nnz + 3 * s_dim + y_dim;
 
   vars.reserve(x_dim, s_dim, y_dim);
   kkt_workspace.reserve(kkt_dim, kkt_nnz);
   qdldl_workspace.reserve(kkt_dim, kkt_L_nnz);
-  model_callback_output.reserve(x_dim, s_dim, y_dim, hessian_f_nnz,
+  model_callback_output.reserve(x_dim, s_dim, y_dim, upper_hessian_f_nnz,
                                 jacobian_c_nnz, jacobian_g_nnz);
   miscellaneous_workspace.reserve(s_dim);
 }

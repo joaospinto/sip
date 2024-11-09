@@ -23,10 +23,10 @@ struct ModelCallbackOutput {
 
   // The objective and its first two derivatives.
   // NOTE: hessian_f should be a positive semi-definite approximation.
-  // NOTE: only the lower triangle of hessian_f should be filled.
+  // NOTE: only the upper triangle should be filled in hessian_f.
   double f;
   double *gradient_f;
-  SparseMatrix hessian_f;
+  SparseMatrix upper_hessian_f;
 
   // The equality constraints and their first derivative.
   double *c;
@@ -37,7 +37,7 @@ struct ModelCallbackOutput {
   SparseMatrix jacobian_g_transpose;
 
   // NOTE: the user may also direct pointers to statically allocated memory.
-  void reserve(int x_dim, int s_dim, int y_dim, int hessian_f_nnz,
+  void reserve(int x_dim, int s_dim, int y_dim, int upper_hessian_f_nnz,
                int jacobian_c_nnz, int jacobian_g_nnz);
   void free();
 };
@@ -170,7 +170,7 @@ struct Workspace {
   MiscellaneousWorkspace miscellaneous_workspace;
 
   // NOTE: the user may also direct pointers to statically allocated memory.
-  void reserve(int x_dim, int s_dim, int y_dim, int hessian_f_nnz,
+  void reserve(int x_dim, int s_dim, int y_dim, int upper_hessian_f_nnz,
                int jacobian_c_nnz, int jacobian_g_nnz, int kkt_L_nnz);
   void free();
 };

@@ -13,12 +13,12 @@ TEST(SimpleQP, FromOSQPRepo) {
   constexpr int x_dim = 2;
   constexpr int s_dim = 4;
   constexpr int y_dim = 1;
-  constexpr int hessian_f_nnz = 4;
+  constexpr int upper_hessian_f_nnz = 3;
   constexpr int jacobian_c_nnz = 2;
   constexpr int jacobian_g_nnz = 4;
   constexpr int kkt_L_nnz = 23;
 
-  workspace.reserve(x_dim, s_dim, y_dim, hessian_f_nnz, jacobian_c_nnz,
+  workspace.reserve(x_dim, s_dim, y_dim, upper_hessian_f_nnz, jacobian_c_nnz,
                     jacobian_g_nnz, kkt_L_nnz);
 
   auto model_callback = [](const ModelCallbackInput &mci,
@@ -30,20 +30,19 @@ TEST(SimpleQP, FromOSQPRepo) {
     mco.gradient_f[0] = 4.0 * mci.x[0] + 1.0 * mci.x[1] + 1.0;
     mco.gradient_f[1] = 1.0 * mci.x[1] + 2.0 * mci.x[1] + 1.0;
 
-    mco.hessian_f.rows = x_dim;
-    mco.hessian_f.cols = x_dim;
-    mco.hessian_f.nnz = hessian_f_nnz;
-    mco.hessian_f.ind[0] = 0;
-    mco.hessian_f.ind[1] = 1;
-    mco.hessian_f.ind[2] = 0;
-    mco.hessian_f.ind[3] = 1;
-    mco.hessian_f.indptr[0] = 0;
-    mco.hessian_f.indptr[1] = 2;
-    mco.hessian_f.indptr[2] = 4;
-    mco.hessian_f.data[0] = 4.0;
-    mco.hessian_f.data[1] = 1.0;
-    mco.hessian_f.data[2] = 1.0;
-    mco.hessian_f.data[3] = 2.0;
+    // NOTE: only the upper triangle should be filled.
+    mco.upper_hessian_f.rows = x_dim;
+    mco.upper_hessian_f.cols = x_dim;
+    mco.upper_hessian_f.nnz = upper_hessian_f_nnz;
+    mco.upper_hessian_f.ind[0] = 0;
+    mco.upper_hessian_f.ind[1] = 0;
+    mco.upper_hessian_f.ind[2] = 1;
+    mco.upper_hessian_f.indptr[0] = 0;
+    mco.upper_hessian_f.indptr[1] = 1;
+    mco.upper_hessian_f.indptr[2] = 3;
+    mco.upper_hessian_f.data[0] = 4.0;
+    mco.upper_hessian_f.data[1] = 1.0;
+    mco.upper_hessian_f.data[2] = 2.0;
 
     mco.c[0] = mci.x[0] + mci.x[1] - 1.0;
 
