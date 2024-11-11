@@ -209,7 +209,7 @@ auto build_nrhs(const double mu, Workspace &workspace) -> void {
 
 auto compute_search_direction(const Settings &settings, const double mu,
                               Workspace &workspace)
-    -> std::pair<double *, double> {
+    -> std::tuple<double *, double, double> {
   const auto &model_callback_output = workspace.model_callback_output;
   build_lhs(settings, workspace);
   build_nrhs(mu, workspace);
@@ -254,7 +254,7 @@ auto compute_search_direction(const Settings &settings, const double mu,
 
   assert(num_pos_D_entries >= 0);
 
-  for (int i = 0; i < dim; i++) {
+  for (int i = 0; i < dim; ++i) {
     workspace.qdldl_workspace.x[i] = -workspace.kkt_workspace.negative_rhs[i];
   }
 
@@ -262,7 +262,24 @@ auto compute_search_direction(const Settings &settings, const double mu,
               workspace.qdldl_workspace.Lx, workspace.qdldl_workspace.Dinv,
               workspace.qdldl_workspace.x);
 
-  return {workspace.qdldl_workspace.x, kkt_error};
+  for (int i = 0; i < dim; ++i) {
+    workspace.miscellaneous_workspace.lin_sys_residual[i] =
+        workspace.kkt_workspace.negative_rhs[i];
+  }
+
+  double lin_sys_error = 0.0;
+
+  add_Ax_to_y_where_A_upper_symmetric(
+      workspace.kkt_workspace.lhs, workspace.qdldl_workspace.x,
+      workspace.miscellaneous_workspace.lin_sys_residual);
+
+  for (int i = 0; i < dim; ++i) {
+    lin_sys_error = std::max(
+        lin_sys_error,
+        std::fabs(workspace.miscellaneous_workspace.lin_sys_residual[i]));
+  }
+
+  return {workspace.qdldl_workspace.x, kkt_error, lin_sys_error};
 }
 
 auto solve(const Input &input, const Settings &settings, Workspace &workspace,
@@ -289,11 +306,11 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace,
   if (settings.print_logs) {
     std::cout << std::format(
                      // clang-format off
-                     "{:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10}",
+                     "{:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10}",
                      // clang-format on
                      "iteration", "alpha", "merit", "f", "|c|", "|g+s|",
                      "m_slope", "alpha_s_m", "alpha_z_m", "|dx|", "|ds|",
-                     "|dy|", "|dz|", "mu")
+                     "|dy|", "|dz|", "mu", "linsys_res")
               << std::endl;
   }
 
@@ -302,7 +319,7 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace,
         std::max(adaptive_mu(s_dim, workspace.vars.s, workspace.vars.z),
                  settings.mu_min);
 
-    const auto [dxsyz, kkt_error] =
+    const auto [dxsyz, kkt_error, lin_sys_error] =
         compute_search_direction(settings, mu, workspace);
 
     if (kkt_error < settings.max_kkt_violation) {
@@ -372,23 +389,22 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace,
     if (settings.print_logs) {
       std::cout << std::format(
                        // clang-format off
-                       "{:^+10} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g}",
+                       "{:^+10} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g}",
                        // clang-format on
                        iteration, alpha, new_merit,
                        workspace.model_callback_output.f,
                        norm(workspace.model_callback_output.c, y_dim),
                        norm(workspace.miscellaneous_workspace.g_plus_s, s_dim),
                        merit_slope, alpha_s_max, alpha_z_max, norm(dx, x_dim),
-                       norm(ds, s_dim), norm(dy, y_dim), norm(dz, s_dim), mu)
+                       norm(ds, s_dim), norm(dy, y_dim), norm(dz, s_dim), mu,
+                       lin_sys_error)
                 << std::endl;
     }
 
-    (void)ls_succeeded;
-    // TODO(joao): re-enable line searches.
-    // if (!ls_succeeded) {
-    //   output.exit_status = Status::LINE_SEARCH_FAILURE;
-    //   return;
-    // }
+    if (settings.enable_line_search_failures && !ls_succeeded) {
+      output.exit_status = Status::LINE_SEARCH_FAILURE;
+      return;
+    }
   }
 
   output.exit_status = Status::ITERATION_LIMIT;
@@ -420,7 +436,7 @@ void QDLDLWorkspace::reserve(int kkt_dim, int kkt_L_nnz) {
   iwork = new int[3 * kkt_dim];
   bwork = new unsigned char[kkt_dim];
   fwork = new double[kkt_dim];
-  Lp = new int[kkt_L_nnz];
+  Lp = new int[kkt_dim + 1];
   Li = new int[kkt_L_nnz];
   Lx = new double[kkt_L_nnz];
   D = new double[kkt_dim];
@@ -460,11 +476,15 @@ void VariablesWorkspace::free() {
   ::free(next_s);
 }
 
-void MiscellaneousWorkspace::reserve(int s_dim) {
+void MiscellaneousWorkspace::reserve(int s_dim, int kkt_dim) {
   g_plus_s = new double[s_dim];
+  lin_sys_residual = new double[kkt_dim];
 }
 
-void MiscellaneousWorkspace::free() { ::free(g_plus_s); }
+void MiscellaneousWorkspace::free() {
+  ::free(g_plus_s);
+  ::free(lin_sys_residual);
+}
 
 void KKTWorkspace::reserve(int kkt_dim, int kkt_nnz) {
   lhs.reserve(kkt_dim, kkt_nnz);
@@ -479,7 +499,7 @@ void KKTWorkspace::free() {
 void Workspace::reserve(int x_dim, int s_dim, int y_dim,
                         int upper_hessian_f_nnz, int jacobian_c_nnz,
                         int jacobian_g_nnz, int kkt_L_nnz) {
-  const int kkt_dim = x_dim * 2 * s_dim * y_dim;
+  const int kkt_dim = x_dim + 2 * s_dim + y_dim;
   const int kkt_nnz =
       upper_hessian_f_nnz + jacobian_c_nnz + jacobian_g_nnz + 3 * s_dim + y_dim;
 
@@ -488,7 +508,7 @@ void Workspace::reserve(int x_dim, int s_dim, int y_dim,
   qdldl_workspace.reserve(kkt_dim, kkt_L_nnz);
   model_callback_output.reserve(x_dim, s_dim, y_dim, upper_hessian_f_nnz,
                                 jacobian_c_nnz, jacobian_g_nnz);
-  miscellaneous_workspace.reserve(s_dim);
+  miscellaneous_workspace.reserve(s_dim, kkt_dim);
 }
 
 void Workspace::free() {

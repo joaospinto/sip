@@ -6,30 +6,17 @@ namespace sip {
 
 TEST(SimpleNLP, Problem1) {
   Input input;
-  Settings settings;
+  Settings settings{.max_kkt_violation = 1e-12};
   Workspace workspace;
   Output output;
-
-  // def f(x):
-  //     return x[1] * (5.0 + x[0])
-
-  // @jax.jit
-  // def c(_):
-  //     return jax.numpy.array([])
-
-  // @jax.jit
-  // def g(x):
-  //     return jax.numpy.array(
-  //         [5.0 - x[0] * x[1], x[0] * x[0] + x[1] * x[1] - 20.0]
-  //     )
 
   constexpr int x_dim = 2;
   constexpr int s_dim = 2;
   constexpr int y_dim = 0;
-  constexpr int upper_hessian_f_nnz = 1;
+  constexpr int upper_hessian_f_nnz = 3;
   constexpr int jacobian_c_nnz = 0;
   constexpr int jacobian_g_nnz = 4;
-  constexpr int kkt_L_nnz = 2;
+  constexpr int kkt_L_nnz = 13;
 
   workspace.reserve(x_dim, s_dim, y_dim, upper_hessian_f_nnz, jacobian_c_nnz,
                     jacobian_g_nnz, kkt_L_nnz);
@@ -39,17 +26,24 @@ TEST(SimpleNLP, Problem1) {
     mco.f = mci.x[1] * (5.0 + mci.x[0]);
 
     mco.gradient_f[0] = mci.x[1];
-    mco.gradient_f[1] = mci.x[0];
+    mco.gradient_f[1] = 5.0 + mci.x[0];
 
-    // NOTE: only the upper triangle should be filled.
+    // NOTE: a positive definite Hessian approximation is expected.
     mco.upper_hessian_f.rows = x_dim;
     mco.upper_hessian_f.cols = x_dim;
     mco.upper_hessian_f.nnz = upper_hessian_f_nnz;
     mco.upper_hessian_f.ind[0] = 0;
+    mco.upper_hessian_f.ind[1] = 0;
+    mco.upper_hessian_f.ind[2] = 1;
     mco.upper_hessian_f.indptr[0] = 0;
-    mco.upper_hessian_f.indptr[1] = 0;
-    mco.upper_hessian_f.indptr[2] = 1;
-    mco.upper_hessian_f.data[0] = 1.0;
+    mco.upper_hessian_f.indptr[1] = 1;
+    mco.upper_hessian_f.indptr[2] = 3;
+    // NOTE: only the upper triangle should be filled.
+    //       the eigenvalues of the real Hessian are +-1,
+    //       so we add (1 + 1e-6) to shift them.
+    mco.upper_hessian_f.data[0] = 1.0 + 1e-6;
+    mco.upper_hessian_f.data[1] = 1.0;
+    mco.upper_hessian_f.data[2] = 1.0 + 1e-6;
 
     // No equality constraints, so we don't set mco.c.
 
@@ -57,7 +51,6 @@ TEST(SimpleNLP, Problem1) {
     mco.jacobian_c_transpose.cols = y_dim;
     mco.jacobian_c_transpose.nnz = jacobian_c_nnz;
     mco.jacobian_c_transpose.indptr[0] = 0;
-    mco.jacobian_c_transpose.indptr[1] = 0;
 
     mco.g[0] = 5.0 - mci.x[0] * mci.x[1];
     mco.g[1] = mci.x[0] * mci.x[0] + mci.x[1] * mci.x[1] - 20.0;

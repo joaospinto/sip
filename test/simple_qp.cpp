@@ -6,7 +6,7 @@ namespace sip {
 
 TEST(SimpleQP, FromOSQPRepo) {
   Input input;
-  Settings settings;
+  Settings settings{.max_kkt_violation = 1e-12};
   Workspace workspace;
   Output output;
 
@@ -28,7 +28,7 @@ TEST(SimpleQP, FromOSQPRepo) {
             mci.x[0] + mci.x[1];
 
     mco.gradient_f[0] = 4.0 * mci.x[0] + 1.0 * mci.x[1] + 1.0;
-    mco.gradient_f[1] = 1.0 * mci.x[1] + 2.0 * mci.x[1] + 1.0;
+    mco.gradient_f[1] = 1.0 * mci.x[0] + 2.0 * mci.x[1] + 1.0;
 
     // NOTE: only the upper triangle should be filled.
     mco.upper_hessian_f.rows = x_dim;

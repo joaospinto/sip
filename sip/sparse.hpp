@@ -25,6 +25,9 @@ auto add_ATx_to_y(const SparseMatrix &A, const double *x, double *y) -> void;
 
 auto add_Ax_to_y(const SparseMatrix &A, const double *x, double *y) -> void;
 
+auto add_Ax_to_y_where_A_upper_symmetric(const SparseMatrix &A, const double *x,
+                                         double *y) -> void;
+
 auto dot(const double *x, const double *y, const int dim) -> double;
 
 auto sum_of_logs(const double *x, const int dim) -> double;

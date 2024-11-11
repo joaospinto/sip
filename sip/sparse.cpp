@@ -42,6 +42,21 @@ auto add_Ax_to_y(const SparseMatrix &A, const double *x, double *y) -> void {
   }
 }
 
+auto add_Ax_to_y_where_A_upper_symmetric(const SparseMatrix &A, const double *x,
+                                         double *y) -> void {
+  add_ATx_to_y(A, x, y);
+  add_Ax_to_y(A, x, y);
+  for (int j = 0; j < A.cols; ++j) {
+    const int value_idx_end = A.indptr[j + 1];
+    for (int value_idx = A.indptr[j]; value_idx < value_idx_end; value_idx++) {
+      const int i = A.ind[value_idx];
+      if (i == j) {
+        y[i] -= A.data[value_idx] * x[j];
+      }
+    }
+  }
+}
+
 auto dot(const double *x, const double *y, const int dim) -> double {
   double out = 0.0;
   for (int i = 0; i < dim; ++i) {

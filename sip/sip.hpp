@@ -70,6 +70,8 @@ struct Settings {
   double line_search_factor = 0.5;
   // Determines when we declare a line search failure.
   double line_search_min_step_size = 1e-6;
+  // When true, halts the optimization process if a good step is not found.
+  bool enable_line_search_failures = false;
   // Determines whether we should print the solver logs.
   bool print_logs = true;
 };
@@ -132,9 +134,11 @@ struct VariablesWorkspace {
 struct MiscellaneousWorkspace {
   // Stores g(x) + s.
   double *g_plus_s;
+  // Stores the linear system residual.
+  double *lin_sys_residual;
 
   // NOTE: the user may also direct pointers to statically allocated memory.
-  void reserve(int s_dim);
+  void reserve(int s_dim, int kkt_dim);
   void free();
 };
 
