@@ -1,5 +1,5 @@
-#include <fstream>
 #include <functional>
+#include <ostream>
 
 #include "sparse.hpp"
 
@@ -30,11 +30,11 @@ struct ModelCallbackOutput {
 
   // The equality constraints and their first derivative.
   double *c;
-  SparseMatrix jacobian_c_transpose;
+  SparseMatrix jacobian_c;
 
   // The inequality constraints and their first derivative.
   double *g;
-  SparseMatrix jacobian_g_transpose;
+  SparseMatrix jacobian_g;
 
   // NOTE: the user may also direct pointers to statically allocated memory.
   void reserve(int x_dim, int s_dim, int y_dim, int upper_hessian_f_nnz,
@@ -49,6 +49,13 @@ struct Input {
 };
 
 struct Settings {
+  // Determines how the Newton-KKT system is solved.
+  enum class LinearSystemFormulation {
+    SYMMETRIC_DIRECT_4x4 = 0,
+    // TODO(joao): add support for the 3x3 version.
+    // SYMMETRIC_INDIRECT_3x3 = 1,
+    SYMMETRIC_INDIRECT_2x2 = 2,
+  };
   // The maximum number of iterations the solver can do.
   double max_iterations = 100;
   // The maximum allowed violation of the KKT system.
@@ -70,6 +77,9 @@ struct Settings {
   double line_search_factor = 0.5;
   // Determines when we declare a line search failure.
   double line_search_min_step_size = 1e-6;
+  // Determines how the search direction is computed.
+  LinearSystemFormulation lin_sys_formulation =
+      LinearSystemFormulation::SYMMETRIC_INDIRECT_2x2;
   // When true, halts the optimization process if a good step is not found.
   bool enable_line_search_failures = false;
   // Determines whether we should print the solver logs.
@@ -82,30 +92,24 @@ struct Output {
 };
 
 struct QDLDLWorkspace {
-  // Definitions:
-  // dim represents the dimension of the KKT system,
-  //     i.e. dim = x_dim + y_dim + 2 * s_dim.
-  // L_nnz represents the number of non-zeros in the L matrix,
-  //     to be determined by the user.
-
   // Elimination tree workspace.
-  int *etree; // Required size: dim
-  int *Lnz;   // Required size: dim
+  int *etree; // Required size: kkt_dim
+  int *Lnz;   // Required size: kkt_dim
 
   // Factorization workspace.
-  int *iwork;           // Required size: 3 * dim
-  unsigned char *bwork; // Required size: dim
-  double *fwork;        // Required size: dim
+  int *iwork;           // Required size: 3 * kkt_dim
+  unsigned char *bwork; // Required size: kkt_dim
+  double *fwork;        // Required size: kkt_dim
 
   // Factorizaton output storage.
-  int *Lp;      // Required size: L_nnz
-  int *Li;      // Required size: L_nnz
-  double *Lx;   // Required size: L_nnz
-  double *D;    // Required size: dim
-  double *Dinv; // Required size: dim
+  int *Lp;      // Required size: kkt_L_nnz
+  int *Li;      // Required size: kkt_L_nnz
+  double *Lx;   // Required size: kkt_L_nnz
+  double *D;    // Required size: kkt_dim
+  double *Dinv; // Required size: kkt_dim
 
   // Solve workspace.
-  double *x; // Required size: dim
+  double *x; // Required size: kkt_dim
 
   // NOTE: the user may also direct pointers to statically allocated memory.
   void reserve(int kkt_dim, int kkt_L_nnz);
@@ -125,6 +129,10 @@ struct VariablesWorkspace {
   double *next_x;
   // The next slack variables.
   double *next_s;
+  // The candidate delta in the slack variables.
+  double *ds;
+  // The candidate delta in the dual variables associated with inequalities.
+  double *dz;
 
   // NOTE: the user may also direct pointers to statically allocated memory.
   void reserve(int x_dim, int s_dim, int y_dim);
@@ -136,18 +144,24 @@ struct MiscellaneousWorkspace {
   double *g_plus_s;
   // Stores the linear system residual.
   double *lin_sys_residual;
+  // Stores the x-gradient of the Lagrangian.
+  double *grad_x_lagrangian;
+  // Stores sigma = z / (s + gamma_z * z).
+  double *sigma;
+  // Stores sigma * (g(x) + (mu / z)).
+  double *sigma_times_g_plus_mu_over_z;
+  // Stores jacobian_g_t @ sigma @ jacobian_g.
+  SparseMatrix jac_g_t_sigma_jac_g;
 
   // NOTE: the user may also direct pointers to statically allocated memory.
-  void reserve(int s_dim, int kkt_dim);
+  void reserve(int x_dim, int s_dim, int kkt_dim, int jac_g_t_jac_g_nnz);
   void free();
 };
 
 struct KKTWorkspace {
-  // The LHS of the KKT system (requires size hess_f_nnz + jac_c_nnz + jac_g_nnz
-  // + 3 * s_dim + y_dim).
+  // The LHS of the (potentially reduced/eliminated) KKT system.
   SparseMatrix lhs;
-  // The (negative) RHS of the KKT system (requires size x_dim + y_dim + 2 *
-  // s_dim).
+  // The (negative) RHS of the (potentially reduced/eliminated )KKT system.
   double *negative_rhs;
 
   // NOTE: the user may also direct pointers to statically allocated memory.
@@ -174,8 +188,10 @@ struct Workspace {
   MiscellaneousWorkspace miscellaneous_workspace;
 
   // NOTE: the user may also direct pointers to statically allocated memory.
-  void reserve(int x_dim, int s_dim, int y_dim, int upper_hessian_f_nnz,
-               int jacobian_c_nnz, int jacobian_g_nnz, int kkt_L_nnz);
+  void reserve(Settings::LinearSystemFormulation lin_sys_formulation, int x_dim,
+               int s_dim, int y_dim, int upper_hessian_f_nnz,
+               int jacobian_c_nnz, int jac_g_t_jac_g_nnz, int jacobian_g_nnz,
+               int upper_hessian_f_plus_upper_jac_g_t_jac_g_nnz, int kkt_L_nnz);
   void free();
 };
 

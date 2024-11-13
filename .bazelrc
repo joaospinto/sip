@@ -5,33 +5,34 @@ build --cxxopt=-Wpedantic
 
 build --client_env=CC=clang
 
+build -c opt
 build --cxxopt=-O3
 
-build:debug --cxxopt=-g
-build:debug --cxxopt=-O0
 build:debug -c dbg
+build:debug --cxxopt=-gfull
+build:debug --cxxopt=-O0
 build:debug --spawn_strategy=local
 
-build:asan --copt -fsanitize=address
-build:asan --copt -g
-build:asan --copt -O0
 build:asan -c dbg
+build:asan --copt -fsanitize=address
+build:asan --copt -gfull
+build:asan --copt -O0
 build:asan --spawn_strategy=local
 build:asan --copt -fno-omit-frame-pointer
 build:asan --linkopt -fsanitize=address
 
-build:msan --copt -fsanitize=memory
-build:msan --copt -g
-build:msan --copt -O0
 build:msan -c dbg
+build:msan --copt -fsanitize=memory
+build:msan --copt -gfull
+build:msan --copt -O0
 build:msan --spawn_strategy=local
 build:msan --copt -fno-omit-frame-pointer
 build:msan --linkopt -fsanitize=memory
 
-build:ubsan --copt -fsanitize=undefined
-build:ubsan --copt -g
-build:ubsan --copt -O0
 build:ubsan -c dbg
+build:ubsan --copt -fsanitize=undefined
+build:ubsan --copt -gfull
+build:ubsan --copt -O0
 build:ubsan --spawn_strategy=local
 build:ubsan --copt -fno-omit-frame-pointer
 build:ubsan --linkopt -fsanitize=undefined
