@@ -48,8 +48,9 @@ auto adaptive_mu(const int s_dim, double *s, double *z) -> double {
   return sigma * dp / s_dim;
 }
 
-auto get_rho(const Workspace &workspace, const double *s, const double *dx,
-             const double *ds, const double mu) -> double {
+auto get_rho(const Settings &settings, const Workspace &workspace,
+             const double *s, const double *e, const double *dx,
+             const double *ds, const double *de, const double mu) -> double {
   // D(merit_function; dx, ds) = D(f; dx) - mu (ds / s) - rho * ||c(x)|| - rho *
   // ||g(x) + s || rho > (D(f; dx) + k) / (|| (c(x) || + || g(x) + s) || iff
   // D(merit_function; dx) < -k.
@@ -59,24 +60,36 @@ auto get_rho(const Workspace &workspace, const double *s, const double *dx,
   const int y_dim = get_y_dim(mco.jacobian_c);
   const double f_slope = dot(mco.gradient_f, dx, x_dim);
   const double barrier_slope = -mu * x_dot_y_inverse(ds, s, s_dim);
-  const double obj_slope = f_slope + barrier_slope;
-  const double d = norm(mco.c, y_dim) +
-                   norm(workspace.miscellaneous_workspace.g_plus_s, s_dim);
+  const double elastic_slope =
+      settings.enable_elastics
+          ? settings.elastic_var_cost_coeff * dot(de, e, s_dim)
+          : 0.0;
+  const double obj_slope = f_slope + barrier_slope + elastic_slope;
+  const double d =
+      norm(mco.c, y_dim) +
+      norm(workspace.miscellaneous_workspace.g_plus_s_plus_e, s_dim);
   const double k = std::max(d, 2.0 * std::fabs(obj_slope));
   return std::min((obj_slope + k) / d, 1e9);
 }
 
-auto merit_function(const Workspace &workspace, const double *s,
-                    const double mu, const double rho) -> double {
+auto merit_function(const Settings &settings, const Workspace &workspace,
+                    const double *s, const double *e, const double mu,
+                    const double rho) -> double {
   const auto &mco = workspace.model_callback_output;
   const int s_dim = get_s_dim(mco.jacobian_g);
   const int y_dim = get_y_dim(mco.jacobian_c);
-  return mco.f - mu * sum_of_logs(s, s_dim) + rho * norm(mco.c, y_dim) +
-         rho * norm(workspace.miscellaneous_workspace.g_plus_s, s_dim);
+  const double e_term =
+      settings.enable_elastics
+          ? 0.5 * settings.elastic_var_cost_coeff * squared_norm(e, s_dim)
+          : 0.0;
+  const double s_term = -mu * sum_of_logs(s, s_dim);
+  return mco.f + e_term + s_term + rho * norm(mco.c, y_dim) +
+         rho * norm(workspace.miscellaneous_workspace.g_plus_s_plus_e, s_dim);
 }
 
-auto merit_function_slope(const Workspace &workspace, const double *s,
-                          const double *dx, const double *ds, const double mu,
+auto merit_function_slope(const Settings &settings, const Workspace &workspace,
+                          const double *s, const double *e, const double *dx,
+                          const double *ds, const double *de, const double mu,
                           const double rho) {
   // TODO(joao): eventually remove repeated computation across:
   // 1. merit_function
@@ -89,17 +102,21 @@ auto merit_function_slope(const Workspace &workspace, const double *s,
   const int y_dim = get_y_dim(mco.jacobian_c);
   const double f_slope = dot(mco.gradient_f, dx, x_dim);
   const double barrier_slope = -mu * x_dot_y_inverse(ds, s, s_dim);
-  const double obj_slope = f_slope + barrier_slope;
+  const double elastic_slope =
+      settings.enable_elastics
+          ? settings.elastic_var_cost_coeff * dot(de, e, s_dim)
+          : 0.0;
+  const double obj_slope = f_slope + barrier_slope + elastic_slope;
   return obj_slope - rho * norm(mco.c, y_dim) -
-         rho * norm(workspace.miscellaneous_workspace.g_plus_s, s_dim);
+         rho * norm(workspace.miscellaneous_workspace.g_plus_s_plus_e, s_dim);
 }
 
 auto build_lhs_4x4(const Settings &settings, Workspace &workspace) -> void {
   // Builds the following matrix in CSC format:
-  // [ upper_hessian_f       0        jacobian_c_t     jacobian_g_t ]
-  // [        0          S^{-1} Z          0               I_s      ]
-  // [        0              0      -gamma_y * I_y          0       ]
-  // [        0              0             0         -gamma_z * I_z ]
+  // [ upper_hessian_f       0        jacobian_c_t          jacobian_g_t    ]
+  // [        0          S^{-1} Z          0                    I_s         ]
+  // [        0              0      -gamma_y * I_y               0          ]
+  // [        0              0             0         -(gamma_z + 1/p) * I_z ]
   const auto &mco = workspace.model_callback_output;
   const int x_dim = mco.upper_hessian_f.rows;
   const int s_dim = get_s_dim(mco.jacobian_g);
@@ -153,7 +170,7 @@ auto build_lhs_4x4(const Settings &settings, Workspace &workspace) -> void {
     ++k;
   }
 
-  // Fill jacobian_g, I_s, and -gamma_z * I_z.
+  // Fill jacobian_g, I_s, and -(gamma_z + 1/p) * I_z.
   for (int i = 0; i < s_dim; ++i) {
     lhs.indptr[x_dim + s_dim + y_dim + i] = k;
     // Fill jacobian_g column.
@@ -168,21 +185,25 @@ auto build_lhs_4x4(const Settings &settings, Workspace &workspace) -> void {
     lhs.ind[k] = x_dim + i;
     lhs.data[k] = 1.0;
     ++k;
-    // Fill -gamma_z * I_z column.
+    // Fill -(gamma_z + 1 / p) * I_z column.
     lhs.ind[k] = x_dim + s_dim + y_dim + i;
-    lhs.data[k] = -settings.gamma_z;
+    lhs.data[k] =
+        -settings.gamma_z - (settings.enable_elastics
+                                 ? 1.0 / settings.elastic_var_cost_coeff
+                                 : 0.0);
     ++k;
   }
 
   lhs.indptr[x_dim + y_dim + 2 * s_dim] = k;
 }
 
-auto build_nrhs_4x4(const double mu, Workspace &workspace) -> void {
+auto build_nrhs_4x4(const Settings &settings, const double mu,
+                    Workspace &workspace) -> void {
   // Builds the following vector:
   // [ gradient_f + jacobian_c_t @ y + jacobian_g_t @ z ]
   // [                     z - mu / s                   ]
   // [                          c                       ]
-  // [                        g + s                     ]
+  // [                   g + s - z / p                  ]
   const auto &mco = workspace.model_callback_output;
 
   const double *s = workspace.vars.s;
@@ -210,15 +231,18 @@ auto build_nrhs_4x4(const double mu, Workspace &workspace) -> void {
 
   for (int i = 0; i < s_dim; ++i) {
     nrhs[x_dim + s_dim + y_dim + i] =
-        workspace.miscellaneous_workspace.g_plus_s[i];
+        workspace.miscellaneous_workspace.g_plus_s[i] -
+        (settings.enable_elastics ? z[i] / settings.elastic_var_cost_coeff
+                                  : 0.0);
   }
 }
 
 auto compute_search_direction_4x4(const Settings &settings, const double mu,
                                   Workspace &workspace)
-    -> std::tuple<double *, double *, double *, double *, double, double> {
+    -> std::tuple<double *, double *, double *, double *, double *, double,
+                  double> {
   build_lhs_4x4(settings, workspace);
-  build_nrhs_4x4(mu, workspace);
+  build_nrhs_4x4(settings, mu, workspace);
 
   const auto &model_callback_output = workspace.model_callback_output;
   const int x_dim = model_callback_output.upper_hessian_f.cols;
@@ -291,15 +315,24 @@ auto compute_search_direction_4x4(const Settings &settings, const double mu,
   double *ds = dx + x_dim;
   double *dy = ds + s_dim;
   double *dz = dy + y_dim;
+  double *de = workspace.vars.de;
 
-  return {dx, ds, dy, dz, kkt_error, lin_sys_error};
+  // de = (-dz - (pe + z)) / p
+  if (settings.enable_elastics) {
+    for (int i = 0; i < s_dim; ++i) {
+      const double p = settings.elastic_var_cost_coeff;
+      de[i] = (-dz[i] - p * workspace.vars.e[i] - workspace.vars.z[i]) / p;
+    }
+  }
+
+  return {dx, ds, dy, dz, de, kkt_error, lin_sys_error};
 }
 
 auto build_lhs_2x2(const Settings &settings, Workspace &workspace) -> void {
   // Builds the following matrix in CSC format:
   // [ upper_hessian_f + jacobian_g_t @ sigma @ jacobian_g       jacobian_c_t  ]
   // [                          0                               -gamma_y * I_y ]
-  // Above, sigma = np.diag(z / (s + gamma_z * z)).
+  // Above, sigma = np.diag(z / (s + (gamma_z + 1/p) * z)).
   const auto &mco = workspace.model_callback_output;
   const int x_dim = mco.upper_hessian_f.rows;
   const int s_dim = get_s_dim(mco.jacobian_g);
@@ -313,7 +346,12 @@ auto build_lhs_2x2(const Settings &settings, Workspace &workspace) -> void {
   double *sigma = workspace.miscellaneous_workspace.sigma;
 
   for (int i = 0; i < s_dim; ++i) {
-    sigma[i] = z[i] / (s[i] + settings.gamma_z * z[i]);
+    sigma[i] =
+        z[i] /
+        (s[i] + (settings.gamma_z + (settings.enable_elastics
+                                         ? 1.0 / settings.elastic_var_cost_coeff
+                                         : 0.0)) *
+                    z[i]);
   }
 
   XT_D_X(mco.jacobian_g, sigma,
@@ -344,10 +382,11 @@ auto build_lhs_2x2(const Settings &settings, Workspace &workspace) -> void {
   }
 }
 
-auto build_nrhs_2x2(const double mu, Workspace &workspace) -> void {
+auto build_nrhs_2x2(const Settings &settings, const double mu,
+                    Workspace &workspace) -> void {
   // Builds the following vector:
   // [ gradient_f + jacobian_c_t @ y + jacobian_g_t @ z
-  //         + G.T @ sigma @ (g(x) + (mu / z)) ]        ]
+  //         + G.T @ sigma @ (g(x) + (mu / z) - z / p)  ]
   // [                          c                       ]
   const auto &mco = workspace.model_callback_output;
 
@@ -375,12 +414,17 @@ auto build_nrhs_2x2(const double mu, Workspace &workspace) -> void {
   double *sigma = workspace.miscellaneous_workspace.sigma;
 
   for (int i = 0; i < s_dim; ++i) {
-    workspace.miscellaneous_workspace.sigma_times_g_plus_mu_over_z[i] =
-        sigma[i] * (mco.g[i] + mu / z[i]);
+    workspace.miscellaneous_workspace
+        .sigma_times_g_plus_mu_over_z_minus_z_over_p[i] =
+        sigma[i] *
+        (mco.g[i] + mu / z[i] -
+         (settings.enable_elastics ? z[i] / settings.elastic_var_cost_coeff
+                                   : 0.0));
   }
 
   add_ATx_to_y(mco.jacobian_g,
-               workspace.miscellaneous_workspace.sigma_times_g_plus_mu_over_z,
+               workspace.miscellaneous_workspace
+                   .sigma_times_g_plus_mu_over_z_minus_z_over_p,
                nrhs);
 
   for (int i = 0; i < y_dim; ++i) {
@@ -390,9 +434,10 @@ auto build_nrhs_2x2(const double mu, Workspace &workspace) -> void {
 
 auto compute_search_direction_2x2(const Settings &settings, const double mu,
                                   Workspace &workspace)
-    -> std::tuple<double *, double *, double *, double *, double, double> {
+    -> std::tuple<double *, double *, double *, double *, double *, double,
+                  double> {
   build_lhs_2x2(settings, workspace);
-  build_nrhs_2x2(mu, workspace);
+  build_nrhs_2x2(settings, mu, workspace);
 
   const auto &model_callback_output = workspace.model_callback_output;
   const int x_dim = model_callback_output.upper_hessian_f.cols;
@@ -431,16 +476,18 @@ auto compute_search_direction_2x2(const Settings &settings, const double mu,
   double *dy = dx + x_dim;
   double *ds = workspace.vars.ds;
   double *dz = workspace.vars.dz;
+  double *de = workspace.vars.de;
 
-  // dz = sigma @ (g(x) + G @ dx + (mu / z))
+  // dz = sigma @ (g(x) + G @ dx + (mu / z - z / p))
   for (int i = 0; i < s_dim; ++i) {
-    dz[i] = workspace.miscellaneous_workspace.sigma_times_g_plus_mu_over_z[i];
+    dz[i] = workspace.miscellaneous_workspace
+                .sigma_times_g_plus_mu_over_z_minus_z_over_p[i];
   }
 
   add_weighted_Ax_to_y(workspace.model_callback_output.jacobian_g,
                        workspace.miscellaneous_workspace.sigma, dx, dz);
 
-  // ds = -(g(x) + s) + gamma_z * dz - G @ dx
+  // ds = z / p -(g(x) + s) + (gamma_z + 1 / p) * dz - G @ dx
   std::copy(workspace.miscellaneous_workspace.g_plus_s,
             workspace.miscellaneous_workspace.g_plus_s + s_dim, ds);
 
@@ -448,6 +495,17 @@ auto compute_search_direction_2x2(const Settings &settings, const double mu,
 
   for (int i = 0; i < s_dim; ++i) {
     ds[i] = -ds[i] + settings.gamma_z * dz[i];
+    if (settings.enable_elastics) {
+      ds[i] += (workspace.vars.z[i] + dz[i]) / settings.elastic_var_cost_coeff;
+    }
+  }
+
+  // de = (-dz - (pe + z)) / p
+  if (settings.enable_elastics) {
+    for (int i = 0; i < s_dim; ++i) {
+      const double p = settings.elastic_var_cost_coeff;
+      de[i] = (-dz[i] - p * workspace.vars.e[i] - workspace.vars.z[i]) / p;
+    }
   }
 
   double lin_sys_error = 0.0;
@@ -479,15 +537,17 @@ auto compute_search_direction_2x2(const Settings &settings, const double mu,
   }
   for (int i = 0; i < s_dim; ++i) {
     kkt_error = std::max(
-        kkt_error, std::fabs(workspace.miscellaneous_workspace.g_plus_s[i]));
+        kkt_error,
+        std::fabs(workspace.miscellaneous_workspace.g_plus_s_plus_e[i]));
   }
 
-  return {dx, ds, dy, dz, kkt_error, lin_sys_error};
+  return {dx, ds, dy, dz, de, kkt_error, lin_sys_error};
 }
 
 auto compute_search_direction(const Settings &settings, const double mu,
                               Workspace &workspace)
-    -> std::tuple<double *, double *, double *, double *, double, double> {
+    -> std::tuple<double *, double *, double *, double *, double *, double,
+                  double> {
 
   switch (settings.lin_sys_formulation) {
   case Settings::LinearSystemFormulation::SYMMETRIC_DIRECT_4x4:
@@ -498,6 +558,7 @@ auto compute_search_direction(const Settings &settings, const double mu,
 }
 
 auto check_inputs(const ModelCallbackOutput &mco, const Settings &settings) {
+  assert(!settings.enable_elastics || settings.elastic_var_cost_coeff > 0.0);
   assert(mco.jacobian_c.is_transposed);
   switch (settings.lin_sys_formulation) {
   case Settings::LinearSystemFormulation::SYMMETRIC_DIRECT_4x4:
@@ -532,14 +593,23 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace,
   add(workspace.model_callback_output.g, workspace.vars.s, s_dim,
       workspace.miscellaneous_workspace.g_plus_s);
 
+  if (settings.enable_elastics) {
+    add(workspace.miscellaneous_workspace.g_plus_s, workspace.vars.e, s_dim,
+        workspace.miscellaneous_workspace.g_plus_s_plus_e);
+  } else {
+    std::copy(workspace.miscellaneous_workspace.g_plus_s,
+              workspace.miscellaneous_workspace.g_plus_s + s_dim,
+              workspace.miscellaneous_workspace.g_plus_s_plus_e);
+  }
+
   if (settings.print_logs) {
     std::cout << std::format(
                      // clang-format off
-                     "{:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10}",
+                     "{:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10}",
                      // clang-format on
-                     "iteration", "alpha", "merit", "f", "|c|", "|g+s|",
+                     "iteration", "alpha", "merit", "f", "|c|", "|g+s+e|",
                      "m_slope", "alpha_s_m", "alpha_z_m", "|dx|", "|ds|",
-                     "|dy|", "|dz|", "mu", "linsys_res")
+                     "|dy|", "|dz|", "|de|", "mu", "linsys_res")
               << std::endl;
   }
 
@@ -548,7 +618,7 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace,
         std::max(adaptive_mu(s_dim, workspace.vars.s, workspace.vars.z),
                  settings.mu_min);
 
-    const auto [dx, ds, dy, dz, kkt_error, lin_sys_error] =
+    const auto [dx, ds, dy, dz, de, kkt_error, lin_sys_error] =
         compute_search_direction(settings, mu, workspace);
 
     if (kkt_error < settings.max_kkt_violation) {
@@ -561,12 +631,15 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace,
     const auto [alpha_s_max, alpha_z_max] = get_max_step_sizes(
         s_dim, tau, workspace.vars.s, workspace.vars.z, ds, dz);
 
-    const double rho = get_rho(workspace, workspace.vars.s, dx, ds, mu);
+    const double rho = get_rho(settings, workspace, workspace.vars.s,
+                               workspace.vars.e, dx, ds, de, mu);
 
-    const double merit = merit_function(workspace, workspace.vars.s, mu, rho);
+    const double merit = merit_function(settings, workspace, workspace.vars.s,
+                                        workspace.vars.e, mu, rho);
 
     const double merit_slope =
-        merit_function_slope(workspace, workspace.vars.s, dx, ds, mu, rho);
+        merit_function_slope(settings, workspace, workspace.vars.s,
+                             workspace.vars.e, dx, ds, de, mu, rho);
 
     bool ls_succeeded = false;
     double new_merit = std::numeric_limits<double>::signaling_NaN();
@@ -580,6 +653,12 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace,
         workspace.vars.next_s[i] = workspace.vars.s[i] + alpha * ds[i];
       }
 
+      if (settings.enable_elastics) {
+        for (int i = 0; i < s_dim; ++i) {
+          workspace.vars.next_e[i] = workspace.vars.e[i] + alpha * de[i];
+        }
+      }
+
       ModelCallbackInput mci{
           .x = workspace.vars.next_x,
       };
@@ -588,8 +667,18 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace,
       add(workspace.model_callback_output.g, workspace.vars.next_s, s_dim,
           workspace.miscellaneous_workspace.g_plus_s);
 
+      if (settings.enable_elastics) {
+        add(workspace.miscellaneous_workspace.g_plus_s, workspace.vars.e, s_dim,
+            workspace.miscellaneous_workspace.g_plus_s_plus_e);
+      } else {
+        std::copy(workspace.miscellaneous_workspace.g_plus_s,
+                  workspace.miscellaneous_workspace.g_plus_s + s_dim,
+                  workspace.miscellaneous_workspace.g_plus_s_plus_e);
+      }
+
       // TODO(joao): cache (parts of) this into the next cycle!
-      new_merit = merit_function(workspace, workspace.vars.next_s, mu, rho);
+      new_merit = merit_function(settings, workspace, workspace.vars.next_s,
+                                 workspace.vars.next_e, mu, rho);
 
       if (new_merit - merit < settings.armijo_factor * merit_slope * alpha) {
         ls_succeeded = true;
@@ -601,6 +690,9 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace,
 
     std::swap(workspace.vars.x, workspace.vars.next_x);
     std::swap(workspace.vars.s, workspace.vars.next_s);
+    if (settings.enable_elastics) {
+      std::swap(workspace.vars.e, workspace.vars.next_e);
+    }
 
     for (int i = 0; i < y_dim; ++i) {
       workspace.vars.y[i] += alpha_z_max * dy[i];
@@ -611,17 +703,19 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace,
     }
 
     if (settings.print_logs) {
+      const double de_norm = settings.enable_elastics ? norm(de, s_dim) : -1.0;
       std::cout << std::format(
                        // clang-format off
-                       "{:^+10} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g}",
+                       "{:^+10} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g}",
                        // clang-format on
                        iteration, alpha, new_merit,
                        workspace.model_callback_output.f,
                        norm(workspace.model_callback_output.c, y_dim),
-                       norm(workspace.miscellaneous_workspace.g_plus_s, s_dim),
+                       norm(workspace.miscellaneous_workspace.g_plus_s_plus_e,
+                            s_dim),
                        merit_slope, alpha_s_max, alpha_z_max, norm(dx, x_dim),
-                       norm(ds, s_dim), norm(dy, y_dim), norm(dz, s_dim), mu,
-                       lin_sys_error)
+                       norm(ds, s_dim), norm(dy, y_dim), norm(dz, s_dim),
+                       de_norm, mu, lin_sys_error)
                 << std::endl;
     }
 
@@ -687,10 +781,13 @@ void VariablesWorkspace::reserve(int x_dim, int s_dim, int y_dim) {
   s = new double[s_dim];
   y = new double[y_dim];
   z = new double[s_dim];
+  e = new double[s_dim];
   next_x = new double[x_dim];
   next_s = new double[s_dim];
+  next_e = new double[s_dim];
   ds = new double[s_dim];
   dz = new double[s_dim];
+  de = new double[s_dim];
 }
 
 void VariablesWorkspace::free() {
@@ -698,28 +795,33 @@ void VariablesWorkspace::free() {
   ::free(s);
   ::free(y);
   ::free(z);
+  ::free(e);
   ::free(next_x);
   ::free(next_s);
+  ::free(next_e);
   ::free(ds);
   ::free(dz);
+  ::free(de);
 }
 
 void MiscellaneousWorkspace::reserve(int x_dim, int s_dim, int kkt_dim,
                                      int upper_jac_g_t_jac_g_nnz) {
   g_plus_s = new double[s_dim];
+  g_plus_s_plus_e = new double[s_dim];
   lin_sys_residual = new double[kkt_dim];
   grad_x_lagrangian = new double[x_dim];
   sigma = new double[s_dim];
-  sigma_times_g_plus_mu_over_z = new double[s_dim];
+  sigma_times_g_plus_mu_over_z_minus_z_over_p = new double[s_dim];
   jac_g_t_sigma_jac_g.reserve(x_dim, upper_jac_g_t_jac_g_nnz);
 }
 
 void MiscellaneousWorkspace::free() {
   ::free(g_plus_s);
+  ::free(g_plus_s_plus_e);
   ::free(lin_sys_residual);
   ::free(grad_x_lagrangian);
   ::free(sigma);
-  ::free(sigma_times_g_plus_mu_over_z);
+  ::free(sigma_times_g_plus_mu_over_z_minus_z_over_p);
   jac_g_t_sigma_jac_g.free();
 }
 

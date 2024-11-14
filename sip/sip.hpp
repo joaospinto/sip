@@ -77,9 +77,13 @@ struct Settings {
   double line_search_factor = 0.5;
   // Determines when we declare a line search failure.
   double line_search_min_step_size = 1e-6;
+  // Determines how elastic variables are penalized in the cost function.
+  double elastic_var_cost_coeff = 0.0;
   // Determines how the search direction is computed.
   LinearSystemFormulation lin_sys_formulation =
       LinearSystemFormulation::SYMMETRIC_INDIRECT_2x2;
+  // Whether to enable the usage of elastic variables.
+  bool enable_elastics = false;
   // When true, halts the optimization process if a good step is not found.
   bool enable_line_search_failures = false;
   // Determines whether we should print the solver logs.
@@ -125,14 +129,20 @@ struct VariablesWorkspace {
   double *y;
   // The dual variables associated with the inequality constraints.
   double *z;
+  // The elastic variables.
+  double *e;
   // The next primal variables.
   double *next_x;
   // The next slack variables.
   double *next_s;
+  // The next elastic variables.
+  double *next_e;
   // The candidate delta in the slack variables.
   double *ds;
   // The candidate delta in the dual variables associated with inequalities.
   double *dz;
+  // The candidate delta in the elastic variables.
+  double *de;
 
   // NOTE: the user may also direct pointers to statically allocated memory.
   void reserve(int x_dim, int s_dim, int y_dim);
@@ -142,6 +152,8 @@ struct VariablesWorkspace {
 struct MiscellaneousWorkspace {
   // Stores g(x) + s.
   double *g_plus_s;
+  // Stores g(x) + s (+ e, when applicable).
+  double *g_plus_s_plus_e;
   // Stores the linear system residual.
   double *lin_sys_residual;
   // Stores the x-gradient of the Lagrangian.
@@ -149,7 +161,7 @@ struct MiscellaneousWorkspace {
   // Stores sigma = z / (s + gamma_z * z).
   double *sigma;
   // Stores sigma * (g(x) + (mu / z)).
-  double *sigma_times_g_plus_mu_over_z;
+  double *sigma_times_g_plus_mu_over_z_minus_z_over_p;
   // Stores jacobian_g_t @ sigma @ jacobian_g.
   SparseMatrix jac_g_t_sigma_jac_g;
 
