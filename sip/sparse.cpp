@@ -19,6 +19,18 @@ auto SparseMatrix::free() -> void {
   ::free(data);
 }
 
+auto SparseMatrix::mem_assign(int dim, int nnz,
+                unsigned char* mem_ptr) -> int {
+  int cum_size = 0;
+  ind = reinterpret_cast<decltype(ind)>(mem_ptr + cum_size);
+  cum_size += nnz * sizeof(int);
+  indptr = reinterpret_cast<decltype(indptr)>(mem_ptr + cum_size);
+  cum_size += (dim + 1) * sizeof(int);
+  data = reinterpret_cast<decltype(data)>(mem_ptr + cum_size);
+  cum_size += nnz * sizeof(double);
+  return cum_size;
+}
+
 auto operator<<(std::ostream &os, const SparseMatrix &M) -> std::ostream & {
   os << "rows: " << M.rows;
   os << "\ncols: " << M.cols;

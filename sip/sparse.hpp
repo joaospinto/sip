@@ -16,9 +16,13 @@ struct SparseMatrix {
   // Whether the matrix is transposed.
   bool is_transposed;
 
-  // NOTE: the user may also direct pointers to statically allocated memory.
+  // To dynamically allocate the required memory.
   auto reserve(int dim, int nnz) -> void;
   auto free() -> void;
+
+  // For using pre-allocated (possibly statically allocated) memory.
+  auto mem_assign(int dim, int nnz,
+                  unsigned char* mem_ptr) -> int;
 };
 
 // Useful for debugging.

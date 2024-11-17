@@ -11,43 +11,6 @@ enum class Status {
   LINE_SEARCH_FAILURE = 2,
 };
 
-// For nicer googletest outputs.
-auto operator<<(std::ostream &os, Status const &status) -> std::ostream &;
-
-struct ModelCallbackInput {
-  double *x;
-};
-
-struct ModelCallbackOutput {
-  // NOTE: all sparse matrices should be represented in CSC format.
-
-  // The objective and its first two derivatives.
-  // NOTE: hessian_f should be a positive semi-definite approximation.
-  // NOTE: only the upper triangle should be filled in hessian_f.
-  double f;
-  double *gradient_f;
-  SparseMatrix upper_hessian_f;
-
-  // The equality constraints and their first derivative.
-  double *c;
-  SparseMatrix jacobian_c;
-
-  // The inequality constraints and their first derivative.
-  double *g;
-  SparseMatrix jacobian_g;
-
-  // NOTE: the user may also direct pointers to statically allocated memory.
-  void reserve(int x_dim, int s_dim, int y_dim, int upper_hessian_f_nnz,
-               int jacobian_c_nnz, int jacobian_g_nnz);
-  void free();
-};
-
-struct Input {
-  // Callback for filling the ModelCallbackOutput object.
-  std::function<void(const ModelCallbackInput &, ModelCallbackOutput &)>
-      model_callback;
-};
-
 struct Settings {
   // Determines how the Newton-KKT system is solved.
   enum class LinearSystemFormulation {
@@ -77,17 +40,59 @@ struct Settings {
   double line_search_factor = 0.5;
   // Determines when we declare a line search failure.
   double line_search_min_step_size = 1e-6;
-  // Determines how elastic variables are penalized in the cost function.
-  double elastic_var_cost_coeff = 0.0;
   // Determines how the search direction is computed.
   LinearSystemFormulation lin_sys_formulation =
       LinearSystemFormulation::SYMMETRIC_INDIRECT_2x2;
   // Whether to enable the usage of elastic variables.
   bool enable_elastics = false;
+  // Determines how elastic variables are penalized in the cost function.
+  double elastic_var_cost_coeff = 0.0;
   // When true, halts the optimization process if a good step is not found.
   bool enable_line_search_failures = false;
   // Determines whether we should print the solver logs.
   bool print_logs = true;
+};
+
+// For nicer googletest outputs.
+auto operator<<(std::ostream &os, Status const &status) -> std::ostream &;
+
+struct ModelCallbackInput {
+  double *x;
+};
+
+struct ModelCallbackOutput {
+  // NOTE: all sparse matrices should be represented in CSC format.
+
+  // The objective and its first two derivatives.
+  // NOTE: hessian_f should be a positive semi-definite approximation.
+  // NOTE: only the upper triangle should be filled in hessian_f.
+  double f;
+  double *gradient_f;
+  SparseMatrix upper_hessian_f;
+
+  // The equality constraints and their first derivative.
+  double *c;
+  SparseMatrix jacobian_c;
+
+  // The inequality constraints and their first derivative.
+  double *g;
+  SparseMatrix jacobian_g;
+
+  // To dynamically allocate the required memory.
+  void reserve(Settings::LinearSystemFormulation lin_sys_formulation, int x_dim, int s_dim, int y_dim, int upper_hessian_f_nnz,
+               int jacobian_c_nnz, int jacobian_g_nnz);
+  void free();
+
+  // For using pre-allocated (possibly statically allocated) memory.
+  auto mem_assign(Settings::LinearSystemFormulation lin_sys_formulation, int x_dim, int s_dim, int y_dim, int upper_hessian_f_nnz,
+                  int jacobian_c_nnz, int jacobian_g_nnz,
+                  unsigned char* mem_ptr) -> int;
+};
+
+struct Input {
+  // Callback for filling the ModelCallbackOutput object.
+  std::function<void(const ModelCallbackInput &, ModelCallbackOutput &)>
+      model_callback;
 };
 
 struct Output {
@@ -106,7 +111,7 @@ struct QDLDLWorkspace {
   double *fwork;        // Required size: kkt_dim
 
   // Factorizaton output storage.
-  int *Lp;      // Required size: kkt_L_nnz
+  int *Lp;      // Required size: kkt_dim + 1
   int *Li;      // Required size: kkt_L_nnz
   double *Lx;   // Required size: kkt_L_nnz
   double *D;    // Required size: kkt_dim
@@ -115,9 +120,13 @@ struct QDLDLWorkspace {
   // Solve workspace.
   double *x; // Required size: kkt_dim
 
-  // NOTE: the user may also direct pointers to statically allocated memory.
+  // To dynamically allocate the required memory.
   void reserve(int kkt_dim, int kkt_L_nnz);
   void free();
+
+  // For using pre-allocated (possibly statically allocated) memory.
+  auto mem_assign(int kkt_dim, int kkt_L_nnz,
+                  unsigned char* mem_ptr) -> int;
 };
 
 struct VariablesWorkspace {
@@ -144,9 +153,13 @@ struct VariablesWorkspace {
   // The candidate delta in the elastic variables.
   double *de;
 
-  // NOTE: the user may also direct pointers to statically allocated memory.
+  // To dynamically allocate the required memory.
   void reserve(int x_dim, int s_dim, int y_dim);
   void free();
+
+  // For using pre-allocated (possibly statically allocated) memory.
+  auto mem_assign(int x_dim, int s_dim, int y_dim,
+                  unsigned char* mem_ptr) -> int;
 };
 
 struct MiscellaneousWorkspace {
@@ -165,9 +178,13 @@ struct MiscellaneousWorkspace {
   // Stores jacobian_g_t @ sigma @ jacobian_g.
   SparseMatrix jac_g_t_sigma_jac_g;
 
-  // NOTE: the user may also direct pointers to statically allocated memory.
+  // To dynamically allocate the required memory.
   void reserve(int x_dim, int s_dim, int kkt_dim, int jac_g_t_jac_g_nnz);
   void free();
+
+  // For using pre-allocated (possibly statically allocated) memory.
+  auto mem_assign(int x_dim, int s_dim, int kkt_dim, int jac_g_t_jac_g_nnz,
+                  unsigned char* mem_ptr) -> int;
 };
 
 struct KKTWorkspace {
@@ -176,9 +193,13 @@ struct KKTWorkspace {
   // The (negative) RHS of the (potentially reduced/eliminated )KKT system.
   double *negative_rhs;
 
-  // NOTE: the user may also direct pointers to statically allocated memory.
+  // To dynamically allocate the required memory.
   void reserve(int kkt_dim, int kkt_nnz);
   void free();
+
+  // For using pre-allocated (possibly statically allocated) memory.
+  auto mem_assign(int kkt_dim, int kkt_nnz,
+                  unsigned char* mem_ptr) -> int;
 };
 
 // This data structure is used to avoid doing dynamic memory allocation inside
@@ -199,12 +220,19 @@ struct Workspace {
   // Stores miscellaneous items.
   MiscellaneousWorkspace miscellaneous_workspace;
 
-  // NOTE: the user may also direct pointers to statically allocated memory.
+  // To dynamically allocate the required memory.
   void reserve(Settings::LinearSystemFormulation lin_sys_formulation, int x_dim,
                int s_dim, int y_dim, int upper_hessian_f_nnz,
                int jacobian_c_nnz, int jac_g_t_jac_g_nnz, int jacobian_g_nnz,
                int upper_hessian_f_plus_upper_jac_g_t_jac_g_nnz, int kkt_L_nnz);
   void free();
+
+  // For using pre-allocated (possibly statically allocated) memory.
+  auto mem_assign(Settings::LinearSystemFormulation lin_sys_formulation, int x_dim,
+                  int s_dim, int y_dim, int upper_hessian_f_nnz,
+                  int jacobian_c_nnz, int jac_g_t_jac_g_nnz, int jacobian_g_nnz,
+                  int upper_hessian_f_plus_upper_jac_g_t_jac_g_nnz, int kkt_L_nnz,
+                  unsigned char* mem_ptr) -> int;
 };
 
 auto solve(const Input &input, const Settings &settings, Workspace &workspace,
