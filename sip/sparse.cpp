@@ -19,8 +19,7 @@ auto SparseMatrix::free() -> void {
   ::free(data);
 }
 
-auto SparseMatrix::mem_assign(int dim, int nnz,
-                unsigned char* mem_ptr) -> int {
+auto SparseMatrix::mem_assign(int dim, int nnz, unsigned char *mem_ptr) -> int {
   int cum_size = 0;
   ind = reinterpret_cast<decltype(ind)>(mem_ptr + cum_size);
   cum_size += nnz * sizeof(int);
@@ -60,8 +59,8 @@ auto operator<<(std::ostream &os, const SparseMatrix &M) -> std::ostream & {
   return os;
 }
 
-auto add(const SparseMatrix &A, const SparseMatrix &B,
-         SparseMatrix &C) -> void {
+auto add(const SparseMatrix &A, const SparseMatrix &B, SparseMatrix &C)
+    -> void {
   assert(A.rows == B.rows);
   assert(A.cols == B.cols);
   assert(A.is_transposed == B.is_transposed);
@@ -101,8 +100,8 @@ auto add(const SparseMatrix &A, const SparseMatrix &B,
 
 auto sparse_weighted_dot(int x_ind_size, const int *x_ind, const double *x_data,
                          const double *weights, int y_ind_size,
-                         const int *y_ind,
-                         const double *y_data) -> std::pair<double, bool> {
+                         const int *y_ind, const double *y_data)
+    -> std::pair<double, bool> {
   int it_x{0};
   int it_y{0};
   double out{0.0};
@@ -152,8 +151,8 @@ auto _add_ATx_to_y_impl(const SparseMatrix &A, const double *x, double *y) {
   }
 }
 
-auto _add_Ax_to_y_impl(const SparseMatrix &A, const double *x,
-                       double *y) -> void {
+auto _add_Ax_to_y_impl(const SparseMatrix &A, const double *x, double *y)
+    -> void {
   for (int j = 0; j < A.cols; j++) {
     const int value_idx_end = A.indptr[j + 1];
     for (int value_idx = A.indptr[j]; value_idx < value_idx_end; value_idx++) {
@@ -245,8 +244,8 @@ auto sum_of_logs(const double *x, const int dim) -> double {
   return out;
 }
 
-auto min_element_product(const double *x, const double *y,
-                         const int dim) -> double {
+auto min_element_product(const double *x, const double *y, const int dim)
+    -> double {
   double out = std::numeric_limits<double>::infinity();
   for (int i = 0; i < dim; ++i) {
     out = std::min(out, x[i] * y[i]);
@@ -266,8 +265,8 @@ auto norm(const double *x, const int dim) -> double {
   return std::sqrt(squared_norm(x, dim));
 }
 
-auto x_dot_y_inverse(const double *x, const double *y,
-                     const int dim) -> double {
+auto x_dot_y_inverse(const double *x, const double *y, const int dim)
+    -> double {
   double out = 0.0;
   for (int i = 0; i < dim; ++i) {
     out += x[i] / y[i];

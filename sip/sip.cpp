@@ -19,8 +19,8 @@ auto get_y_dim(const SparseMatrix &jacobian_c) -> int {
 }
 
 auto get_max_step_sizes(const int s_dim, const double tau, const double *s,
-                        const double *z, const double *ds,
-                        const double *dz) -> std::pair<double, double> {
+                        const double *z, const double *ds, const double *dz)
+    -> std::pair<double, double> {
   // s + alpha_s_max * ds >= (1 - tau) * s
   // z + alpha_z_max * dz >= (1 - tau) * z
 
@@ -728,10 +728,10 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace,
   output.exit_status = Status::ITERATION_LIMIT;
 }
 
-void ModelCallbackOutput::reserve(Settings::LinearSystemFormulation lin_sys_formulation,
-                                  int x_dim, int s_dim, int y_dim,
-                                  int upper_hessian_f_nnz, int jacobian_c_nnz,
-                                  int jacobian_g_nnz) {
+void ModelCallbackOutput::reserve(
+    Settings::LinearSystemFormulation lin_sys_formulation, int x_dim, int s_dim,
+    int y_dim, int upper_hessian_f_nnz, int jacobian_c_nnz,
+    int jacobian_g_nnz) {
   gradient_f = new double[x_dim];
   upper_hessian_f.reserve(x_dim, upper_hessian_f_nnz);
   c = new double[y_dim];
@@ -756,15 +756,16 @@ void ModelCallbackOutput::free() {
   jacobian_g.free();
 }
 
-auto ModelCallbackOutput::mem_assign(Settings::LinearSystemFormulation lin_sys_formulation,
-                int x_dim, int s_dim, int y_dim, int upper_hessian_f_nnz,
-                int jacobian_c_nnz, int jacobian_g_nnz,
-                unsigned char* mem_ptr) -> int {
+auto ModelCallbackOutput::mem_assign(
+    Settings::LinearSystemFormulation lin_sys_formulation, int x_dim, int s_dim,
+    int y_dim, int upper_hessian_f_nnz, int jacobian_c_nnz, int jacobian_g_nnz,
+    unsigned char *mem_ptr) -> int {
   int cum_size = 0;
   gradient_f = reinterpret_cast<decltype(gradient_f)>(mem_ptr + cum_size);
   cum_size += x_dim * sizeof(double);
 
-  cum_size += upper_hessian_f.mem_assign(x_dim, upper_hessian_f_nnz, mem_ptr + cum_size);
+  cum_size += upper_hessian_f.mem_assign(x_dim, upper_hessian_f_nnz,
+                                         mem_ptr + cum_size);
 
   c = reinterpret_cast<decltype(c)>(mem_ptr + cum_size);
   cum_size += y_dim * sizeof(double);
@@ -776,10 +777,12 @@ auto ModelCallbackOutput::mem_assign(Settings::LinearSystemFormulation lin_sys_f
 
   switch (lin_sys_formulation) {
   case Settings::LinearSystemFormulation::SYMMETRIC_DIRECT_4x4:
-    cum_size += jacobian_g.mem_assign(s_dim, jacobian_g_nnz, mem_ptr + cum_size);
+    cum_size +=
+        jacobian_g.mem_assign(s_dim, jacobian_g_nnz, mem_ptr + cum_size);
     break;
   case Settings::LinearSystemFormulation::SYMMETRIC_INDIRECT_2x2:
-    cum_size += jacobian_g.mem_assign(x_dim, jacobian_g_nnz, mem_ptr + cum_size);
+    cum_size +=
+        jacobian_g.mem_assign(x_dim, jacobian_g_nnz, mem_ptr + cum_size);
     break;
   }
 
@@ -815,7 +818,7 @@ void QDLDLWorkspace::free() {
 }
 
 auto QDLDLWorkspace::mem_assign(int kkt_dim, int kkt_L_nnz,
-                unsigned char* mem_ptr) -> int {
+                                unsigned char *mem_ptr) -> int {
   int cum_size = 0;
 
   etree = reinterpret_cast<decltype(etree)>(mem_ptr + cum_size);
@@ -883,7 +886,7 @@ void VariablesWorkspace::free() {
 }
 
 auto VariablesWorkspace::mem_assign(int x_dim, int s_dim, int y_dim,
-               unsigned char* mem_ptr) -> int {
+                                    unsigned char *mem_ptr) -> int {
   int cum_size = 0;
 
   x = reinterpret_cast<decltype(x)>(mem_ptr + cum_size);
@@ -943,29 +946,36 @@ void MiscellaneousWorkspace::free() {
   jac_g_t_sigma_jac_g.free();
 }
 
-auto MiscellaneousWorkspace::mem_assign(int x_dim, int s_dim, int kkt_dim, int jac_g_t_jac_g_nnz,
-                unsigned char* mem_ptr) -> int {
+auto MiscellaneousWorkspace::mem_assign(int x_dim, int s_dim, int kkt_dim,
+                                        int jac_g_t_jac_g_nnz,
+                                        unsigned char *mem_ptr) -> int {
   int cum_size = 0;
 
   g_plus_s = reinterpret_cast<decltype(g_plus_s)>(mem_ptr + cum_size);
   cum_size += s_dim * sizeof(double);
 
-  g_plus_s_plus_e = reinterpret_cast<decltype(g_plus_s_plus_e)>(mem_ptr + cum_size);
+  g_plus_s_plus_e =
+      reinterpret_cast<decltype(g_plus_s_plus_e)>(mem_ptr + cum_size);
   cum_size += s_dim * sizeof(double);
 
-  lin_sys_residual = reinterpret_cast<decltype(lin_sys_residual)>(mem_ptr + cum_size);
+  lin_sys_residual =
+      reinterpret_cast<decltype(lin_sys_residual)>(mem_ptr + cum_size);
   cum_size += kkt_dim * sizeof(double);
 
-  grad_x_lagrangian = reinterpret_cast<decltype(grad_x_lagrangian)>(mem_ptr + cum_size);
+  grad_x_lagrangian =
+      reinterpret_cast<decltype(grad_x_lagrangian)>(mem_ptr + cum_size);
   cum_size += x_dim * sizeof(double);
 
   sigma = reinterpret_cast<decltype(sigma)>(mem_ptr + cum_size);
   cum_size += s_dim * sizeof(double);
 
-  sigma_times_g_plus_mu_over_z_minus_z_over_p = reinterpret_cast<decltype(sigma_times_g_plus_mu_over_z_minus_z_over_p)>(mem_ptr + cum_size);
+  sigma_times_g_plus_mu_over_z_minus_z_over_p =
+      reinterpret_cast<decltype(sigma_times_g_plus_mu_over_z_minus_z_over_p)>(
+          mem_ptr + cum_size);
   cum_size += s_dim * sizeof(double);
 
-  cum_size += jac_g_t_sigma_jac_g.mem_assign(x_dim, jac_g_t_jac_g_nnz, mem_ptr + cum_size);
+  cum_size += jac_g_t_sigma_jac_g.mem_assign(x_dim, jac_g_t_jac_g_nnz,
+                                             mem_ptr + cum_size);
 
   return cum_size;
 }
@@ -980,8 +990,8 @@ void KKTWorkspace::free() {
   ::free(negative_rhs);
 }
 
-auto KKTWorkspace::mem_assign(int kkt_dim, int kkt_nnz,
-                unsigned char* mem_ptr) -> int {
+auto KKTWorkspace::mem_assign(int kkt_dim, int kkt_nnz, unsigned char *mem_ptr)
+    -> int {
   int cum_size = 0;
 
   cum_size += lhs.mem_assign(kkt_dim, kkt_nnz, mem_ptr + cum_size);
@@ -992,7 +1002,8 @@ auto KKTWorkspace::mem_assign(int kkt_dim, int kkt_nnz,
   return cum_size;
 }
 
-auto get_kkt_dim(Settings::LinearSystemFormulation lin_sys_formulation, int x_dim, int s_dim, int y_dim) -> int {
+auto get_kkt_dim(Settings::LinearSystemFormulation lin_sys_formulation,
+                 int x_dim, int s_dim, int y_dim) -> int {
   switch (lin_sys_formulation) {
   case Settings::LinearSystemFormulation::SYMMETRIC_DIRECT_4x4:
     return x_dim + 2 * s_dim + y_dim;
@@ -1001,8 +1012,11 @@ auto get_kkt_dim(Settings::LinearSystemFormulation lin_sys_formulation, int x_di
   }
 };
 
-auto get_kkt_nnz(Settings::LinearSystemFormulation lin_sys_formulation, int upper_hessian_f_nnz, int jacobian_c_nnz, int jacobian_g_nnz,
-                 int upper_hessian_f_plus_upper_jac_g_t_jac_g_nnz, int s_dim, int y_dim) {
+auto get_kkt_nnz(Settings::LinearSystemFormulation lin_sys_formulation,
+                 int upper_hessian_f_nnz, int jacobian_c_nnz,
+                 int jacobian_g_nnz,
+                 int upper_hessian_f_plus_upper_jac_g_t_jac_g_nnz, int s_dim,
+                 int y_dim) {
   switch (lin_sys_formulation) {
   case Settings::LinearSystemFormulation::SYMMETRIC_DIRECT_4x4:
     return upper_hessian_f_nnz + jacobian_c_nnz + jacobian_g_nnz + 3 * s_dim +
@@ -1020,14 +1034,16 @@ void Workspace::reserve(Settings::LinearSystemFormulation lin_sys_formulation,
                         int upper_hessian_f_plus_upper_jac_g_t_jac_g_nnz,
                         int kkt_L_nnz) {
   const int kkt_dim = get_kkt_dim(lin_sys_formulation, x_dim, s_dim, y_dim);
-  const int kkt_nnz = get_kkt_nnz(lin_sys_formulation, upper_hessian_f_nnz, jacobian_c_nnz, jacobian_g_nnz,
-                 upper_hessian_f_plus_upper_jac_g_t_jac_g_nnz, s_dim, y_dim);
+  const int kkt_nnz = get_kkt_nnz(
+      lin_sys_formulation, upper_hessian_f_nnz, jacobian_c_nnz, jacobian_g_nnz,
+      upper_hessian_f_plus_upper_jac_g_t_jac_g_nnz, s_dim, y_dim);
 
   vars.reserve(x_dim, s_dim, y_dim);
   kkt_workspace.reserve(kkt_dim, kkt_nnz);
   qdldl_workspace.reserve(kkt_dim, kkt_L_nnz);
-  model_callback_output.reserve(lin_sys_formulation, x_dim, s_dim, y_dim, upper_hessian_f_nnz,
-                                jacobian_c_nnz, jacobian_g_nnz);
+  model_callback_output.reserve(lin_sys_formulation, x_dim, s_dim, y_dim,
+                                upper_hessian_f_nnz, jacobian_c_nnz,
+                                jacobian_g_nnz);
   miscellaneous_workspace.reserve(x_dim, s_dim, kkt_dim,
                                   upper_jac_g_t_jac_g_nnz);
 }
@@ -1040,24 +1056,28 @@ void Workspace::free() {
   miscellaneous_workspace.free();
 }
 
-auto Workspace::mem_assign(Settings::LinearSystemFormulation lin_sys_formulation, int x_dim,
-                int s_dim, int y_dim, int upper_hessian_f_nnz,
-                int jacobian_c_nnz, int jac_g_t_jac_g_nnz, int jacobian_g_nnz,
-                int upper_hessian_f_plus_upper_jac_g_t_jac_g_nnz, int kkt_L_nnz,
-                unsigned char* mem_ptr) -> int {
+auto Workspace::mem_assign(
+    Settings::LinearSystemFormulation lin_sys_formulation, int x_dim, int s_dim,
+    int y_dim, int upper_hessian_f_nnz, int jacobian_c_nnz,
+    int jac_g_t_jac_g_nnz, int jacobian_g_nnz,
+    int upper_hessian_f_plus_upper_jac_g_t_jac_g_nnz, int kkt_L_nnz,
+    unsigned char *mem_ptr) -> int {
   const int kkt_dim = get_kkt_dim(lin_sys_formulation, x_dim, s_dim, y_dim);
-  const int kkt_nnz = get_kkt_nnz(lin_sys_formulation, upper_hessian_f_nnz, jacobian_c_nnz, jacobian_g_nnz,
-                 upper_hessian_f_plus_upper_jac_g_t_jac_g_nnz, s_dim, y_dim);
+  const int kkt_nnz = get_kkt_nnz(
+      lin_sys_formulation, upper_hessian_f_nnz, jacobian_c_nnz, jacobian_g_nnz,
+      upper_hessian_f_plus_upper_jac_g_t_jac_g_nnz, s_dim, y_dim);
 
   int cum_size = 0;
 
   cum_size += vars.mem_assign(x_dim, s_dim, y_dim, mem_ptr + cum_size);
   cum_size += kkt_workspace.mem_assign(kkt_dim, kkt_nnz, mem_ptr + cum_size);
-  cum_size += qdldl_workspace.mem_assign(kkt_dim, kkt_L_nnz, mem_ptr + cum_size);
+  cum_size +=
+      qdldl_workspace.mem_assign(kkt_dim, kkt_L_nnz, mem_ptr + cum_size);
   cum_size += model_callback_output.mem_assign(
       lin_sys_formulation, x_dim, s_dim, y_dim, upper_hessian_f_nnz,
       jacobian_c_nnz, jacobian_g_nnz, mem_ptr + cum_size);
-  cum_size += miscellaneous_workspace.mem_assign(x_dim, s_dim, kkt_dim, jac_g_t_jac_g_nnz, mem_ptr + cum_size);
+  cum_size += miscellaneous_workspace.mem_assign(
+      x_dim, s_dim, kkt_dim, jac_g_t_jac_g_nnz, mem_ptr + cum_size);
 
   return cum_size;
 }

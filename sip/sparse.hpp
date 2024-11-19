@@ -1,3 +1,5 @@
+#pragma once
+
 #include <ostream>
 
 namespace sip {
@@ -21,8 +23,7 @@ struct SparseMatrix {
   auto free() -> void;
 
   // For using pre-allocated (possibly statically allocated) memory.
-  auto mem_assign(int dim, int nnz,
-                  unsigned char* mem_ptr) -> int;
+  auto mem_assign(int dim, int nnz, unsigned char *mem_ptr) -> int;
 };
 
 // Useful for debugging.
@@ -48,8 +49,8 @@ auto dot(const double *x, const double *y, const int dim) -> double;
 
 auto sum_of_logs(const double *x, const int dim) -> double;
 
-auto min_element_product(const double *x, const double *y,
-                         const int dim) -> double;
+auto min_element_product(const double *x, const double *y, const int dim)
+    -> double;
 
 auto squared_norm(const double *x, const int dim) -> double;
 

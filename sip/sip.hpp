@@ -1,3 +1,5 @@
+#pragma once
+
 #include <functional>
 #include <ostream>
 
@@ -79,14 +81,16 @@ struct ModelCallbackOutput {
   SparseMatrix jacobian_g;
 
   // To dynamically allocate the required memory.
-  void reserve(Settings::LinearSystemFormulation lin_sys_formulation, int x_dim, int s_dim, int y_dim, int upper_hessian_f_nnz,
+  void reserve(Settings::LinearSystemFormulation lin_sys_formulation, int x_dim,
+               int s_dim, int y_dim, int upper_hessian_f_nnz,
                int jacobian_c_nnz, int jacobian_g_nnz);
   void free();
 
   // For using pre-allocated (possibly statically allocated) memory.
-  auto mem_assign(Settings::LinearSystemFormulation lin_sys_formulation, int x_dim, int s_dim, int y_dim, int upper_hessian_f_nnz,
+  auto mem_assign(Settings::LinearSystemFormulation lin_sys_formulation,
+                  int x_dim, int s_dim, int y_dim, int upper_hessian_f_nnz,
                   int jacobian_c_nnz, int jacobian_g_nnz,
-                  unsigned char* mem_ptr) -> int;
+                  unsigned char *mem_ptr) -> int;
 };
 
 struct Input {
@@ -125,8 +129,7 @@ struct QDLDLWorkspace {
   void free();
 
   // For using pre-allocated (possibly statically allocated) memory.
-  auto mem_assign(int kkt_dim, int kkt_L_nnz,
-                  unsigned char* mem_ptr) -> int;
+  auto mem_assign(int kkt_dim, int kkt_L_nnz, unsigned char *mem_ptr) -> int;
 };
 
 struct VariablesWorkspace {
@@ -158,8 +161,8 @@ struct VariablesWorkspace {
   void free();
 
   // For using pre-allocated (possibly statically allocated) memory.
-  auto mem_assign(int x_dim, int s_dim, int y_dim,
-                  unsigned char* mem_ptr) -> int;
+  auto mem_assign(int x_dim, int s_dim, int y_dim, unsigned char *mem_ptr)
+      -> int;
 };
 
 struct MiscellaneousWorkspace {
@@ -184,7 +187,7 @@ struct MiscellaneousWorkspace {
 
   // For using pre-allocated (possibly statically allocated) memory.
   auto mem_assign(int x_dim, int s_dim, int kkt_dim, int jac_g_t_jac_g_nnz,
-                  unsigned char* mem_ptr) -> int;
+                  unsigned char *mem_ptr) -> int;
 };
 
 struct KKTWorkspace {
@@ -198,8 +201,7 @@ struct KKTWorkspace {
   void free();
 
   // For using pre-allocated (possibly statically allocated) memory.
-  auto mem_assign(int kkt_dim, int kkt_nnz,
-                  unsigned char* mem_ptr) -> int;
+  auto mem_assign(int kkt_dim, int kkt_nnz, unsigned char *mem_ptr) -> int;
 };
 
 // This data structure is used to avoid doing dynamic memory allocation inside
@@ -228,11 +230,11 @@ struct Workspace {
   void free();
 
   // For using pre-allocated (possibly statically allocated) memory.
-  auto mem_assign(Settings::LinearSystemFormulation lin_sys_formulation, int x_dim,
-                  int s_dim, int y_dim, int upper_hessian_f_nnz,
+  auto mem_assign(Settings::LinearSystemFormulation lin_sys_formulation,
+                  int x_dim, int s_dim, int y_dim, int upper_hessian_f_nnz,
                   int jacobian_c_nnz, int jac_g_t_jac_g_nnz, int jacobian_g_nnz,
-                  int upper_hessian_f_plus_upper_jac_g_t_jac_g_nnz, int kkt_L_nnz,
-                  unsigned char* mem_ptr) -> int;
+                  int upper_hessian_f_plus_upper_jac_g_t_jac_g_nnz,
+                  int kkt_L_nnz, unsigned char *mem_ptr) -> int;
 };
 
 auto solve(const Input &input, const Settings &settings, Workspace &workspace,
