@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <cassert>
 #include <cmath>
-#include <format>
+#include <fmt/core.h>
 #include <iostream>
 #include <limits>
 #include <utility>
@@ -54,8 +54,8 @@ auto get_rho(const Settings &settings, const Workspace &workspace,
              const double *s, const double *e, const double *dx,
              const double *ds, const double *de, const double mu) -> double {
   // D(merit_function; dx, ds) = D(f; dx) - mu (ds / s) - rho * ||c(x)|| - rho *
-  // ||g(x) + s || rho > (D(f; dx) + k) / (|| (c(x) || + || g(x) + s) || iff
-  // D(merit_function; dx) < -k.
+  // ||g(x) + s || rho > (D(f; dx) + k) - mu (ds / s) + k) / (|| (c(x) || +
+  // || g(x) + s) || iff D(merit_function; dx) < -k.
   const auto &mco = workspace.model_callback_output;
   const int x_dim = mco.upper_hessian_f.rows;
   const int s_dim = get_s_dim(mco.jacobian_g);
@@ -605,14 +605,15 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace,
   }
 
   if (settings.print_logs) {
-    std::cout << std::format(
-                     // clang-format off
-                     "{:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10}",
-                     // clang-format on
-                     "iteration", "alpha", "merit", "f", "|c|", "|g+s+e|",
-                     "m_slope", "alpha_s_m", "alpha_z_m", "|dx|", "|ds|",
-                     "|dy|", "|dz|", "|de|", "mu", "linsys_res")
-              << std::endl;
+    std::cout
+        << fmt::format(
+               // clang-format off
+                     "{:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10}",
+               // clang-format on
+               "iteration", "alpha", "merit", "f", "|c|", "|g+s+e|", "m_slope",
+               "alpha_s_m", "alpha_z_m", "|dx|", "|ds|", "|dy|", "|dz|", "|de|",
+               "mu", "rho", "linsys_res", "kkt_error")
+        << std::endl;
   }
 
   for (int iteration = 0; iteration < settings.max_iterations; ++iteration) {
@@ -625,6 +626,7 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace,
 
     if (kkt_error < settings.max_kkt_violation) {
       output.exit_status = Status::SOLVED;
+      output.num_iterations = iteration;
       return;
     }
 
@@ -690,6 +692,10 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace,
       alpha *= settings.line_search_factor;
     } while (alpha > settings.line_search_min_step_size);
 
+    if (alpha <= settings.line_search_min_step_size) {
+      alpha /= settings.line_search_factor;
+    }
+
     std::swap(workspace.vars.x, workspace.vars.next_x);
     std::swap(workspace.vars.s, workspace.vars.next_s);
     if (settings.enable_elastics) {
@@ -706,9 +712,9 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace,
 
     if (settings.print_logs) {
       const double de_norm = settings.enable_elastics ? norm(de, s_dim) : -1.0;
-      std::cout << std::format(
+      std::cout << fmt::format(
                        // clang-format off
-                       "{:^+10} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g}",
+                       "{:^+10} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g}",
                        // clang-format on
                        iteration, alpha, new_merit,
                        workspace.model_callback_output.f,
@@ -717,17 +723,19 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace,
                             s_dim),
                        merit_slope, alpha_s_max, alpha_z_max, norm(dx, x_dim),
                        norm(ds, s_dim), norm(dy, y_dim), norm(dz, s_dim),
-                       de_norm, mu, lin_sys_error)
+                       de_norm, mu, rho, lin_sys_error, kkt_error)
                 << std::endl;
     }
 
     if (settings.enable_line_search_failures && !ls_succeeded) {
       output.exit_status = Status::LINE_SEARCH_FAILURE;
+      output.num_iterations = iteration;
       return;
     }
   }
 
   output.exit_status = Status::ITERATION_LIMIT;
+  output.num_iterations = settings.max_iterations;
 }
 
 void ModelCallbackOutput::reserve(

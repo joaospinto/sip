@@ -23,3 +23,6 @@ git_override(
 # Google Test
 # https://github.com/google/googletest
 bazel_dep(name = "googletest", version = "1.15.2")
+
+# Fmt library (as an alternative to std::format)
+bazel_dep(name = "fmt", version = "11.0.2")

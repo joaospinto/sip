@@ -128,11 +128,13 @@ auto XT_D_X(const SparseMatrix &X, double *D, SparseMatrix &XT_D_X) -> void {
   int idx{0};
   XT_D_X.indptr[0] = idx;
   for (int j = 0; j < X.cols; ++j) {
+    const int X_j_len = X.indptr[j + 1] - X.indptr[j];
+    const int *X_j_ind_offset = X.ind + X.indptr[j];
+    const double *X_j_data_offset = X.data + X.indptr[j];
     for (int i = 0; i <= j; ++i) {
       const auto [dot, dot_potentially_nz] = sparse_weighted_dot(
           X.indptr[i + 1] - X.indptr[i], X.ind + X.indptr[i],
-          X.data + X.indptr[i], D, X.indptr[j + 1] - X.indptr[j],
-          X.ind + X.indptr[j], X.data + X.indptr[j]);
+          X.data + X.indptr[i], D, X_j_len, X_j_ind_offset, X_j_data_offset);
       if (dot_potentially_nz) {
         XT_D_X.ind[idx] = i;
         XT_D_X.data[idx] = dot;

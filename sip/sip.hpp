@@ -102,6 +102,7 @@ struct Input {
 struct Output {
   // The exit status of the optimization process.
   Status exit_status;
+  int num_iterations;
 };
 
 struct QDLDLWorkspace {
