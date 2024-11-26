@@ -2,6 +2,7 @@ build --cxxopt=-std=c++23
 build --cxxopt=-Wall
 build --cxxopt=-Wextra
 build --cxxopt=-Wpedantic
+build --cxxopt=-Werror
 
 build --client_env=CC=clang
 

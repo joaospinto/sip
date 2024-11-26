@@ -17,8 +17,7 @@ struct Settings {
   // Determines how the Newton-KKT system is solved.
   enum class LinearSystemFormulation {
     SYMMETRIC_DIRECT_4x4 = 0,
-    // TODO(joao): add support for the 3x3 version.
-    // SYMMETRIC_INDIRECT_3x3 = 1,
+    SYMMETRIC_INDIRECT_3x3 = 1,
     SYMMETRIC_INDIRECT_2x2 = 2,
   };
   // The maximum number of iterations the solver can do.
@@ -44,7 +43,7 @@ struct Settings {
   double line_search_min_step_size = 1e-6;
   // Determines how the search direction is computed.
   LinearSystemFormulation lin_sys_formulation =
-      LinearSystemFormulation::SYMMETRIC_INDIRECT_2x2;
+      LinearSystemFormulation::SYMMETRIC_INDIRECT_3x3;
   // Whether to enable the usage of elastic variables.
   bool enable_elastics = false;
   // Determines how elastic variables are penalized in the cost function.
@@ -162,8 +161,8 @@ struct VariablesWorkspace {
   void free();
 
   // For using pre-allocated (possibly statically allocated) memory.
-  auto mem_assign(int x_dim, int s_dim, int y_dim, unsigned char *mem_ptr)
-      -> int;
+  auto mem_assign(int x_dim, int s_dim, int y_dim,
+                  unsigned char *mem_ptr) -> int;
 };
 
 struct MiscellaneousWorkspace {
