@@ -2,8 +2,10 @@
 
 #include <algorithm>
 #include <cassert>
+#include <cmath>
 #include <format>
 #include <iostream>
+#include <limits>
 #include <utility>
 
 #include <qdldl.h>
