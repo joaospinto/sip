@@ -75,13 +75,13 @@ auto add(const SparseMatrix &A, const SparseMatrix &B, SparseMatrix &C)
 
     while (it_A < A.indptr[j + 1] || it_B < B.indptr[j + 1]) {
       if (it_A < A.indptr[j + 1] &&
-          (A.ind[it_A] < B.ind[it_B] || it_B == B.indptr[j + 1])) {
+          (it_B == B.indptr[j + 1] || A.ind[it_A] < B.ind[it_B])) {
         C.ind[idx] = A.ind[it_A];
         C.data[idx] = A.data[it_A];
         ++it_A;
         ++idx;
       } else if (it_B < B.indptr[j + 1] &&
-                 (A.ind[it_A] > B.ind[it_B] || it_A == A.indptr[j + 1])) {
+                 (it_A == A.indptr[j + 1] || A.ind[it_A] > B.ind[it_B])) {
         C.ind[idx] = B.ind[it_B];
         C.data[idx] = B.data[it_B];
         ++it_B;
