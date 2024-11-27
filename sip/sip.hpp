@@ -44,6 +44,8 @@ struct Settings {
   // Determines how the search direction is computed.
   LinearSystemFormulation lin_sys_formulation =
       LinearSystemFormulation::SYMMETRIC_INDIRECT_3x3;
+  // Whether to apply a permutation to the KKT system to reduce fill-in.
+  bool permute_kkt_system = false;
   // Whether to enable the usage of elastic variables.
   bool enable_elastics = false;
   // Determines how elastic variables are penalized in the cost function.
@@ -96,6 +98,10 @@ struct Input {
   // Callback for filling the ModelCallbackOutput object.
   std::function<void(const ModelCallbackInput &, ModelCallbackOutput &)>
       model_callback;
+  // A permutation for reducing fill-in in the KKT system.
+  const int *kkt_p{nullptr};
+  // The inverse of kkt_p.
+  const int *kkt_pinv{nullptr};
 };
 
 struct Output {
@@ -149,8 +155,12 @@ struct VariablesWorkspace {
   double *next_s;
   // The next elastic variables.
   double *next_e;
+  // The candidate delta in the primal variables.
+  double *dx;
   // The candidate delta in the slack variables.
   double *ds;
+  // The candidate delta in the dual variables associated with equalities.
+  double *dy;
   // The candidate delta in the dual variables associated with inequalities.
   double *dz;
   // The candidate delta in the elastic variables.
@@ -180,6 +190,8 @@ struct MiscellaneousWorkspace {
   double *sigma_times_g_plus_mu_over_z_minus_z_over_p;
   // Stores jacobian_g_t @ sigma @ jacobian_g.
   SparseMatrix jac_g_t_sigma_jac_g;
+  // Scratch space for the permutation method.
+  int *permutation_workspace;
 
   // To dynamically allocate the required memory.
   void reserve(int x_dim, int s_dim, int kkt_dim, int jac_g_t_jac_g_nnz);
@@ -193,6 +205,8 @@ struct MiscellaneousWorkspace {
 struct KKTWorkspace {
   // The LHS of the (potentially reduced/eliminated) KKT system.
   SparseMatrix lhs;
+  // The permuted LHS (to avoid fill-in).
+  SparseMatrix permuted_lhs;
   // The (negative) RHS of the (potentially reduced/eliminated )KKT system.
   double *negative_rhs;
 

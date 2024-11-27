@@ -9,6 +9,7 @@ TEST(SimpleNLP, SYMMETRIC_DIRECT_4x4) {
   Settings settings{.max_kkt_violation = 1e-12,
                     .lin_sys_formulation =
                         Settings::LinearSystemFormulation::SYMMETRIC_DIRECT_4x4,
+                    .permute_kkt_system = true,
                     .enable_elastics = true,
                     .elastic_var_cost_coeff = 1e6};
   Workspace workspace;
@@ -22,7 +23,7 @@ TEST(SimpleNLP, SYMMETRIC_DIRECT_4x4) {
   constexpr int jacobian_g_nnz = 4;
   constexpr int _unused_upper_jac_g_t_jac_g_nnz = 0;
   constexpr int _unused_upper_hessian_f_plus_upper_jac_g_t_jac_g_nnz = 0;
-  constexpr int kkt_L_nnz = 13;
+  constexpr int kkt_L_nnz = 11;
 
   workspace.reserve(
       settings.lin_sys_formulation, x_dim, s_dim, y_dim, upper_hessian_f_nnz,
@@ -80,6 +81,11 @@ TEST(SimpleNLP, SYMMETRIC_DIRECT_4x4) {
   };
 
   input.model_callback = model_callback;
+
+  const auto kkt_p = std::array{5, 4, 3, 2, 1, 0};
+  const auto kkt_pinv = std::array{5, 4, 3, 2, 1, 0};
+  input.kkt_p = kkt_p.data();
+  input.kkt_pinv = kkt_pinv.data();
 
   for (int i = 0; i < x_dim; ++i) {
     workspace.vars.x[i] = 0.0;
@@ -111,6 +117,7 @@ TEST(SimpleNLP, SYMMETRIC_INDIRECT_3x3) {
       .max_kkt_violation = 1e-12,
       .lin_sys_formulation =
           Settings::LinearSystemFormulation::SYMMETRIC_INDIRECT_3x3,
+      .permute_kkt_system = true,
       .enable_elastics = true,
       .elastic_var_cost_coeff = 1e6};
   Workspace workspace;
@@ -124,7 +131,7 @@ TEST(SimpleNLP, SYMMETRIC_INDIRECT_3x3) {
   constexpr int jacobian_g_nnz = 4;
   constexpr int _unused_upper_jac_g_t_jac_g_nnz = 0;
   constexpr int _unused_upper_hessian_f_plus_upper_jac_g_t_jac_g_nnz = 0;
-  constexpr int kkt_L_nnz = 6;
+  constexpr int kkt_L_nnz = 5;
 
   workspace.reserve(
       settings.lin_sys_formulation, x_dim, s_dim, y_dim, upper_hessian_f_nnz,
@@ -182,6 +189,11 @@ TEST(SimpleNLP, SYMMETRIC_INDIRECT_3x3) {
   };
 
   input.model_callback = model_callback;
+
+  const auto kkt_p = std::array{3, 2, 1, 0};
+  const auto kkt_pinv = std::array{3, 2, 1, 0};
+  input.kkt_p = kkt_p.data();
+  input.kkt_pinv = kkt_pinv.data();
 
   for (int i = 0; i < x_dim; ++i) {
     workspace.vars.x[i] = 0.0;
@@ -226,7 +238,7 @@ TEST(SimpleNLP, SYMMETRIC_INDIRECT_2x2) {
   constexpr int jacobian_g_nnz = 4;
   constexpr int upper_jac_g_t_jac_g_nnz = 3;
   constexpr int upper_hessian_f_plus_upper_jac_g_t_jac_g_nnz = 3;
-  constexpr int kkt_L_nnz = 3;
+  constexpr int kkt_L_nnz = 1;
 
   workspace.reserve(settings.lin_sys_formulation, x_dim, s_dim, y_dim,
                     upper_hessian_f_nnz, jacobian_c_nnz, jacobian_g_nnz,
@@ -284,6 +296,11 @@ TEST(SimpleNLP, SYMMETRIC_INDIRECT_2x2) {
   };
 
   input.model_callback = model_callback;
+
+  const auto kkt_p = std::array{1, 0};
+  const auto kkt_pinv = std::array{1, 0};
+  input.kkt_p = kkt_p.data();
+  input.kkt_pinv = kkt_pinv.data();
 
   for (int i = 0; i < x_dim; ++i) {
     workspace.vars.x[i] = 0.0;

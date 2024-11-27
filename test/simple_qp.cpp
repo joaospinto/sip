@@ -9,6 +9,7 @@ TEST(SimpleQPFromOSQPRepo, SYMMETRIC_DIRECT_4x4) {
   Settings settings{.max_kkt_violation = 1e-12,
                     .lin_sys_formulation =
                         Settings::LinearSystemFormulation::SYMMETRIC_DIRECT_4x4,
+                    .permute_kkt_system = true,
                     .enable_elastics = true,
                     .elastic_var_cost_coeff = 1e6};
   Workspace workspace;
@@ -24,7 +25,7 @@ TEST(SimpleQPFromOSQPRepo, SYMMETRIC_DIRECT_4x4) {
       0; // Unused with SYMMETRIC_DIRECT_4x4.
   constexpr int upper_hessian_f_plus_upper_jac_g_t_jac_g_nnz =
       0; // Unused with SYMMETRIC_DIRECT_4x4.
-  constexpr int kkt_L_nnz = 23;
+  constexpr int kkt_L_nnz = 15;
 
   workspace.reserve(settings.lin_sys_formulation, x_dim, s_dim, y_dim,
                     upper_hessian_f_nnz, jacobian_c_nnz, jacobian_g_nnz,
@@ -90,6 +91,11 @@ TEST(SimpleQPFromOSQPRepo, SYMMETRIC_DIRECT_4x4) {
 
   input.model_callback = model_callback;
 
+  const auto kkt_p = std::array{10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0};
+  const auto kkt_pinv = std::array{10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0};
+  input.kkt_p = kkt_p.data();
+  input.kkt_pinv = kkt_pinv.data();
+
   for (int i = 0; i < x_dim; ++i) {
     workspace.vars.x[i] = 0.0;
   }
@@ -120,6 +126,7 @@ TEST(SimpleQPFromOSQPRepo, SYMMETRIC_INDIRECT_3x3) {
       .max_kkt_violation = 1e-12,
       .lin_sys_formulation =
           Settings::LinearSystemFormulation::SYMMETRIC_INDIRECT_3x3,
+      .permute_kkt_system = true,
       .enable_elastics = true,
       .elastic_var_cost_coeff = 1e6};
   Workspace workspace;
@@ -133,7 +140,7 @@ TEST(SimpleQPFromOSQPRepo, SYMMETRIC_INDIRECT_3x3) {
   constexpr int jacobian_g_nnz = 4;
   constexpr int _unused_upper_jac_g_t_jac_g_nnz = 0;
   constexpr int _unused_upper_hessian_f_plus_upper_jac_g_t_jac_g_nnz = 0;
-  constexpr int kkt_L_nnz = 19;
+  constexpr int kkt_L_nnz = 7;
 
   workspace.reserve(
       settings.lin_sys_formulation, x_dim, s_dim, y_dim, upper_hessian_f_nnz,
@@ -198,6 +205,10 @@ TEST(SimpleQPFromOSQPRepo, SYMMETRIC_INDIRECT_3x3) {
   };
 
   input.model_callback = model_callback;
+  const auto kkt_p = std::array{6, 5, 4, 3, 2, 1, 0};
+  const auto kkt_pinv = std::array{6, 5, 4, 3, 2, 1, 0};
+  input.kkt_p = kkt_p.data();
+  input.kkt_pinv = kkt_pinv.data();
 
   for (int i = 0; i < x_dim; ++i) {
     workspace.vars.x[i] = 0.0;
@@ -229,6 +240,7 @@ TEST(SimpleQPFromOSQPRepo, SYMMETRIC_INDIRECT_2x2) {
       .max_kkt_violation = 1e-12,
       .lin_sys_formulation =
           Settings::LinearSystemFormulation::SYMMETRIC_INDIRECT_2x2,
+      .permute_kkt_system = true,
       .enable_elastics = true,
       .elastic_var_cost_coeff = 1e6};
   Workspace workspace;
@@ -306,6 +318,11 @@ TEST(SimpleQPFromOSQPRepo, SYMMETRIC_INDIRECT_2x2) {
   };
 
   input.model_callback = model_callback;
+
+  const auto kkt_p = std::array{2, 1, 0};
+  const auto kkt_pinv = std::array{2, 1, 0};
+  input.kkt_p = kkt_p.data();
+  input.kkt_pinv = kkt_pinv.data();
 
   for (int i = 0; i < x_dim; ++i) {
     workspace.vars.x[i] = 0.0;

@@ -97,7 +97,6 @@ auto merit_function_slope(const Settings &settings, const Workspace &workspace,
   // 1. merit_function
   // 2. merit_function_slope
   // 3. get_rho
-  // 4. build_nrhs_4x4 (s inversion)
   const auto &mco = workspace.model_callback_output;
   const int x_dim = mco.upper_hessian_f.rows;
   const int s_dim = get_s_dim(mco.jacobian_g);
@@ -240,12 +239,25 @@ auto build_nrhs_4x4(const Settings &settings, const double mu,
   }
 }
 
-auto compute_search_direction_4x4(const Settings &settings, const double mu,
-                                  Workspace &workspace)
+auto compute_search_direction_4x4(const Input &input, const Settings &settings,
+                                  const double mu, Workspace &workspace)
     -> std::tuple<double *, double *, double *, double *, double *, double,
                   double> {
   build_lhs_4x4(settings, workspace);
   build_nrhs_4x4(settings, mu, workspace);
+
+  if (settings.permute_kkt_system) {
+    assert(input.kkt_p != nullptr);
+    assert(input.kkt_pinv != nullptr);
+    int *AtoC = nullptr;
+    permute(workspace.kkt_workspace.lhs, input.kkt_pinv,
+            workspace.miscellaneous_workspace.permutation_workspace, AtoC,
+            workspace.kkt_workspace.permuted_lhs);
+  }
+
+  const auto &lhs = settings.permute_kkt_system
+                        ? workspace.kkt_workspace.permuted_lhs
+                        : workspace.kkt_workspace.lhs;
 
   const auto &model_callback_output = workspace.model_callback_output;
   const int x_dim = model_callback_output.upper_hessian_f.cols;
@@ -272,15 +284,13 @@ auto compute_search_direction_4x4(const Settings &settings, const double mu,
   const int dim = x_dim + y_dim + 2 * s_dim;
 
   const int sumLnz = QDLDL_etree(
-      workspace.kkt_workspace.lhs.rows, workspace.kkt_workspace.lhs.indptr,
-      workspace.kkt_workspace.lhs.ind, workspace.qdldl_workspace.iwork,
+      lhs.rows, lhs.indptr, lhs.ind, workspace.qdldl_workspace.iwork,
       workspace.qdldl_workspace.Lnz, workspace.qdldl_workspace.etree);
 
   assert(sumLnz >= 0);
 
   const int num_pos_D_entries = QDLDL_factor(
-      dim, workspace.kkt_workspace.lhs.indptr, workspace.kkt_workspace.lhs.ind,
-      workspace.kkt_workspace.lhs.data, workspace.qdldl_workspace.Lp,
+      dim, lhs.indptr, lhs.ind, lhs.data, workspace.qdldl_workspace.Lp,
       workspace.qdldl_workspace.Li, workspace.qdldl_workspace.Lx,
       workspace.qdldl_workspace.D, workspace.qdldl_workspace.Dinv,
       workspace.qdldl_workspace.Lnz, workspace.qdldl_workspace.etree,
@@ -289,8 +299,15 @@ auto compute_search_direction_4x4(const Settings &settings, const double mu,
 
   assert(num_pos_D_entries >= 0);
 
-  for (int i = 0; i < dim; ++i) {
-    workspace.qdldl_workspace.x[i] = -workspace.kkt_workspace.negative_rhs[i];
+  if (settings.permute_kkt_system) {
+    for (int i = 0; i < dim; ++i) {
+      workspace.qdldl_workspace.x[i] =
+          -workspace.kkt_workspace.negative_rhs[input.kkt_p[i]];
+    }
+  } else {
+    for (int i = 0; i < dim; ++i) {
+      workspace.qdldl_workspace.x[i] = -workspace.kkt_workspace.negative_rhs[i];
+    }
   }
 
   QDLDL_solve(dim, workspace.qdldl_workspace.Lp, workspace.qdldl_workspace.Li,
@@ -305,7 +322,7 @@ auto compute_search_direction_4x4(const Settings &settings, const double mu,
   double lin_sys_error = 0.0;
 
   add_Ax_to_y_where_A_upper_symmetric(
-      workspace.kkt_workspace.lhs, workspace.qdldl_workspace.x,
+      lhs, workspace.qdldl_workspace.x,
       workspace.miscellaneous_workspace.lin_sys_residual);
 
   for (int i = 0; i < dim; ++i) {
@@ -314,11 +331,36 @@ auto compute_search_direction_4x4(const Settings &settings, const double mu,
         std::fabs(workspace.miscellaneous_workspace.lin_sys_residual[i]));
   }
 
-  double *dx = workspace.qdldl_workspace.x;
-  double *ds = dx + x_dim;
-  double *dy = ds + s_dim;
-  double *dz = dy + y_dim;
+  double *dx = settings.permute_kkt_system ? workspace.vars.dx
+                                           : workspace.qdldl_workspace.x;
+  double *ds = settings.permute_kkt_system ? workspace.vars.ds : dx + x_dim;
+  double *dy = settings.permute_kkt_system ? workspace.vars.dy : ds + s_dim;
+  double *dz = settings.permute_kkt_system ? workspace.vars.dz : dy + y_dim;
   double *de = workspace.vars.de;
+
+  if (settings.permute_kkt_system) {
+    for (int i = 0; i < x_dim; ++i) {
+      dx[i] = workspace.qdldl_workspace.x[input.kkt_pinv[i]];
+    }
+
+    int offset = x_dim;
+
+    for (int i = 0; i < s_dim; ++i) {
+      ds[i] = workspace.qdldl_workspace.x[input.kkt_pinv[offset + i]];
+    }
+
+    offset += s_dim;
+
+    for (int i = 0; i < y_dim; ++i) {
+      dy[i] = workspace.qdldl_workspace.x[input.kkt_pinv[offset + i]];
+    }
+
+    offset += y_dim;
+
+    for (int i = 0; i < s_dim; ++i) {
+      dz[i] = workspace.qdldl_workspace.x[input.kkt_pinv[offset + i]];
+    }
+  }
 
   // de = (-dz - (pe + z)) / p
   if (settings.enable_elastics) {
@@ -447,12 +489,25 @@ auto build_nrhs_3x3(const Settings &settings, const double mu,
   }
 }
 
-auto compute_search_direction_3x3(const Settings &settings, const double mu,
-                                  Workspace &workspace)
+auto compute_search_direction_3x3(const Input &input, const Settings &settings,
+                                  const double mu, Workspace &workspace)
     -> std::tuple<double *, double *, double *, double *, double *, double,
                   double> {
   build_lhs_3x3(settings, workspace);
   build_nrhs_3x3(settings, mu, workspace);
+
+  if (settings.permute_kkt_system) {
+    assert(input.kkt_p != nullptr);
+    assert(input.kkt_pinv != nullptr);
+    int *AtoC = nullptr;
+    permute(workspace.kkt_workspace.lhs, input.kkt_pinv,
+            workspace.miscellaneous_workspace.permutation_workspace, AtoC,
+            workspace.kkt_workspace.permuted_lhs);
+  }
+
+  const auto &lhs = settings.permute_kkt_system
+                        ? workspace.kkt_workspace.permuted_lhs
+                        : workspace.kkt_workspace.lhs;
 
   const auto &model_callback_output = workspace.model_callback_output;
   const int x_dim = model_callback_output.upper_hessian_f.cols;
@@ -462,15 +517,13 @@ auto compute_search_direction_3x3(const Settings &settings, const double mu,
   const int dim = x_dim + s_dim + y_dim;
 
   const int sumLnz = QDLDL_etree(
-      workspace.kkt_workspace.lhs.rows, workspace.kkt_workspace.lhs.indptr,
-      workspace.kkt_workspace.lhs.ind, workspace.qdldl_workspace.iwork,
+      lhs.rows, lhs.indptr, lhs.ind, workspace.qdldl_workspace.iwork,
       workspace.qdldl_workspace.Lnz, workspace.qdldl_workspace.etree);
 
   assert(sumLnz >= 0);
 
   const int num_pos_D_entries = QDLDL_factor(
-      dim, workspace.kkt_workspace.lhs.indptr, workspace.kkt_workspace.lhs.ind,
-      workspace.kkt_workspace.lhs.data, workspace.qdldl_workspace.Lp,
+      dim, lhs.indptr, lhs.ind, lhs.data, workspace.qdldl_workspace.Lp,
       workspace.qdldl_workspace.Li, workspace.qdldl_workspace.Lx,
       workspace.qdldl_workspace.D, workspace.qdldl_workspace.Dinv,
       workspace.qdldl_workspace.Lnz, workspace.qdldl_workspace.etree,
@@ -479,19 +532,45 @@ auto compute_search_direction_3x3(const Settings &settings, const double mu,
 
   assert(num_pos_D_entries >= 0);
 
-  for (int i = 0; i < dim; ++i) {
-    workspace.qdldl_workspace.x[i] = -workspace.kkt_workspace.negative_rhs[i];
+  if (settings.permute_kkt_system) {
+    for (int i = 0; i < dim; ++i) {
+      workspace.qdldl_workspace.x[i] =
+          -workspace.kkt_workspace.negative_rhs[input.kkt_p[i]];
+    }
+  } else {
+    for (int i = 0; i < dim; ++i) {
+      workspace.qdldl_workspace.x[i] = -workspace.kkt_workspace.negative_rhs[i];
+    }
   }
 
   QDLDL_solve(dim, workspace.qdldl_workspace.Lp, workspace.qdldl_workspace.Li,
               workspace.qdldl_workspace.Lx, workspace.qdldl_workspace.Dinv,
               workspace.qdldl_workspace.x);
 
-  double *dx = workspace.qdldl_workspace.x;
-  double *dy = dx + x_dim;
-  double *dz = dx + x_dim + y_dim;
+  double *dx = settings.permute_kkt_system ? workspace.vars.dx
+                                           : workspace.qdldl_workspace.x;
+  double *dy = settings.permute_kkt_system ? workspace.vars.dy : dx + x_dim;
+  double *dz = settings.permute_kkt_system ? workspace.vars.dz : dy + y_dim;
   double *ds = workspace.vars.ds;
   double *de = workspace.vars.de;
+
+  if (settings.permute_kkt_system) {
+    for (int i = 0; i < x_dim; ++i) {
+      dx[i] = workspace.qdldl_workspace.x[input.kkt_pinv[i]];
+    }
+
+    int offset = x_dim;
+
+    for (int i = 0; i < y_dim; ++i) {
+      dy[i] = workspace.qdldl_workspace.x[input.kkt_pinv[offset + i]];
+    }
+
+    offset += y_dim;
+
+    for (int i = 0; i < s_dim; ++i) {
+      dz[i] = workspace.qdldl_workspace.x[input.kkt_pinv[offset + i]];
+    }
+  }
 
   // ds = z / p -(g(x) + s) + (gamma_z + 1 / p) * dz - G @ dx
   std::copy(workspace.miscellaneous_workspace.g_plus_s,
@@ -522,7 +601,7 @@ auto compute_search_direction_3x3(const Settings &settings, const double mu,
   }
 
   add_Ax_to_y_where_A_upper_symmetric(
-      workspace.kkt_workspace.lhs, workspace.qdldl_workspace.x,
+      lhs, workspace.qdldl_workspace.x,
       workspace.miscellaneous_workspace.lin_sys_residual);
 
   for (int i = 0; i < dim; ++i) {
@@ -653,12 +732,25 @@ auto build_nrhs_2x2(const Settings &settings, const double mu,
   }
 }
 
-auto compute_search_direction_2x2(const Settings &settings, const double mu,
-                                  Workspace &workspace)
+auto compute_search_direction_2x2(const Input &input, const Settings &settings,
+                                  const double mu, Workspace &workspace)
     -> std::tuple<double *, double *, double *, double *, double *, double,
                   double> {
   build_lhs_2x2(settings, workspace);
   build_nrhs_2x2(settings, mu, workspace);
+
+  if (settings.permute_kkt_system) {
+    assert(input.kkt_p != nullptr);
+    assert(input.kkt_pinv != nullptr);
+    int *AtoC = nullptr;
+    permute(workspace.kkt_workspace.lhs, input.kkt_pinv,
+            workspace.miscellaneous_workspace.permutation_workspace, AtoC,
+            workspace.kkt_workspace.permuted_lhs);
+  }
+
+  const auto &lhs = settings.permute_kkt_system
+                        ? workspace.kkt_workspace.permuted_lhs
+                        : workspace.kkt_workspace.lhs;
 
   const auto &model_callback_output = workspace.model_callback_output;
   const int x_dim = model_callback_output.upper_hessian_f.cols;
@@ -668,15 +760,13 @@ auto compute_search_direction_2x2(const Settings &settings, const double mu,
   const int dim = x_dim + y_dim;
 
   const int sumLnz = QDLDL_etree(
-      workspace.kkt_workspace.lhs.rows, workspace.kkt_workspace.lhs.indptr,
-      workspace.kkt_workspace.lhs.ind, workspace.qdldl_workspace.iwork,
+      lhs.rows, lhs.indptr, lhs.ind, workspace.qdldl_workspace.iwork,
       workspace.qdldl_workspace.Lnz, workspace.qdldl_workspace.etree);
 
   assert(sumLnz >= 0);
 
   const int num_pos_D_entries = QDLDL_factor(
-      dim, workspace.kkt_workspace.lhs.indptr, workspace.kkt_workspace.lhs.ind,
-      workspace.kkt_workspace.lhs.data, workspace.qdldl_workspace.Lp,
+      dim, lhs.indptr, lhs.ind, lhs.data, workspace.qdldl_workspace.Lp,
       workspace.qdldl_workspace.Li, workspace.qdldl_workspace.Lx,
       workspace.qdldl_workspace.D, workspace.qdldl_workspace.Dinv,
       workspace.qdldl_workspace.Lnz, workspace.qdldl_workspace.etree,
@@ -685,19 +775,37 @@ auto compute_search_direction_2x2(const Settings &settings, const double mu,
 
   assert(num_pos_D_entries >= 0);
 
-  for (int i = 0; i < dim; ++i) {
-    workspace.qdldl_workspace.x[i] = -workspace.kkt_workspace.negative_rhs[i];
+  if (settings.permute_kkt_system) {
+    for (int i = 0; i < dim; ++i) {
+      workspace.qdldl_workspace.x[i] =
+          -workspace.kkt_workspace.negative_rhs[input.kkt_p[i]];
+    }
+  } else {
+    for (int i = 0; i < dim; ++i) {
+      workspace.qdldl_workspace.x[i] = -workspace.kkt_workspace.negative_rhs[i];
+    }
   }
 
   QDLDL_solve(dim, workspace.qdldl_workspace.Lp, workspace.qdldl_workspace.Li,
               workspace.qdldl_workspace.Lx, workspace.qdldl_workspace.Dinv,
               workspace.qdldl_workspace.x);
 
-  double *dx = workspace.qdldl_workspace.x;
-  double *dy = dx + x_dim;
+  double *dx = settings.permute_kkt_system ? workspace.vars.dx
+                                           : workspace.qdldl_workspace.x;
+  double *dy = settings.permute_kkt_system ? workspace.vars.dy : dx + x_dim;
   double *ds = workspace.vars.ds;
   double *dz = workspace.vars.dz;
   double *de = workspace.vars.de;
+
+  if (settings.permute_kkt_system) {
+    for (int i = 0; i < x_dim; ++i) {
+      dx[i] = workspace.qdldl_workspace.x[input.kkt_pinv[i]];
+    }
+
+    for (int i = 0; i < y_dim; ++i) {
+      dy[i] = workspace.qdldl_workspace.x[input.kkt_pinv[x_dim + i]];
+    }
+  }
 
   // dz = sigma @ (g(x) + G @ dx + (mu / z - z / p))
   for (int i = 0; i < s_dim; ++i) {
@@ -737,7 +845,7 @@ auto compute_search_direction_2x2(const Settings &settings, const double mu,
   }
 
   add_Ax_to_y_where_A_upper_symmetric(
-      workspace.kkt_workspace.lhs, workspace.qdldl_workspace.x,
+      lhs, workspace.qdldl_workspace.x,
       workspace.miscellaneous_workspace.lin_sys_residual);
 
   for (int i = 0; i < dim; ++i) {
@@ -765,18 +873,18 @@ auto compute_search_direction_2x2(const Settings &settings, const double mu,
   return {dx, ds, dy, dz, de, kkt_error, lin_sys_error};
 }
 
-auto compute_search_direction(const Settings &settings, const double mu,
-                              Workspace &workspace)
+auto compute_search_direction(const Input &input, const Settings &settings,
+                              const double mu, Workspace &workspace)
     -> std::tuple<double *, double *, double *, double *, double *, double,
                   double> {
 
   switch (settings.lin_sys_formulation) {
   case Settings::LinearSystemFormulation::SYMMETRIC_DIRECT_4x4:
-    return compute_search_direction_4x4(settings, mu, workspace);
+    return compute_search_direction_4x4(input, settings, mu, workspace);
   case Settings::LinearSystemFormulation::SYMMETRIC_INDIRECT_3x3:
-    return compute_search_direction_3x3(settings, mu, workspace);
+    return compute_search_direction_3x3(input, settings, mu, workspace);
   case Settings::LinearSystemFormulation::SYMMETRIC_INDIRECT_2x2:
-    return compute_search_direction_2x2(settings, mu, workspace);
+    return compute_search_direction_2x2(input, settings, mu, workspace);
   }
 }
 
@@ -846,7 +954,7 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace,
                  settings.mu_min);
 
     const auto [dx, ds, dy, dz, de, kkt_error, lin_sys_error] =
-        compute_search_direction(settings, mu, workspace);
+        compute_search_direction(input, settings, mu, workspace);
 
     if (kkt_error < settings.max_kkt_violation) {
       output.exit_status = Status::SOLVED;
@@ -1107,7 +1215,9 @@ void VariablesWorkspace::reserve(int x_dim, int s_dim, int y_dim) {
   next_x = new double[x_dim];
   next_s = new double[s_dim];
   next_e = new double[s_dim];
+  dx = new double[x_dim];
   ds = new double[s_dim];
+  dy = new double[y_dim];
   dz = new double[s_dim];
   de = new double[s_dim];
 }
@@ -1121,7 +1231,9 @@ void VariablesWorkspace::free() {
   ::free(next_x);
   ::free(next_s);
   ::free(next_e);
+  ::free(dx);
   ::free(ds);
+  ::free(dy);
   ::free(dz);
   ::free(de);
 }
@@ -1154,8 +1266,14 @@ auto VariablesWorkspace::mem_assign(int x_dim, int s_dim, int y_dim,
   next_e = reinterpret_cast<decltype(next_e)>(mem_ptr + cum_size);
   cum_size += s_dim * sizeof(double);
 
+  dx = reinterpret_cast<decltype(dx)>(mem_ptr + cum_size);
+  cum_size += x_dim * sizeof(double);
+
   ds = reinterpret_cast<decltype(ds)>(mem_ptr + cum_size);
   cum_size += s_dim * sizeof(double);
+
+  dy = reinterpret_cast<decltype(dy)>(mem_ptr + cum_size);
+  cum_size += y_dim * sizeof(double);
 
   dz = reinterpret_cast<decltype(dz)>(mem_ptr + cum_size);
   cum_size += s_dim * sizeof(double);
@@ -1175,6 +1293,7 @@ void MiscellaneousWorkspace::reserve(int x_dim, int s_dim, int kkt_dim,
   sigma = new double[s_dim];
   sigma_times_g_plus_mu_over_z_minus_z_over_p = new double[s_dim];
   jac_g_t_sigma_jac_g.reserve(x_dim, upper_jac_g_t_jac_g_nnz);
+  permutation_workspace = new int[kkt_dim];
 }
 
 void MiscellaneousWorkspace::free() {
@@ -1185,6 +1304,7 @@ void MiscellaneousWorkspace::free() {
   ::free(sigma);
   ::free(sigma_times_g_plus_mu_over_z_minus_z_over_p);
   jac_g_t_sigma_jac_g.free();
+  ::free(permutation_workspace);
 }
 
 auto MiscellaneousWorkspace::mem_assign(int x_dim, int s_dim, int kkt_dim,
@@ -1218,16 +1338,22 @@ auto MiscellaneousWorkspace::mem_assign(int x_dim, int s_dim, int kkt_dim,
   cum_size += jac_g_t_sigma_jac_g.mem_assign(x_dim, jac_g_t_jac_g_nnz,
                                              mem_ptr + cum_size);
 
+  permutation_workspace =
+      reinterpret_cast<decltype(permutation_workspace)>(mem_ptr + cum_size);
+  cum_size += kkt_dim * sizeof(int);
+
   return cum_size;
 }
 
 void KKTWorkspace::reserve(int kkt_dim, int kkt_nnz) {
   lhs.reserve(kkt_dim, kkt_nnz);
+  permuted_lhs.reserve(kkt_dim, kkt_nnz);
   negative_rhs = new double[kkt_dim];
 }
 
 void KKTWorkspace::free() {
   lhs.free();
+  permuted_lhs.free();
   ::free(negative_rhs);
 }
 
@@ -1236,6 +1362,7 @@ auto KKTWorkspace::mem_assign(int kkt_dim, int kkt_nnz,
   int cum_size = 0;
 
   cum_size += lhs.mem_assign(kkt_dim, kkt_nnz, mem_ptr + cum_size);
+  cum_size += permuted_lhs.mem_assign(kkt_dim, kkt_nnz, mem_ptr + cum_size);
 
   negative_rhs = reinterpret_cast<decltype(negative_rhs)>(mem_ptr + cum_size);
   cum_size += kkt_dim * sizeof(double);
