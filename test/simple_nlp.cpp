@@ -26,8 +26,9 @@ TEST(SimpleNLP, SYMMETRIC_DIRECT_4x4) {
   constexpr int kkt_L_nnz = 11;
 
   workspace.reserve(
-      settings.lin_sys_formulation, x_dim, s_dim, y_dim, upper_hessian_f_nnz,
-      jacobian_c_nnz, jacobian_g_nnz, _unused_upper_jac_g_t_jac_g_nnz,
+      settings.lin_sys_formulation, settings.custom_lin_sys_solver.has_value(),
+      x_dim, s_dim, y_dim, upper_hessian_f_nnz, jacobian_c_nnz, jacobian_g_nnz,
+      _unused_upper_jac_g_t_jac_g_nnz,
       _unused_upper_hessian_f_plus_upper_jac_g_t_jac_g_nnz, kkt_L_nnz);
 
   auto model_callback = [](const ModelCallbackInput &mci,
@@ -134,8 +135,9 @@ TEST(SimpleNLP, SYMMETRIC_INDIRECT_3x3) {
   constexpr int kkt_L_nnz = 5;
 
   workspace.reserve(
-      settings.lin_sys_formulation, x_dim, s_dim, y_dim, upper_hessian_f_nnz,
-      jacobian_c_nnz, jacobian_g_nnz, _unused_upper_jac_g_t_jac_g_nnz,
+      settings.lin_sys_formulation, settings.custom_lin_sys_solver.has_value(),
+      x_dim, s_dim, y_dim, upper_hessian_f_nnz, jacobian_c_nnz, jacobian_g_nnz,
+      _unused_upper_jac_g_t_jac_g_nnz,
       _unused_upper_hessian_f_plus_upper_jac_g_t_jac_g_nnz, kkt_L_nnz);
 
   auto model_callback = [](const ModelCallbackInput &mci,
@@ -240,8 +242,9 @@ TEST(SimpleNLP, SYMMETRIC_INDIRECT_2x2) {
   constexpr int upper_hessian_f_plus_upper_jac_g_t_jac_g_nnz = 3;
   constexpr int kkt_L_nnz = 1;
 
-  workspace.reserve(settings.lin_sys_formulation, x_dim, s_dim, y_dim,
-                    upper_hessian_f_nnz, jacobian_c_nnz, jacobian_g_nnz,
+  workspace.reserve(settings.lin_sys_formulation,
+                    settings.custom_lin_sys_solver.has_value(), x_dim, s_dim,
+                    y_dim, upper_hessian_f_nnz, jacobian_c_nnz, jacobian_g_nnz,
                     upper_jac_g_t_jac_g_nnz,
                     upper_hessian_f_plus_upper_jac_g_t_jac_g_nnz, kkt_L_nnz);
 

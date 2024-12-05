@@ -21,8 +21,8 @@ auto get_y_dim(const SparseMatrix &jacobian_c) -> int {
 }
 
 auto get_max_step_sizes(const int s_dim, const double tau, const double *s,
-                        const double *z, const double *ds,
-                        const double *dz) -> std::pair<double, double> {
+                        const double *z, const double *ds, const double *dz)
+    -> std::pair<double, double> {
   // s + alpha_s_max * ds >= (1 - tau) * s
   // z + alpha_z_max * dz >= (1 - tau) * z
 
@@ -283,36 +283,46 @@ auto compute_search_direction_4x4(const Input &input, const Settings &settings,
 
   const int dim = x_dim + y_dim + 2 * s_dim;
 
-  const int sumLnz = QDLDL_etree(
-      lhs.rows, lhs.indptr, lhs.ind, workspace.qdldl_workspace.iwork,
-      workspace.qdldl_workspace.Lnz, workspace.qdldl_workspace.etree);
-
-  assert(sumLnz >= 0);
-
-  const int num_pos_D_entries = QDLDL_factor(
-      dim, lhs.indptr, lhs.ind, lhs.data, workspace.qdldl_workspace.Lp,
-      workspace.qdldl_workspace.Li, workspace.qdldl_workspace.Lx,
-      workspace.qdldl_workspace.D, workspace.qdldl_workspace.Dinv,
-      workspace.qdldl_workspace.Lnz, workspace.qdldl_workspace.etree,
-      workspace.qdldl_workspace.bwork, workspace.qdldl_workspace.iwork,
-      workspace.qdldl_workspace.fwork);
-
-  assert(num_pos_D_entries >= 0);
-
-  if (settings.permute_kkt_system) {
+  if (settings.custom_lin_sys_solver.has_value()) {
+    settings.custom_lin_sys_solver.value()(lhs.data,
+                                           workspace.kkt_workspace.negative_rhs,
+                                           workspace.qdldl_workspace.x);
     for (int i = 0; i < dim; ++i) {
-      workspace.qdldl_workspace.x[i] =
-          -workspace.kkt_workspace.negative_rhs[input.kkt_p[i]];
+      workspace.qdldl_workspace.x[i] = -workspace.qdldl_workspace.x[i];
     }
   } else {
-    for (int i = 0; i < dim; ++i) {
-      workspace.qdldl_workspace.x[i] = -workspace.kkt_workspace.negative_rhs[i];
-    }
-  }
+    [[maybe_unused]] const int sumLnz = QDLDL_etree(
+        lhs.rows, lhs.indptr, lhs.ind, workspace.qdldl_workspace.iwork,
+        workspace.qdldl_workspace.Lnz, workspace.qdldl_workspace.etree);
 
-  QDLDL_solve(dim, workspace.qdldl_workspace.Lp, workspace.qdldl_workspace.Li,
-              workspace.qdldl_workspace.Lx, workspace.qdldl_workspace.Dinv,
-              workspace.qdldl_workspace.x);
+    assert(sumLnz >= 0);
+
+    [[maybe_unused]] const int num_pos_D_entries = QDLDL_factor(
+        dim, lhs.indptr, lhs.ind, lhs.data, workspace.qdldl_workspace.Lp,
+        workspace.qdldl_workspace.Li, workspace.qdldl_workspace.Lx,
+        workspace.qdldl_workspace.D, workspace.qdldl_workspace.Dinv,
+        workspace.qdldl_workspace.Lnz, workspace.qdldl_workspace.etree,
+        workspace.qdldl_workspace.bwork, workspace.qdldl_workspace.iwork,
+        workspace.qdldl_workspace.fwork);
+
+    assert(num_pos_D_entries >= 0);
+
+    if (settings.permute_kkt_system) {
+      for (int i = 0; i < dim; ++i) {
+        workspace.qdldl_workspace.x[i] =
+            -workspace.kkt_workspace.negative_rhs[input.kkt_p[i]];
+      }
+    } else {
+      for (int i = 0; i < dim; ++i) {
+        workspace.qdldl_workspace.x[i] =
+            -workspace.kkt_workspace.negative_rhs[i];
+      }
+    }
+
+    QDLDL_solve(dim, workspace.qdldl_workspace.Lp, workspace.qdldl_workspace.Li,
+                workspace.qdldl_workspace.Lx, workspace.qdldl_workspace.Dinv,
+                workspace.qdldl_workspace.x);
+  }
 
   for (int i = 0; i < dim; ++i) {
     workspace.miscellaneous_workspace.lin_sys_residual[i] =
@@ -516,36 +526,46 @@ auto compute_search_direction_3x3(const Input &input, const Settings &settings,
 
   const int dim = x_dim + s_dim + y_dim;
 
-  const int sumLnz = QDLDL_etree(
-      lhs.rows, lhs.indptr, lhs.ind, workspace.qdldl_workspace.iwork,
-      workspace.qdldl_workspace.Lnz, workspace.qdldl_workspace.etree);
-
-  assert(sumLnz >= 0);
-
-  const int num_pos_D_entries = QDLDL_factor(
-      dim, lhs.indptr, lhs.ind, lhs.data, workspace.qdldl_workspace.Lp,
-      workspace.qdldl_workspace.Li, workspace.qdldl_workspace.Lx,
-      workspace.qdldl_workspace.D, workspace.qdldl_workspace.Dinv,
-      workspace.qdldl_workspace.Lnz, workspace.qdldl_workspace.etree,
-      workspace.qdldl_workspace.bwork, workspace.qdldl_workspace.iwork,
-      workspace.qdldl_workspace.fwork);
-
-  assert(num_pos_D_entries >= 0);
-
-  if (settings.permute_kkt_system) {
+  if (settings.custom_lin_sys_solver.has_value()) {
+    settings.custom_lin_sys_solver.value()(lhs.data,
+                                           workspace.kkt_workspace.negative_rhs,
+                                           workspace.qdldl_workspace.x);
     for (int i = 0; i < dim; ++i) {
-      workspace.qdldl_workspace.x[i] =
-          -workspace.kkt_workspace.negative_rhs[input.kkt_p[i]];
+      workspace.qdldl_workspace.x[i] = -workspace.qdldl_workspace.x[i];
     }
   } else {
-    for (int i = 0; i < dim; ++i) {
-      workspace.qdldl_workspace.x[i] = -workspace.kkt_workspace.negative_rhs[i];
-    }
-  }
+    [[maybe_unused]] const int sumLnz = QDLDL_etree(
+        lhs.rows, lhs.indptr, lhs.ind, workspace.qdldl_workspace.iwork,
+        workspace.qdldl_workspace.Lnz, workspace.qdldl_workspace.etree);
 
-  QDLDL_solve(dim, workspace.qdldl_workspace.Lp, workspace.qdldl_workspace.Li,
-              workspace.qdldl_workspace.Lx, workspace.qdldl_workspace.Dinv,
-              workspace.qdldl_workspace.x);
+    assert(sumLnz >= 0);
+
+    [[maybe_unused]] const int num_pos_D_entries = QDLDL_factor(
+        dim, lhs.indptr, lhs.ind, lhs.data, workspace.qdldl_workspace.Lp,
+        workspace.qdldl_workspace.Li, workspace.qdldl_workspace.Lx,
+        workspace.qdldl_workspace.D, workspace.qdldl_workspace.Dinv,
+        workspace.qdldl_workspace.Lnz, workspace.qdldl_workspace.etree,
+        workspace.qdldl_workspace.bwork, workspace.qdldl_workspace.iwork,
+        workspace.qdldl_workspace.fwork);
+
+    assert(num_pos_D_entries >= 0);
+
+    if (settings.permute_kkt_system) {
+      for (int i = 0; i < dim; ++i) {
+        workspace.qdldl_workspace.x[i] =
+            -workspace.kkt_workspace.negative_rhs[input.kkt_p[i]];
+      }
+    } else {
+      for (int i = 0; i < dim; ++i) {
+        workspace.qdldl_workspace.x[i] =
+            -workspace.kkt_workspace.negative_rhs[i];
+      }
+    }
+
+    QDLDL_solve(dim, workspace.qdldl_workspace.Lp, workspace.qdldl_workspace.Li,
+                workspace.qdldl_workspace.Lx, workspace.qdldl_workspace.Dinv,
+                workspace.qdldl_workspace.x);
+  }
 
   double *dx = settings.permute_kkt_system ? workspace.vars.dx
                                            : workspace.qdldl_workspace.x;
@@ -759,36 +779,46 @@ auto compute_search_direction_2x2(const Input &input, const Settings &settings,
 
   const int dim = x_dim + y_dim;
 
-  const int sumLnz = QDLDL_etree(
-      lhs.rows, lhs.indptr, lhs.ind, workspace.qdldl_workspace.iwork,
-      workspace.qdldl_workspace.Lnz, workspace.qdldl_workspace.etree);
-
-  assert(sumLnz >= 0);
-
-  const int num_pos_D_entries = QDLDL_factor(
-      dim, lhs.indptr, lhs.ind, lhs.data, workspace.qdldl_workspace.Lp,
-      workspace.qdldl_workspace.Li, workspace.qdldl_workspace.Lx,
-      workspace.qdldl_workspace.D, workspace.qdldl_workspace.Dinv,
-      workspace.qdldl_workspace.Lnz, workspace.qdldl_workspace.etree,
-      workspace.qdldl_workspace.bwork, workspace.qdldl_workspace.iwork,
-      workspace.qdldl_workspace.fwork);
-
-  assert(num_pos_D_entries >= 0);
-
-  if (settings.permute_kkt_system) {
+  if (settings.custom_lin_sys_solver.has_value()) {
+    settings.custom_lin_sys_solver.value()(lhs.data,
+                                           workspace.kkt_workspace.negative_rhs,
+                                           workspace.qdldl_workspace.x);
     for (int i = 0; i < dim; ++i) {
-      workspace.qdldl_workspace.x[i] =
-          -workspace.kkt_workspace.negative_rhs[input.kkt_p[i]];
+      workspace.qdldl_workspace.x[i] = -workspace.qdldl_workspace.x[i];
     }
   } else {
-    for (int i = 0; i < dim; ++i) {
-      workspace.qdldl_workspace.x[i] = -workspace.kkt_workspace.negative_rhs[i];
-    }
-  }
+    [[maybe_unused]] const int sumLnz = QDLDL_etree(
+        lhs.rows, lhs.indptr, lhs.ind, workspace.qdldl_workspace.iwork,
+        workspace.qdldl_workspace.Lnz, workspace.qdldl_workspace.etree);
 
-  QDLDL_solve(dim, workspace.qdldl_workspace.Lp, workspace.qdldl_workspace.Li,
-              workspace.qdldl_workspace.Lx, workspace.qdldl_workspace.Dinv,
-              workspace.qdldl_workspace.x);
+    assert(sumLnz >= 0);
+
+    [[maybe_unused]] const int num_pos_D_entries = QDLDL_factor(
+        dim, lhs.indptr, lhs.ind, lhs.data, workspace.qdldl_workspace.Lp,
+        workspace.qdldl_workspace.Li, workspace.qdldl_workspace.Lx,
+        workspace.qdldl_workspace.D, workspace.qdldl_workspace.Dinv,
+        workspace.qdldl_workspace.Lnz, workspace.qdldl_workspace.etree,
+        workspace.qdldl_workspace.bwork, workspace.qdldl_workspace.iwork,
+        workspace.qdldl_workspace.fwork);
+
+    assert(num_pos_D_entries >= 0);
+
+    if (settings.permute_kkt_system) {
+      for (int i = 0; i < dim; ++i) {
+        workspace.qdldl_workspace.x[i] =
+            -workspace.kkt_workspace.negative_rhs[input.kkt_p[i]];
+      }
+    } else {
+      for (int i = 0; i < dim; ++i) {
+        workspace.qdldl_workspace.x[i] =
+            -workspace.kkt_workspace.negative_rhs[i];
+      }
+    }
+
+    QDLDL_solve(dim, workspace.qdldl_workspace.Lp, workspace.qdldl_workspace.Li,
+                workspace.qdldl_workspace.Lx, workspace.qdldl_workspace.Dinv,
+                workspace.qdldl_workspace.x);
+  }
 
   double *dx = settings.permute_kkt_system ? workspace.vars.dx
                                            : workspace.qdldl_workspace.x;
@@ -888,9 +918,12 @@ auto compute_search_direction(const Input &input, const Settings &settings,
   }
 }
 
-auto check_inputs(const ModelCallbackOutput &mco, const Settings &settings) {
+auto check_inputs([[maybe_unused]] const ModelCallbackOutput &mco,
+                  [[maybe_unused]] const Settings &settings) {
   assert(!settings.enable_elastics || settings.elastic_var_cost_coeff > 0.0);
   assert(mco.jacobian_c.is_transposed);
+  assert(!settings.custom_lin_sys_solver.has_value() ||
+         !settings.permute_kkt_system);
   switch (settings.lin_sys_formulation) {
   case Settings::LinearSystemFormulation::SYMMETRIC_DIRECT_4x4:
     assert(mco.jacobian_g.is_transposed);
@@ -1093,11 +1126,11 @@ void ModelCallbackOutput::reserve(
 }
 
 void ModelCallbackOutput::free() {
-  ::free(gradient_f);
+  delete[] gradient_f;
   upper_hessian_f.free();
-  ::free(c);
+  delete[] c;
   jacobian_c.free();
-  ::free(g);
+  delete[] g;
   jacobian_g.free();
 }
 
@@ -1138,67 +1171,68 @@ auto ModelCallbackOutput::mem_assign(
   return cum_size;
 }
 
-void QDLDLWorkspace::reserve(int kkt_dim, int kkt_L_nnz) {
-  etree = new int[kkt_dim];
-  Lnz = new int[kkt_dim];
-  iwork = new int[3 * kkt_dim];
-  bwork = new unsigned char[kkt_dim];
-  fwork = new double[kkt_dim];
-  Lp = new int[kkt_dim + 1];
-  Li = new int[kkt_L_nnz];
-  Lx = new double[kkt_L_nnz];
-  D = new double[kkt_dim];
-  Dinv = new double[kkt_dim];
+void QDLDLWorkspace::reserve(bool has_custom_linear_solver, int kkt_dim,
+                             int kkt_L_nnz) {
+  etree = new int[has_custom_linear_solver ? 0 : kkt_dim];
+  Lnz = new int[has_custom_linear_solver ? 0 : kkt_dim];
+  iwork = new int[has_custom_linear_solver ? 0 : 3 * kkt_dim];
+  bwork = new unsigned char[has_custom_linear_solver ? 0 : kkt_dim];
+  fwork = new double[has_custom_linear_solver ? 0 : kkt_dim];
+  Lp = new int[has_custom_linear_solver ? 0 : kkt_dim + 1];
+  Li = new int[has_custom_linear_solver ? 0 : kkt_L_nnz];
+  Lx = new double[has_custom_linear_solver ? 0 : kkt_L_nnz];
+  D = new double[has_custom_linear_solver ? 0 : kkt_dim];
+  Dinv = new double[has_custom_linear_solver ? 0 : kkt_dim];
   x = new double[kkt_dim];
 }
 
 void QDLDLWorkspace::free() {
-  ::free(etree);
-  ::free(Lnz);
-  ::free(iwork);
-  ::free(bwork);
-  ::free(fwork);
-  ::free(Lp);
-  ::free(Li);
-  ::free(Lx);
-  ::free(D);
-  ::free(Dinv);
-  ::free(x);
+  delete[] etree;
+  delete[] Lnz;
+  delete[] iwork;
+  delete[] bwork;
+  delete[] fwork;
+  delete[] Lp;
+  delete[] Li;
+  delete[] Lx;
+  delete[] D;
+  delete[] Dinv;
+  delete[] x;
 }
 
-auto QDLDLWorkspace::mem_assign(int kkt_dim, int kkt_L_nnz,
-                                unsigned char *mem_ptr) -> int {
+auto QDLDLWorkspace::mem_assign(bool has_custom_linear_solver, int kkt_dim,
+                                int kkt_L_nnz, unsigned char *mem_ptr) -> int {
   int cum_size = 0;
 
   etree = reinterpret_cast<decltype(etree)>(mem_ptr + cum_size);
-  cum_size += kkt_dim * sizeof(int);
+  cum_size += has_custom_linear_solver ? 0 : kkt_dim * sizeof(int);
 
   Lnz = reinterpret_cast<decltype(Lnz)>(mem_ptr + cum_size);
-  cum_size += kkt_dim * sizeof(int);
+  cum_size += has_custom_linear_solver ? 0 : kkt_dim * sizeof(int);
 
   iwork = reinterpret_cast<decltype(iwork)>(mem_ptr + cum_size);
-  cum_size += 3 * kkt_dim * sizeof(int);
+  cum_size += has_custom_linear_solver ? 0 : 3 * kkt_dim * sizeof(int);
 
   bwork = reinterpret_cast<decltype(bwork)>(mem_ptr + cum_size);
-  cum_size += kkt_dim * sizeof(unsigned char);
+  cum_size += has_custom_linear_solver ? 0 : kkt_dim * sizeof(unsigned char);
 
   fwork = reinterpret_cast<decltype(fwork)>(mem_ptr + cum_size);
-  cum_size += kkt_dim * sizeof(double);
+  cum_size += has_custom_linear_solver ? 0 : kkt_dim * sizeof(double);
 
   Lp = reinterpret_cast<decltype(Lp)>(mem_ptr + cum_size);
-  cum_size += (kkt_dim + 1) * sizeof(int);
+  cum_size += has_custom_linear_solver ? 0 : (kkt_dim + 1) * sizeof(int);
 
   Li = reinterpret_cast<decltype(Li)>(mem_ptr + cum_size);
-  cum_size += kkt_L_nnz * sizeof(int);
+  cum_size += has_custom_linear_solver ? 0 : kkt_L_nnz * sizeof(int);
 
   Lx = reinterpret_cast<decltype(Lx)>(mem_ptr + cum_size);
-  cum_size += kkt_L_nnz * sizeof(double);
+  cum_size += has_custom_linear_solver ? 0 : kkt_L_nnz * sizeof(double);
 
   D = reinterpret_cast<decltype(D)>(mem_ptr + cum_size);
-  cum_size += kkt_dim * sizeof(double);
+  cum_size += has_custom_linear_solver ? 0 : kkt_dim * sizeof(double);
 
   Dinv = reinterpret_cast<decltype(Dinv)>(mem_ptr + cum_size);
-  cum_size += kkt_dim * sizeof(double);
+  cum_size += has_custom_linear_solver ? 0 : kkt_dim * sizeof(double);
 
   x = reinterpret_cast<decltype(x)>(mem_ptr + cum_size);
   cum_size += kkt_dim * sizeof(double);
@@ -1223,19 +1257,19 @@ void VariablesWorkspace::reserve(int x_dim, int s_dim, int y_dim) {
 }
 
 void VariablesWorkspace::free() {
-  ::free(x);
-  ::free(s);
-  ::free(y);
-  ::free(z);
-  ::free(e);
-  ::free(next_x);
-  ::free(next_s);
-  ::free(next_e);
-  ::free(dx);
-  ::free(ds);
-  ::free(dy);
-  ::free(dz);
-  ::free(de);
+  delete[] x;
+  delete[] s;
+  delete[] y;
+  delete[] z;
+  delete[] e;
+  delete[] next_x;
+  delete[] next_s;
+  delete[] next_e;
+  delete[] dx;
+  delete[] ds;
+  delete[] dy;
+  delete[] dz;
+  delete[] de;
 }
 
 auto VariablesWorkspace::mem_assign(int x_dim, int s_dim, int y_dim,
@@ -1297,14 +1331,14 @@ void MiscellaneousWorkspace::reserve(int x_dim, int s_dim, int kkt_dim,
 }
 
 void MiscellaneousWorkspace::free() {
-  ::free(g_plus_s);
-  ::free(g_plus_s_plus_e);
-  ::free(lin_sys_residual);
-  ::free(grad_x_lagrangian);
-  ::free(sigma);
-  ::free(sigma_times_g_plus_mu_over_z_minus_z_over_p);
+  delete[] g_plus_s;
+  delete[] g_plus_s_plus_e;
+  delete[] lin_sys_residual;
+  delete[] grad_x_lagrangian;
+  delete[] sigma;
+  delete[] sigma_times_g_plus_mu_over_z_minus_z_over_p;
   jac_g_t_sigma_jac_g.free();
-  ::free(permutation_workspace);
+  delete[] permutation_workspace;
 }
 
 auto MiscellaneousWorkspace::mem_assign(int x_dim, int s_dim, int kkt_dim,
@@ -1354,11 +1388,11 @@ void KKTWorkspace::reserve(int kkt_dim, int kkt_nnz) {
 void KKTWorkspace::free() {
   lhs.free();
   permuted_lhs.free();
-  ::free(negative_rhs);
+  delete[] negative_rhs;
 }
 
-auto KKTWorkspace::mem_assign(int kkt_dim, int kkt_nnz,
-                              unsigned char *mem_ptr) -> int {
+auto KKTWorkspace::mem_assign(int kkt_dim, int kkt_nnz, unsigned char *mem_ptr)
+    -> int {
   int cum_size = 0;
 
   cum_size += lhs.mem_assign(kkt_dim, kkt_nnz, mem_ptr + cum_size);
@@ -1401,8 +1435,8 @@ auto get_kkt_nnz(Settings::LinearSystemFormulation lin_sys_formulation,
 };
 
 void Workspace::reserve(Settings::LinearSystemFormulation lin_sys_formulation,
-                        int x_dim, int s_dim, int y_dim,
-                        int upper_hessian_f_nnz, int jacobian_c_nnz,
+                        bool has_custom_linear_solver, int x_dim, int s_dim,
+                        int y_dim, int upper_hessian_f_nnz, int jacobian_c_nnz,
                         int jacobian_g_nnz, int upper_jac_g_t_jac_g_nnz,
                         int upper_hessian_f_plus_upper_jac_g_t_jac_g_nnz,
                         int kkt_L_nnz) {
@@ -1413,7 +1447,7 @@ void Workspace::reserve(Settings::LinearSystemFormulation lin_sys_formulation,
 
   vars.reserve(x_dim, s_dim, y_dim);
   kkt_workspace.reserve(kkt_dim, kkt_nnz);
-  qdldl_workspace.reserve(kkt_dim, kkt_L_nnz);
+  qdldl_workspace.reserve(has_custom_linear_solver, kkt_dim, kkt_L_nnz);
   model_callback_output.reserve(lin_sys_formulation, x_dim, s_dim, y_dim,
                                 upper_hessian_f_nnz, jacobian_c_nnz,
                                 jacobian_g_nnz);
@@ -1430,11 +1464,11 @@ void Workspace::free() {
 }
 
 auto Workspace::mem_assign(
-    Settings::LinearSystemFormulation lin_sys_formulation, int x_dim, int s_dim,
-    int y_dim, int upper_hessian_f_nnz, int jacobian_c_nnz,
-    int jac_g_t_jac_g_nnz, int jacobian_g_nnz,
-    int upper_hessian_f_plus_upper_jac_g_t_jac_g_nnz, int kkt_L_nnz,
-    unsigned char *mem_ptr) -> int {
+    Settings::LinearSystemFormulation lin_sys_formulation,
+    bool has_custom_linear_solver, int x_dim, int s_dim, int y_dim,
+    int upper_hessian_f_nnz, int jacobian_c_nnz, int jac_g_t_jac_g_nnz,
+    int jacobian_g_nnz, int upper_hessian_f_plus_upper_jac_g_t_jac_g_nnz,
+    int kkt_L_nnz, unsigned char *mem_ptr) -> int {
   const int kkt_dim = get_kkt_dim(lin_sys_formulation, x_dim, s_dim, y_dim);
   const int kkt_nnz = get_kkt_nnz(
       lin_sys_formulation, upper_hessian_f_nnz, jacobian_c_nnz, jacobian_g_nnz,
@@ -1444,8 +1478,8 @@ auto Workspace::mem_assign(
 
   cum_size += vars.mem_assign(x_dim, s_dim, y_dim, mem_ptr + cum_size);
   cum_size += kkt_workspace.mem_assign(kkt_dim, kkt_nnz, mem_ptr + cum_size);
-  cum_size +=
-      qdldl_workspace.mem_assign(kkt_dim, kkt_L_nnz, mem_ptr + cum_size);
+  cum_size += qdldl_workspace.mem_assign(has_custom_linear_solver, kkt_dim,
+                                         kkt_L_nnz, mem_ptr + cum_size);
   cum_size += model_callback_output.mem_assign(
       lin_sys_formulation, x_dim, s_dim, y_dim, upper_hessian_f_nnz,
       jacobian_c_nnz, jacobian_g_nnz, mem_ptr + cum_size);

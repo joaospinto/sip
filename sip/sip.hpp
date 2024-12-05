@@ -1,6 +1,7 @@
 #pragma once
 
 #include <functional>
+#include <optional>
 #include <ostream>
 
 #include "sparse.hpp"
@@ -44,6 +45,9 @@ struct Settings {
   // Determines how the search direction is computed.
   LinearSystemFormulation lin_sys_formulation =
       LinearSystemFormulation::SYMMETRIC_INDIRECT_3x3;
+  // An optional linear system solver provided by the user.
+  std::optional<std::function<void(const double *, const double *, double *)>>
+      custom_lin_sys_solver = std::nullopt;
   // Whether to apply a permutation to the KKT system to reduce fill-in.
   bool permute_kkt_system = false;
   // Whether to enable the usage of elastic variables.
@@ -131,11 +135,12 @@ struct QDLDLWorkspace {
   double *x; // Required size: kkt_dim
 
   // To dynamically allocate the required memory.
-  void reserve(int kkt_dim, int kkt_L_nnz);
+  void reserve(bool has_custom_linear_solver, int kkt_dim, int kkt_L_nnz);
   void free();
 
   // For using pre-allocated (possibly statically allocated) memory.
-  auto mem_assign(int kkt_dim, int kkt_L_nnz, unsigned char *mem_ptr) -> int;
+  auto mem_assign(bool has_custom_linear_solver, int kkt_dim, int kkt_L_nnz,
+                  unsigned char *mem_ptr) -> int;
 };
 
 struct VariablesWorkspace {
@@ -171,8 +176,8 @@ struct VariablesWorkspace {
   void free();
 
   // For using pre-allocated (possibly statically allocated) memory.
-  auto mem_assign(int x_dim, int s_dim, int y_dim,
-                  unsigned char *mem_ptr) -> int;
+  auto mem_assign(int x_dim, int s_dim, int y_dim, unsigned char *mem_ptr)
+      -> int;
 };
 
 struct MiscellaneousWorkspace {
@@ -237,16 +242,18 @@ struct Workspace {
   MiscellaneousWorkspace miscellaneous_workspace;
 
   // To dynamically allocate the required memory.
-  void reserve(Settings::LinearSystemFormulation lin_sys_formulation, int x_dim,
-               int s_dim, int y_dim, int upper_hessian_f_nnz,
-               int jacobian_c_nnz, int jac_g_t_jac_g_nnz, int jacobian_g_nnz,
+  void reserve(Settings::LinearSystemFormulation lin_sys_formulation,
+               bool has_custom_linear_solver, int x_dim, int s_dim, int y_dim,
+               int upper_hessian_f_nnz, int jacobian_c_nnz,
+               int jac_g_t_jac_g_nnz, int jacobian_g_nnz,
                int upper_hessian_f_plus_upper_jac_g_t_jac_g_nnz, int kkt_L_nnz);
   void free();
 
   // For using pre-allocated (possibly statically allocated) memory.
   auto mem_assign(Settings::LinearSystemFormulation lin_sys_formulation,
-                  int x_dim, int s_dim, int y_dim, int upper_hessian_f_nnz,
-                  int jacobian_c_nnz, int jac_g_t_jac_g_nnz, int jacobian_g_nnz,
+                  bool has_custom_linear_solver, int x_dim, int s_dim,
+                  int y_dim, int upper_hessian_f_nnz, int jacobian_c_nnz,
+                  int jac_g_t_jac_g_nnz, int jacobian_g_nnz,
                   int upper_hessian_f_plus_upper_jac_g_t_jac_g_nnz,
                   int kkt_L_nnz, unsigned char *mem_ptr) -> int;
 };
