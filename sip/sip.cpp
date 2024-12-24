@@ -115,6 +115,12 @@ auto compute_search_direction(const Input &input, const Settings &settings,
                               const double mu, Workspace &workspace)
     -> std::tuple<const double *, const double *, const double *,
                   const double *, const double *, double, double> {
+  const double p = settings.enable_elastics
+                       ? settings.elastic_var_cost_coeff
+                       : std::numeric_limits<double>::infinity();
+  const auto &mco = *workspace.model_callback_output;
+  constexpr double gamma_x = 0.0;
+
   double kkt_error;
   double lin_sys_error;
   double *dx = workspace.vars.dx;
@@ -122,12 +128,14 @@ auto compute_search_direction(const Input &input, const Settings &settings,
   double *dy = workspace.vars.dy;
   double *dz = workspace.vars.dz;
   double *de = workspace.vars.de;
-  input.lin_sys_solver(
-      *workspace.model_callback_output, workspace.vars.s, workspace.vars.y,
-      workspace.vars.z, workspace.vars.e, mu,
-      settings.enable_elastics ? settings.elastic_var_cost_coeff : 0.0, 0.0,
-      settings.gamma_y, settings.gamma_z, true, dx, ds, dy, dz, de, kkt_error,
-      lin_sys_error);
+
+  input.lin_sys_solver(mco.c, mco.g, mco.gradient_f, mco.upper_hessian_f.data,
+                       mco.jacobian_c.data, mco.jacobian_g.data,
+                       workspace.vars.s, workspace.vars.y, workspace.vars.z,
+                       workspace.vars.e, mu, p, gamma_x, settings.gamma_y,
+                       settings.gamma_z, dx, ds, dy, dz, de, kkt_error,
+                       lin_sys_error);
+
   return std::make_tuple(dx, ds, dy, dz, de, kkt_error, lin_sys_error);
 }
 

@@ -91,78 +91,34 @@ struct Input {
   using ModelCallback =
       std::function<void(const ModelCallbackInput &, ModelCallbackOutput **)>;
 
-  // Callback type for solving Au + b = 0, where:
-  // 1. u = (dx, ds, dy, dz);
-  // 2. A = [ H + r1 I_x       0        C.T            G.T      ]
-  //        [     0        S^{-1} Z      0             I_s      ]
-  //        [     C            0      -r2 I_y           0       ]
-  //        [     G           I_s        0      -(r3 + 1/p) I_z ];
-  // 3. (H + r1 I_x) is symmetric and positive definite;
-  // 4. np.triu(H) = upper_hessian_f;
-  // 5. C is jacobian_c;
-  // 6. G is jacobian_g;
+  // Callback type for solving Av + b = 0, where:
+  // 1. A = [ H + r1 I_x       0         C.T        G.T         0   ]
+  //        [     0        S^{-1} Z       0         I_s         0   ]
+  //        [     C            0      -r2 * I_y      0          0   ]
+  //        [     G           I_s         0       -r3 I_z   (1/p) I ]
+  //        [     0            0          0       (1/p) I   (1/p) I ];
+  // 2. v = (dx, ds, dy, dz, p de);
+  // 3. b = [ grad_f + C.T @ y + G.T @ z ]
+  //        [        z - mu / s          ]
+  //        [             c              ]
+  //        [         g + s + e          ]
+  //        [         e + z / p          ]
+  // 4. (H + r1 I_x) is symmetric and positive definite;
+  // 5. H_data is expected to represent np.triu(H) in CSC order.
+  // 6. C_data and G_data are expected to represent C and G, respectively, in
+  // CSC order.
   // 7. S = np.diag(s);
   // 8. Z = np.diag(z);
   // 9. r1, r2, r3 are non-negative regularization parameters;
-  // 10. p is the penalty term on the elastic variables
-  //     (inf when elastics are inactive);
-  // 11. b = [     grad_L    ]
-  //         [   z - mu / s  ]
-  //         [       c       ]
-  //         [ g + s - z / p ];
-  // 12. grad_L = gradient_f + C.T y + G.T z;
-  // 13. de = (-dz - (pe + z)) / p (when elastics are active);
-  // 14. v = (dx, ds, dy, dz, de).
-
-  // TODO(joao): make SIP build the 5x5 Newton-KKT system,
-  //             and add a method in SLACG to solve that via
-  //             the 3x3 solve and elimination of ds and de.
-
-  // 3x3 upper_lhs:
-  // [ upper_hessian_f    jacobian_c_t          jacobian_g_t    ]
-  // [        0          -gamma_y * I_y               0         ]
-  // [        0                0                 -sigma^{-1}    ]
-  // Above, sigma = np.diag(z / (s + (gamma_z + 1/p) * z)),
-  // ie W = S/Z and r3 = gamma_z + 1/p.
-
-  // 3x3 nrhs:
-  // [ gradient_f + jacobian_c_t @ y + jacobian_g_t @ z ]
-  // [                          c                       ]
-  // [               g(x) + mu / z - z / p              ]
-
-  // 4x4 upper_lhs:
-  // Builds the following matrix in CSC format:
-  // [ upper_hessian_f       0        jacobian_c_t          jacobian_g_t    ]
-  // [        0          S^{-1} Z          0                    I_s         ]
-  // [        0              0      -gamma_y * I_y               0          ]
-  // [        0              0             0         -(gamma_z + 1/p) * I_z ]
-
-  // 4x4 rhs:
-  // [ gradient_f + jacobian_c_t @ y + jacobian_g_t @ z ]
-  // [                     z - mu / s                   ]
-  // [                          c                       ]
-  // [                   g + s - z / p                  ]
-
-  // 5x5 upper_lhs:
-  // [ upper_hessian_f       0        jacobian_c_t   jacobian_g_t     0  ]
-  // [        0          S^{-1} Z          0              I_s         0  ]
-  // [        0              0      -gamma_y * I_y         0          0  ]
-  // [        0              0             0         -gamma_z I_z     I  ]
-  // [        0              0             0               0         p I ]
-
-  // 5x5 nrhs:
-  // [ gradient_f + jacobian_c_t @ y + jacobian_g_t @ z ]
-  // [                     z - mu / s                   ]
-  // [                          c                       ]
-  // [                      g + s + e                   ]
-  // [                       pe + z                     ]
-
+  // 10. p is the penalty term on the elastic variables;
+  // 11. When elastics are inactive, p = inf and e = 0.
   using LinearSystemSolver = std::function<void(
-      const ModelCallbackOutput &mco, const double *s, const double *y,
-      const double *z, const double *e, const double mu, const double p,
-      const double r1, const double r2, const double r3, const double new_lhs,
-      double *dx, double *ds, double *dy, double *dz, double *de,
-      double &kkt_error, double &lin_sys_error)>;
+      const double *c, const double *g, const double *grad_f,
+      const double *H_data, const double *C_data, const double *G_data,
+      const double *s, const double *y, const double *z, const double *e,
+      const double mu, const double p, const double r1, const double r2,
+      const double r3, double *dx, double *ds, double *dy, double *dz,
+      double *de, double &kkt_error, double &lin_sys_error)>;
 
   // Callback for filling the ModelCallbackOutput object.
   ModelCallback model_callback;
@@ -181,9 +137,9 @@ struct VariablesWorkspace {
   double *x;
   // The slack variables.
   double *s;
-  // The dual variables associated with the equality constraints.
+  // The dual variables associated with equality constraints.
   double *y;
-  // The dual variables associated with the inequality constraints.
+  // The dual variables associated with inequality constraints.
   double *z;
   // The elastic variables.
   double *e;
@@ -197,9 +153,9 @@ struct VariablesWorkspace {
   double *dx;
   // The change to the slack variables.
   double *ds;
-  // The change to the dual variables associated with the equality constraints.
+  // The change to the dual variables associated with equality constraints.
   double *dy;
-  // The change to the dual variables associated with the inequality constraints.
+  // The change to the dual variables associated with inequality constraints.
   double *dz;
   // The change to the elastic variables.
   double *de;
