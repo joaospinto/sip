@@ -105,13 +105,12 @@ struct Input {
   //        [         e + z / p          ]
   // 4. (H + r1 I_x) is symmetric and positive definite;
   // 5. H_data is expected to represent np.triu(H) in CSC order.
-  // 6. C_data and G_data are expected to represent C and G, respectively, in
-  // CSC order.
+  // 6. C_data and G_data are expected to represent C and G in CSC order.
   // 7. S = np.diag(s);
   // 8. Z = np.diag(z);
   // 9. r1, r2, r3 are non-negative regularization parameters;
   // 10. p is the penalty term on the elastic variables;
-  // 11. When elastics are inactive, p = inf and e = 0.
+  // 11. When elastics are inactive, p = +inf and e = 0.
   using LinearSystemSolver = std::function<void(
       const double *c, const double *g, const double *grad_f,
       const double *H_data, const double *C_data, const double *G_data,
@@ -120,10 +119,14 @@ struct Input {
       const double r3, double *dx, double *ds, double *dy, double *dz,
       double *de, double &kkt_error, double &lin_sys_error)>;
 
+  using TimeoutCallback = std::function<bool(void)>;
+
   // Callback for filling the ModelCallbackOutput object.
   ModelCallback model_callback;
-  // An solver provided by the user to solve the Newton-KKT linear systems.
+  // Callback for solving the Newton-KKT linear systems.
   LinearSystemSolver lin_sys_solver;
+  // Callback for (optionally) declaring a timeout. Return true for timeout.
+  TimeoutCallback timeout_callback;
 };
 
 struct Output {
