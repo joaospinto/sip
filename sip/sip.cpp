@@ -243,8 +243,8 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace,
           workspace.miscellaneous_workspace.g_plus_s);
 
       if (settings.enable_elastics) {
-        add(workspace.miscellaneous_workspace.g_plus_s, workspace.vars.e, s_dim,
-            workspace.miscellaneous_workspace.g_plus_s_plus_e);
+        add(workspace.miscellaneous_workspace.g_plus_s, workspace.vars.next_e,
+            s_dim, workspace.miscellaneous_workspace.g_plus_s_plus_e);
       } else {
         std::copy(workspace.miscellaneous_workspace.g_plus_s,
                   workspace.miscellaneous_workspace.g_plus_s + s_dim,
