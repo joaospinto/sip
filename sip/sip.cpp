@@ -139,7 +139,7 @@ auto compute_search_direction(const Input &input, const Settings &settings,
                        workspace.vars.s, workspace.vars.y, workspace.vars.z,
                        workspace.vars.e, mu, p, gamma_x, settings.gamma_y,
                        settings.gamma_z, dx, ds, dy, dz, de, rx, rs, ry, rz, re,
-                       kkt_error, lin_sys_error);
+                       kkt_error, settings.print_logs ? &lin_sys_error : nullptr);
 
   return std::make_tuple(dx, ds, dy, dz, de, kkt_error, lin_sys_error);
 }

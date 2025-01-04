@@ -118,7 +118,7 @@ struct Input {
       const double mu, const double p, const double r1, const double r2,
       const double r3, double *dx, double *ds, double *dy, double *dz,
       double *de, double *rx, double *rs, double *ry, double *rz, double *re,
-      double &kkt_error, double &lin_sys_error)>;
+      double &kkt_error, double *maybe_lin_sys_error)>;
 
   using TimeoutCallback = std::function<bool(void)>;
 
