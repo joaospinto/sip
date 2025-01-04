@@ -117,7 +117,8 @@ struct Input {
       const double *s, const double *y, const double *z, const double *e,
       const double mu, const double p, const double r1, const double r2,
       const double r3, double *dx, double *ds, double *dy, double *dz,
-      double *de, double &kkt_error, double &lin_sys_error)>;
+      double *de, double *rx, double *rs, double *ry, double *rz, double *re,
+      double &kkt_error, double &lin_sys_error)>;
 
   using TimeoutCallback = std::function<bool(void)>;
 
@@ -146,22 +147,6 @@ struct VariablesWorkspace {
   double *z;
   // The elastic variables.
   double *e;
-  // The next primal variables.
-  double *next_x;
-  // The next slack variables.
-  double *next_s;
-  // The next elastic variables.
-  double *next_e;
-  // The change to the primal variables.
-  double *dx;
-  // The change to the slack variables.
-  double *ds;
-  // The change to the dual variables associated with equality constraints.
-  double *dy;
-  // The change to the dual variables associated with inequality constraints.
-  double *dz;
-  // The change to the elastic variables.
-  double *de;
 
   // To dynamically allocate the required memory.
   void reserve(int x_dim, int s_dim, int y_dim);
@@ -195,6 +180,12 @@ struct Workspace {
   //       other members need to be allocated, but not filled, as they are
   //       internal to the solver.
   VariablesWorkspace vars;
+  // The delta variable storage (for both primal and dual variables).
+  VariablesWorkspace delta_vars;
+  // The next variable storage (for both primal and dual variables).
+  VariablesWorkspace next_vars;
+  // The negative Newton-KKT RHS storage (for both primal and dual variables).
+  VariablesWorkspace nrhs;
   // The model callback workspace.
   // NOTE: the ModelCallbackOutput object is owned by the user.
   ModelCallbackOutput *model_callback_output;

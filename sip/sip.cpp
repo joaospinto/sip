@@ -123,18 +123,23 @@ auto compute_search_direction(const Input &input, const Settings &settings,
 
   double kkt_error;
   double lin_sys_error;
-  double *dx = workspace.vars.dx;
-  double *ds = workspace.vars.ds;
-  double *dy = workspace.vars.dy;
-  double *dz = workspace.vars.dz;
-  double *de = workspace.vars.de;
+  double *dx = workspace.delta_vars.x;
+  double *ds = workspace.delta_vars.s;
+  double *dy = workspace.delta_vars.y;
+  double *dz = workspace.delta_vars.z;
+  double *de = workspace.delta_vars.e;
+  double *rx = workspace.nrhs.x;
+  double *rs = workspace.nrhs.s;
+  double *ry = workspace.nrhs.y;
+  double *rz = workspace.nrhs.z;
+  double *re = workspace.nrhs.e;
 
   input.lin_sys_solver(mco.c, mco.g, mco.gradient_f, mco.upper_hessian_f.data,
                        mco.jacobian_c.data, mco.jacobian_g.data,
                        workspace.vars.s, workspace.vars.y, workspace.vars.z,
                        workspace.vars.e, mu, p, gamma_x, settings.gamma_y,
-                       settings.gamma_z, dx, ds, dy, dz, de, kkt_error,
-                       lin_sys_error);
+                       settings.gamma_z, dx, ds, dy, dz, de, rx, rs, ry, rz, re,
+                       kkt_error, lin_sys_error);
 
   return std::make_tuple(dx, ds, dy, dz, de, kkt_error, lin_sys_error);
 }
@@ -221,29 +226,29 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace,
     double alpha = alpha_s_max;
     do {
       for (int i = 0; i < x_dim; ++i) {
-        workspace.vars.next_x[i] = workspace.vars.x[i] + alpha * dx[i];
+        workspace.next_vars.x[i] = workspace.vars.x[i] + alpha * dx[i];
       }
 
       for (int i = 0; i < s_dim; ++i) {
-        workspace.vars.next_s[i] = workspace.vars.s[i] + alpha * ds[i];
+        workspace.next_vars.s[i] = workspace.vars.s[i] + alpha * ds[i];
       }
 
       if (settings.enable_elastics) {
         for (int i = 0; i < s_dim; ++i) {
-          workspace.vars.next_e[i] = workspace.vars.e[i] + alpha * de[i];
+          workspace.next_vars.e[i] = workspace.vars.e[i] + alpha * de[i];
         }
       }
 
       ModelCallbackInput mci{
-          .x = workspace.vars.next_x,
+          .x = workspace.next_vars.x,
       };
       input.model_callback(mci, &workspace.model_callback_output);
 
-      add(workspace.model_callback_output->g, workspace.vars.next_s, s_dim,
+      add(workspace.model_callback_output->g, workspace.next_vars.s, s_dim,
           workspace.miscellaneous_workspace.g_plus_s);
 
       if (settings.enable_elastics) {
-        add(workspace.miscellaneous_workspace.g_plus_s, workspace.vars.next_e,
+        add(workspace.miscellaneous_workspace.g_plus_s, workspace.next_vars.e,
             s_dim, workspace.miscellaneous_workspace.g_plus_s_plus_e);
       } else {
         std::copy(workspace.miscellaneous_workspace.g_plus_s,
@@ -252,8 +257,8 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace,
       }
 
       // TODO(joao): cache (parts of) this into the next cycle!
-      new_merit = merit_function(settings, workspace, workspace.vars.next_s,
-                                 workspace.vars.next_e, mu, rho);
+      new_merit = merit_function(settings, workspace, workspace.next_vars.s,
+                                 workspace.next_vars.e, mu, rho);
 
       if (new_merit - merit < settings.armijo_factor * merit_slope * alpha) {
         ls_succeeded = true;
@@ -267,10 +272,10 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace,
       alpha /= settings.line_search_factor;
     }
 
-    std::swap(workspace.vars.x, workspace.vars.next_x);
-    std::swap(workspace.vars.s, workspace.vars.next_s);
+    std::swap(workspace.vars.x, workspace.next_vars.x);
+    std::swap(workspace.vars.s, workspace.next_vars.s);
     if (settings.enable_elastics) {
-      std::swap(workspace.vars.e, workspace.vars.next_e);
+      std::swap(workspace.vars.e, workspace.next_vars.e);
     }
 
     for (int i = 0; i < y_dim; ++i) {
@@ -383,14 +388,6 @@ void VariablesWorkspace::reserve(int x_dim, int s_dim, int y_dim) {
   y = new double[y_dim];
   z = new double[s_dim];
   e = new double[s_dim];
-  next_x = new double[x_dim];
-  next_s = new double[s_dim];
-  next_e = new double[s_dim];
-  dx = new double[x_dim];
-  ds = new double[s_dim];
-  dy = new double[y_dim];
-  dz = new double[s_dim];
-  de = new double[s_dim];
 }
 
 void VariablesWorkspace::free() {
@@ -399,14 +396,6 @@ void VariablesWorkspace::free() {
   delete[] y;
   delete[] z;
   delete[] e;
-  delete[] next_x;
-  delete[] next_s;
-  delete[] next_e;
-  delete[] dx;
-  delete[] ds;
-  delete[] dy;
-  delete[] dz;
-  delete[] de;
 }
 
 auto VariablesWorkspace::mem_assign(int x_dim, int s_dim, int y_dim,
@@ -426,30 +415,6 @@ auto VariablesWorkspace::mem_assign(int x_dim, int s_dim, int y_dim,
   cum_size += s_dim * sizeof(double);
 
   e = reinterpret_cast<decltype(e)>(mem_ptr + cum_size);
-  cum_size += s_dim * sizeof(double);
-
-  next_x = reinterpret_cast<decltype(next_x)>(mem_ptr + cum_size);
-  cum_size += x_dim * sizeof(double);
-
-  next_s = reinterpret_cast<decltype(next_s)>(mem_ptr + cum_size);
-  cum_size += s_dim * sizeof(double);
-
-  next_e = reinterpret_cast<decltype(next_e)>(mem_ptr + cum_size);
-  cum_size += s_dim * sizeof(double);
-
-  dx = reinterpret_cast<decltype(x)>(mem_ptr + cum_size);
-  cum_size += x_dim * sizeof(double);
-
-  ds = reinterpret_cast<decltype(s)>(mem_ptr + cum_size);
-  cum_size += s_dim * sizeof(double);
-
-  dy = reinterpret_cast<decltype(y)>(mem_ptr + cum_size);
-  cum_size += y_dim * sizeof(double);
-
-  dz = reinterpret_cast<decltype(z)>(mem_ptr + cum_size);
-  cum_size += s_dim * sizeof(double);
-
-  de = reinterpret_cast<decltype(e)>(mem_ptr + cum_size);
   cum_size += s_dim * sizeof(double);
 
   return cum_size;
@@ -481,11 +446,17 @@ auto MiscellaneousWorkspace::mem_assign(int s_dim, unsigned char *mem_ptr)
 
 void Workspace::reserve(int x_dim, int s_dim, int y_dim) {
   vars.reserve(x_dim, s_dim, y_dim);
+  delta_vars.reserve(x_dim, s_dim, y_dim);
+  next_vars.reserve(x_dim, s_dim, y_dim);
+  nrhs.reserve(x_dim, s_dim, y_dim);
   miscellaneous_workspace.reserve(s_dim);
 }
 
 void Workspace::free() {
   vars.free();
+  delta_vars.free();
+  next_vars.free();
+  nrhs.free();
   miscellaneous_workspace.free();
 }
 
@@ -494,6 +465,9 @@ auto Workspace::mem_assign(int x_dim, int s_dim, int y_dim,
   int cum_size = 0;
 
   cum_size += vars.mem_assign(x_dim, s_dim, y_dim, mem_ptr + cum_size);
+  cum_size += delta_vars.mem_assign(x_dim, s_dim, y_dim, mem_ptr + cum_size);
+  cum_size += next_vars.mem_assign(x_dim, s_dim, y_dim, mem_ptr + cum_size);
+  cum_size += nrhs.mem_assign(x_dim, s_dim, y_dim, mem_ptr + cum_size);
   cum_size += miscellaneous_workspace.mem_assign(s_dim, mem_ptr + cum_size);
 
   return cum_size;
