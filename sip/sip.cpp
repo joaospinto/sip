@@ -30,10 +30,10 @@ auto get_max_step_sizes(const int s_dim, const double tau, const double *s,
 
   for (int i = 0; i < s_dim; ++i) {
     if (ds[i] < 0.0) {
-      alpha_s_max = std::min(alpha_s_max, tau * s[i] / std::max(-ds[i], 1e-12));
+      alpha_s_max = std::min(alpha_s_max, tau * s[i] / std::max(-ds[i], 1e-16));
     }
     if (dz[i] < 0.0) {
-      alpha_z_max = std::min(alpha_z_max, tau * z[i] / std::max(-dz[i], 1e-12));
+      alpha_z_max = std::min(alpha_z_max, tau * z[i] / std::max(-dz[i], 1e-16));
     }
   }
 
@@ -49,33 +49,44 @@ auto adaptive_mu(const int s_dim, double *s, double *z) -> double {
   return sigma * dp / s_dim;
 }
 
-auto get_rho(const Settings &settings, const Workspace &workspace,
-             const double *s, const double *e, const double *dx,
-             const double *ds, const double *de, const double mu) -> double {
-  // D(merit_function; dx, ds) = D(f; dx) - mu (ds / s) - rho * ||c(x)|| - rho *
-  // ||g(x) + s || rho > (D(f; dx) + k) - mu (ds / s) + k) / (|| (c(x) || +
-  // || g(x) + s) || iff D(merit_function; dx) < -k.
+auto barrier_lagrangian_slope(const Settings &settings,
+                              const Workspace &workspace, const double *dx,
+                              const double *ds, const double *dy,
+                              const double *dz, const double *de) {
   const auto &mco = *workspace.model_callback_output;
   const int x_dim = mco.upper_hessian_f.rows;
   const int s_dim = get_s_dim(mco.jacobian_g);
   const int y_dim = get_y_dim(mco.jacobian_c);
-  const double f_slope = dot(mco.gradient_f, dx, x_dim);
-  const double barrier_slope = -mu * x_dot_y_inverse(ds, s, s_dim);
-  const double elastic_slope =
+  const double x_slope = dot(workspace.nrhs.x, dx, x_dim);
+  const double s_slope = dot(workspace.nrhs.s, ds, s_dim);
+  const double y_slope = dot(workspace.nrhs.y, dy, y_dim);
+  const double z_slope = dot(workspace.nrhs.z, dz, s_dim);
+  const double e_slope =
       settings.enable_elastics
-          ? settings.elastic_var_cost_coeff * dot(de, e, s_dim)
+          ? settings.elastic_var_cost_coeff * dot(workspace.nrhs.e, de, s_dim)
           : 0.0;
-  const double obj_slope = f_slope + barrier_slope + elastic_slope;
-  const double d =
-      norm(mco.c, y_dim) +
-      norm(workspace.miscellaneous_workspace.g_plus_s_plus_e, s_dim);
-  const double k = std::max(d, 2.0 * std::fabs(obj_slope));
-  return std::min((obj_slope + k) / d, 1e9);
+  return x_slope + s_slope + y_slope + z_slope + e_slope;
+}
+
+auto get_rho(const double barrier_lagrangian_slope,
+             const double sq_constraint_violation_norm) -> double {
+  // NOTE: D(merit_function; dx, ds, de) = barrier_lagrangian_slope
+  //           - rho * sq_constraint_violation_norm.
+  //
+  // Moreover:
+  //                               (barrier_lagrangian_slope + k)
+  // merit_slope <= -k iff rho >= -------------------------------- .
+  //                                sq_constraint_violation_norm
+  const double k = std::max(sq_constraint_violation_norm,
+                            2.0 * std::fabs(barrier_lagrangian_slope));
+  return std::min((barrier_lagrangian_slope + k) / sq_constraint_violation_norm,
+                  1e9);
 }
 
 auto merit_function(const Settings &settings, const Workspace &workspace,
-                    const double *s, const double *e, const double mu,
-                    const double rho) -> double {
+                    const double *s, const double *y, const double *z,
+                    const double *e, const double mu, const double rho,
+                    const double sq_constraint_violation_norm) -> double {
   const auto &mco = *workspace.model_callback_output;
   const int s_dim = get_s_dim(mco.jacobian_g);
   const int y_dim = get_y_dim(mco.jacobian_c);
@@ -84,31 +95,35 @@ auto merit_function(const Settings &settings, const Workspace &workspace,
           ? 0.5 * settings.elastic_var_cost_coeff * squared_norm(e, s_dim)
           : 0.0;
   const double s_term = -mu * sum_of_logs(s, s_dim);
-  return mco.f + e_term + s_term + rho * norm(mco.c, y_dim) +
-         rho * norm(workspace.miscellaneous_workspace.g_plus_s_plus_e, s_dim);
+  const double c_term = dot(mco.c, y, y_dim);
+  const double g_term =
+      dot(workspace.miscellaneous_workspace.g_plus_s_plus_e, z, s_dim);
+  const double barrier_lagrangian = mco.f + e_term + s_term + c_term + g_term;
+  const double aug_term = 0.5 * rho * sq_constraint_violation_norm;
+  return barrier_lagrangian + aug_term;
 }
 
 auto merit_function_slope(const Settings &settings, const Workspace &workspace,
-                          const double *s, const double *e, const double *dx,
-                          const double *ds, const double *de, const double mu,
-                          const double rho) {
-  // TODO(joao): eventually remove repeated computation across:
-  // 1. merit_function
-  // 2. merit_function_slope
-  // 3. get_rho
+                          const double rho,
+                          const double sq_constraint_violation_norm,
+                          const double *dx, const double *ds, const double *dy,
+                          const double *dz, const double *de) {
   const auto &mco = *workspace.model_callback_output;
   const int x_dim = mco.upper_hessian_f.rows;
   const int s_dim = get_s_dim(mco.jacobian_g);
   const int y_dim = get_y_dim(mco.jacobian_c);
-  const double f_slope = dot(mco.gradient_f, dx, x_dim);
-  const double barrier_slope = -mu * x_dot_y_inverse(ds, s, s_dim);
-  const double elastic_slope =
+  const double x_slope = dot(workspace.nrhs.x, dx, x_dim);
+  const double s_slope = dot(workspace.nrhs.s, ds, s_dim);
+  const double y_slope = dot(workspace.nrhs.y, dy, y_dim);
+  const double z_slope = dot(workspace.nrhs.z, dz, s_dim);
+  const double e_slope =
       settings.enable_elastics
-          ? settings.elastic_var_cost_coeff * dot(de, e, s_dim)
+          ? settings.elastic_var_cost_coeff * dot(workspace.nrhs.e, de, s_dim)
           : 0.0;
-  const double obj_slope = f_slope + barrier_slope + elastic_slope;
-  return obj_slope - rho * norm(mco.c, y_dim) -
-         rho * norm(workspace.miscellaneous_workspace.g_plus_s_plus_e, s_dim);
+  const double lagrangian_slope =
+      x_slope + s_slope + y_slope + z_slope + e_slope;
+  const double penalty_slope = -rho * sq_constraint_violation_norm;
+  return lagrangian_slope + penalty_slope;
 }
 
 auto compute_search_direction(const Input &input, const Settings &settings,
@@ -134,12 +149,12 @@ auto compute_search_direction(const Input &input, const Settings &settings,
   double *rz = workspace.nrhs.z;
   double *re = workspace.nrhs.e;
 
-  input.lin_sys_solver(mco.c, mco.g, mco.gradient_f, mco.upper_hessian_f.data,
-                       mco.jacobian_c.data, mco.jacobian_g.data,
-                       workspace.vars.s, workspace.vars.y, workspace.vars.z,
-                       workspace.vars.e, mu, p, gamma_x, settings.gamma_y,
-                       settings.gamma_z, dx, ds, dy, dz, de, rx, rs, ry, rz, re,
-                       kkt_error, settings.print_logs ? &lin_sys_error : nullptr);
+  input.lin_sys_solver(
+      mco.c, mco.g, mco.gradient_f, mco.upper_hessian_f.data,
+      mco.jacobian_c.data, mco.jacobian_g.data, workspace.vars.s,
+      workspace.vars.y, workspace.vars.z, workspace.vars.e, mu, p, gamma_x,
+      settings.gamma_y, settings.gamma_z, dx, ds, dy, dz, de, rx, rs, ry, rz,
+      re, kkt_error, settings.print_logs ? &lin_sys_error : nullptr);
 
   return std::make_tuple(dx, ds, dy, dz, de, kkt_error, lin_sys_error);
 }
@@ -211,15 +226,23 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace,
     const auto [alpha_s_max, alpha_z_max] = get_max_step_sizes(
         s_dim, tau, workspace.vars.s, workspace.vars.z, ds, dz);
 
-    const double rho = get_rho(settings, workspace, workspace.vars.s,
-                               workspace.vars.e, dx, ds, de, mu);
+    const double bl_slope =
+        barrier_lagrangian_slope(settings, workspace, dx, ds, dy, dz, de);
 
-    const double merit = merit_function(settings, workspace, workspace.vars.s,
-                                        workspace.vars.e, mu, rho);
+    const double sq_constraint_violation_norm =
+        squared_norm(workspace.model_callback_output->c, y_dim) +
+        squared_norm(workspace.miscellaneous_workspace.g_plus_s_plus_e, s_dim);
+
+    const double rho = get_rho(bl_slope, sq_constraint_violation_norm);
+
+    const double merit =
+        merit_function(settings, workspace, workspace.vars.s, workspace.vars.y,
+                       workspace.vars.z, workspace.vars.e, mu, rho,
+                       sq_constraint_violation_norm);
 
     const double merit_slope =
-        merit_function_slope(settings, workspace, workspace.vars.s,
-                             workspace.vars.e, dx, ds, de, mu, rho);
+        merit_function_slope(settings, workspace, rho,
+                             sq_constraint_violation_norm, dx, ds, dy, dz, de);
 
     bool ls_succeeded = false;
     double new_merit = std::numeric_limits<double>::signaling_NaN();
@@ -229,8 +252,19 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace,
         workspace.next_vars.x[i] = workspace.vars.x[i] + alpha * dx[i];
       }
 
+      for (int i = 0; i < y_dim; ++i) {
+        workspace.next_vars.y[i] = workspace.vars.y[i] + alpha * dy[i];
+      }
+
+      const double alpha_s = std::min(alpha, alpha_s_max);
+      const double alpha_z = std::min(alpha, alpha_z_max);
       for (int i = 0; i < s_dim; ++i) {
-        workspace.next_vars.s[i] = workspace.vars.s[i] + alpha * ds[i];
+        {
+          workspace.next_vars.s[i] = workspace.vars.s[i] + alpha_s * ds[i];
+        }
+        {
+          workspace.next_vars.z[i] = workspace.vars.z[i] + alpha_z * dz[i];
+        }
       }
 
       if (settings.enable_elastics) {
@@ -256,9 +290,16 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace,
                   workspace.miscellaneous_workspace.g_plus_s_plus_e);
       }
 
-      // TODO(joao): cache (parts of) this into the next cycle!
+      const double next_sq_constraint_violation_norm =
+          squared_norm(workspace.model_callback_output->c, y_dim) +
+          squared_norm(workspace.miscellaneous_workspace.g_plus_s_plus_e,
+                       s_dim);
+
+      // TODO(joao): cache the barrier Lagrangian into the next cycle!
       new_merit = merit_function(settings, workspace, workspace.next_vars.s,
-                                 workspace.next_vars.e, mu, rho);
+                                 workspace.next_vars.y, workspace.next_vars.z,
+                                 workspace.next_vars.e, mu, rho,
+                                 next_sq_constraint_violation_norm);
 
       if (new_merit - merit < settings.armijo_factor * merit_slope * alpha) {
         ls_succeeded = true;
@@ -274,16 +315,10 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace,
 
     std::swap(workspace.vars.x, workspace.next_vars.x);
     std::swap(workspace.vars.s, workspace.next_vars.s);
+    std::swap(workspace.vars.y, workspace.next_vars.y);
+    std::swap(workspace.vars.z, workspace.next_vars.z);
     if (settings.enable_elastics) {
       std::swap(workspace.vars.e, workspace.next_vars.e);
-    }
-
-    for (int i = 0; i < y_dim; ++i) {
-      workspace.vars.y[i] += alpha_z_max * dy[i];
-    }
-
-    for (int i = 0; i < s_dim; ++i) {
-      workspace.vars.z[i] += alpha_z_max * dz[i];
     }
 
     if (settings.print_logs) {
