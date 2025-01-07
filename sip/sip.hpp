@@ -28,6 +28,12 @@ struct Settings {
   // A regularization parameter, applied to the zz-block of the LHS of the
   // Newton-KKT system.
   double gamma_z = 1e-6;
+  // When the slope of the barrier Lagrangian is smaller, force rho = 0.
+  double max_barrier_lagrangian_slope_for_zero_rho = -1e-3;
+  // The maximum allowed penalty parameter in the AL merit function.
+  double max_rho = 1e9;
+  // The minimum absolute merit slope we should try to achieve when picking rho.
+  double min_abs_merit_slope = 1.0;
   // Determines when we accept a line search step, by the merit decrease and
   // slope.
   double armijo_factor = 1e-4;
