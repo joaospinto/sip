@@ -328,7 +328,8 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace,
 
       const double merit_delta = dm_f + dm_s + dm_c + dm_g + dm_e + dm_aug;
 
-      if (merit_delta < settings.armijo_factor * merit_slope * alpha) {
+      if (merit_slope > settings.min_merit_slope_to_skip_line_search ||
+          merit_delta < settings.armijo_factor * merit_slope * alpha) {
         ls_succeeded = true;
         break;
       }
