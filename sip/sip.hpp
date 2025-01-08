@@ -11,6 +11,7 @@ enum class Status {
   SOLVED = 0,
   ITERATION_LIMIT = 1,
   LINE_SEARCH_FAILURE = 2,
+  TIMEOUT = 3,
 };
 
 struct Settings {

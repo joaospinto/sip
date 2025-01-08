@@ -368,6 +368,12 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace,
       output.num_iterations = iteration;
       return;
     }
+
+    if (input.timeout_callback()) {
+      output.exit_status = Status::TIMEOUT;
+      output.num_iterations = iteration;
+      return;
+    }
   }
 
   output.exit_status = Status::ITERATION_LIMIT;
@@ -543,6 +549,9 @@ auto operator<<(std::ostream &os, Status const &status) -> std::ostream & {
     break;
   case Status::LINE_SEARCH_FAILURE:
     os << "LINE_SEARCH_FAILURE";
+    break;
+  case Status::TIMEOUT:
+    os << "TIMEOUT";
     break;
   }
   return os;
