@@ -268,7 +268,7 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace,
     const double merit_slope = bl_slope - rho * penalty_multiplier_slope;
 
     bool ls_succeeded = false;
-    double alpha = alpha_s_max;
+    double alpha = 1.0;
     do {
       for (int i = 0; i < x_dim; ++i) {
         workspace.next_vars.x[i] = workspace.vars.x[i] + alpha * dx[i];
