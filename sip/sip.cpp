@@ -146,8 +146,8 @@ auto compute_search_direction(const Input &input, const Settings &settings,
   return std::make_tuple(dx, ds, dy, dz, de, kkt_error, lin_sys_error);
 }
 
-auto check_settings([[maybe_unused]] const Settings &settings) {
-  assert(!settings.enable_elastics || settings.elastic_var_cost_coeff > 0.0);
+auto check_settings(const Settings &settings) -> bool {
+  return !settings.enable_elastics || settings.elastic_var_cost_coeff > 0.0;
 }
 
 auto solve(const Input &input, const Settings &settings, Workspace &workspace,
@@ -160,14 +160,39 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace,
     input.model_callback(mci, &workspace.model_callback_output);
   }
 
-  check_settings(settings);
+  if (!check_settings(settings)) {
+    if (settings.assert_checks_pass) {
+      assert(false && "check_settings returned false.");
+    } else {
+      output.exit_status = Status::FAILED_CHECK;
+      output.num_iterations = 0;
+      return;
+    }
+  }
 
   const int x_dim = workspace.model_callback_output->upper_hessian_f.cols;
   const int s_dim = get_s_dim(workspace.model_callback_output->jacobian_g);
   const int y_dim = get_y_dim(workspace.model_callback_output->jacobian_c);
 
   for (int i = 0; i < s_dim; ++i) {
-    assert(workspace.vars.s[i] > 0.0 && workspace.vars.z[i] > 0.0);
+    if (workspace.vars.s[i] <= 0.0) {
+      if (settings.assert_checks_pass) {
+        assert(false && "workspace.vars.s[i] <= 0.0.");
+      } else {
+        output.exit_status = Status::FAILED_CHECK;
+        output.num_iterations = 0;
+        return;
+      }
+    }
+    if (workspace.vars.z[i] <= 0.0) {
+      if (settings.assert_checks_pass) {
+        assert(false && "workspace.vars.z[i] <= 0.0.");
+      } else {
+        output.exit_status = Status::FAILED_CHECK;
+        output.num_iterations = 0;
+        return;
+      }
+    }
   }
 
   add(workspace.model_callback_output->g, workspace.vars.s, s_dim,
@@ -552,6 +577,9 @@ auto operator<<(std::ostream &os, Status const &status) -> std::ostream & {
     break;
   case Status::TIMEOUT:
     os << "TIMEOUT";
+    break;
+  case Status::FAILED_CHECK:
+    os << "FAILED_CHECK";
     break;
   }
   return os;

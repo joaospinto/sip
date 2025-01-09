@@ -12,6 +12,7 @@ enum class Status {
   ITERATION_LIMIT = 1,
   LINE_SEARCH_FAILURE = 2,
   TIMEOUT = 3,
+  FAILED_CHECK = 4,
 };
 
 struct Settings {
@@ -52,6 +53,8 @@ struct Settings {
   bool enable_line_search_failures = false;
   // Determines whether we should print the solver logs.
   bool print_logs = true;
+  // Handle checks with assert calls.
+  bool assert_checks_pass = false;
 };
 
 // For nicer googletest outputs.
