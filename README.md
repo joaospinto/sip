@@ -38,23 +38,24 @@ penalty parameter by $\eta$.
 We start by defining the Barrier-Lagrangian
 
 $$
-\mathcal{L}(x, s, y, z; \mu) =
-f(x) - \mu \sum \limits_{i} \log(s_i) + y^T c(x) + z^T (g(x) + s).
+\mathcal{L}(x, s, e, y, z; \mu) =
+f(x) + \frac{\rho}{2} \lVert e \rVert^2 - \mu \sum \limits_{i} \log(s_i) +
+y^T c(x) + z^T (g(x) + s + e).
 $$
 
 Next, we define the Augmented Barrier-Lagrangian
 
 $$
-\mathcal{A}(x, s, y, z; \mu, \eta) = \mathcal{L}(x, s, y, z; \mu) +
-\frac{\eta}{2} (\lVert c(x) \rVert^2 + \lVert g(x) + s \rVert^2).
+\mathcal{A}(x, s, e, y, z; \mu, \eta) = \mathcal{L}(x, s, e, y, z; \mu) +
+\frac{\eta}{2} (\lVert c(x) \rVert^2 + \lVert g(x) + s + e\rVert^2).
 $$
 
-We will use $(\xi, \sigma, \lambda, \nu)$ to refer to
-the current $(x, s, y, z)$ iterate. We use $\Sigma, \Pi$ to denote
+We will use $(\xi, \sigma, \epsilon, \lambda, \nu)$ to refer to
+the current $(x, s, e, y, z)$ iterate. We use $\Sigma, \Pi$ to denote
 the diagonal matrices with entries $\sigma, \nu$ respectively.
 
-As we wish to employ a primal method, we compute $(\Delta x, \Delta s)$
-by applying Newton's method to $\mathcal{A}(x, s; \lambda, \nu, \mu, \eta)$.
+As we wish to employ a primal method, we compute $(\Delta x, \Delta e, \Delta s)$
+by applying Newton's method to $\mathcal{A}(x, e, s; \lambda, \nu, \mu, \eta)$.
 
 Below, we use $S, Z$ to represent the diagonal matrices containing $s, z$
 along the diagonal, respectively. Moreover, we use $\mathbb{1}$ to represent
@@ -63,99 +64,112 @@ the all- $1$ vector, and $\circ$ to represent elementwise vector multiplication.
 Noting that
 
 $$
-\nabla_{x, s} \mathcal{A}(x, s; \lambda, \nu, \mu, \eta) =
+\nabla_{x, e, s} \mathcal{A}(x, e, s; \lambda, \nu, \mu, \eta) =
 \begin{bmatrix}
-\nabla_x f(x) + J(c)(x)^T (\lambda + \eta c(x)) + J(g)(x)^T (\nu + \eta (g(x) + s)) \\
-\nu + \eta (g(x) + s) - \mu S^{-1} 1
+\nabla_x f(x) + J(c)(x)^T (\lambda + \eta c(x)) + J(g)(x)^T (\nu + \eta (g(x) + s + e)) \\
+\nu + \eta (g(x) + s + e) - \mu S^{-1} 1 \\
+\rho e + \nu + \eta (g(x) + s + e)
 \end{bmatrix} ,
 $$
 
 we let
 
 $$
-k(x, s, y, z; \lambda, \nu, \mu, \eta) =
+k(x, s, e, y, z; \lambda, \nu, \mu, \eta) =
 \begin{bmatrix}
 \nabla_x f(x) + J(c)(x)^T y + J(g)(x)^T z \\
 s \circ z - \mu 1 \\
+\rho e + z \\
 c(x) + \frac{\lambda - y}{\eta} \\
-g(x) + s + \frac{\nu - z}{\eta}
+g(x) + s + e + \frac{\nu - z}{\eta}
 \end{bmatrix} ,
 $$
 
-and find $(\Delta x, \Delta s)$ by taking a Newton step on $k$.
+and find $(\Delta x, \Delta s, \Delta e, \Delta y, \Delta z)$ by taking a Newton step on $k$.
 
 Above, we introduced auxiliary variables $y, z$, meant to represent
-$\lambda + \eta c(x), \nu + \eta (g(x) + s)$ respectively; note that these would
-be the next Lagrange multiplier estimates in a pure Augmented Lagrangian setting.
+$\lambda + \eta c(x), \nu + \eta (g(x) + s + e)$ respectively; note that these would
+be the next Lagrange multiplier estimates in a pure Augmented Lagrangian setting,
+modulo a $\max(\cdot, 0)$ projection in the case of $z$.
 This is done in order to prevent fill-in (via the presence of any
 $J(c)(x)^T J(c)(x)$ or $J(g)(x)^T J(g)(x)$ terms) in the linear system we use
-below to compute $(\Delta x, \Delta s)$.
+below to compute $(\Delta x, \Delta s, \Delta e)$.
 
-Letting $\tilde{\lambda} = \lambda + \eta c(\xi), \tilde{\nu} = \nu + \eta (g(\xi) + \sigma)$,
+Letting $\tilde{\lambda} = \lambda + \eta c(\xi), \tilde{\nu} = \nu + \eta (g(\xi) + \sigma + \epsilon)$,
 we can take a Newton step via
 
 $$
 \begin{align*}
-& J(k)(\xi, \sigma, \tilde{\lambda}, \tilde{\nu})
+& J(k)(\xi, \sigma, \epsilon, \tilde{\lambda}, \tilde{\nu})
 \begin{bmatrix}
 \Delta x \\
 \Delta s \\
+\Delta e \\
 \Delta y \\
 \Delta z
 \end{bmatrix} =
--k(\xi, \sigma, \tilde{\lambda}, \tilde{\nu})
+-k(\xi, \sigma, \epsilon, \tilde{\lambda}, \tilde{\nu})
 \Leftrightarrow \\
 & \begin{bmatrix}
-  \nabla^2_{xx} f( \xi ) + \tilde{\lambda}^T \nabla^2_{xx} c(\xi) + \tilde{\nu}^T \nabla^2_{xx} g (\xi) & 0 & J(c)(\xi)^T & J(g)(\xi)^T \\
-  0 & \Sigma^{-1} \Pi & 0 & I \\
-  J(c)(\xi) & 0 & -\frac{1}{\eta} I & 0 \\
-  J(g)(\xi) & I & 0 & -\frac{1}{\eta} I
+  \nabla^2_{xx} f( \xi ) + \tilde{\lambda}^T \nabla^2_{xx} c(\xi) + \tilde{\nu}^T \nabla^2_{xx} g (\xi) & 0 & 0 & J(c)(\xi)^T & J(g)(\xi)^T \\
+  0 & \Sigma^{-1} \Pi & 0 & 0 & I \\
+  0 & 0 & \rho & 0 & I \\
+  J(c)(\xi) & 0 & 0 & -\frac{1}{\eta} I & 0 \\
+  J(g)(\xi) & I & I & 0 & -\frac{1}{\eta} I
   \end{bmatrix}
 \begin{bmatrix}
 \Delta x \\
 \Delta s \\
+\Delta e \\
 \Delta y \\
 \Delta z
 \end{bmatrix}
 = - \begin{bmatrix}
     \nabla_x \mathcal{f}(\xi) + J(c)(\xi)^T \tilde{\lambda} + J(g)(\xi)^T \tilde{\nu} \\
     \tilde{\nu} - \mu \Sigma^{-1} \mathbb{1} \\
+    \rho e + \tilde{\nu} \\
     0 \\
     0
     \end{bmatrix} \Leftrightarrow \\
 & \begin{bmatrix}
-  \nabla^2_{xx} \mathcal{L}(\xi, \sigma, \tilde{\lambda}, \tilde{\nu}, \mu, \eta) & 0 & J(c)(\xi)^T & J(g)(\xi)^T \\
-  0 & \Sigma^{-1} \Pi & 0 & I \\
-  J(c)(\xi) & 0 & -\frac{1}{\eta} I & 0 \\
-  J(g)(\xi) & I & 0 & -\frac{1}{\eta} I
+  \nabla^2_{xx} \mathcal{L}(\xi, \sigma, \tilde{\lambda}, \tilde{\nu}, \mu, \eta) & 0 & 0 & J(c)(\xi)^T & J(g)(\xi)^T \\
+  0 & \Sigma^{-1} \Pi & 0 & 0 & I \\
+  0 & 0 & \rho & 0 & I \\
+  J(c)(\xi) & 0 & 0 & -\frac{1}{\eta} I & 0 \\
+  J(g)(\xi) & I & I & 0 & -\frac{1}{\eta} I
   \end{bmatrix}
 \begin{bmatrix}
 \Delta x \\
 \Delta s \\
+\Delta e \\
 \Delta y \\
 \Delta z
 \end{bmatrix}
 = - \begin{bmatrix}
     \nabla_x \mathcal{L}(\xi, \sigma, \tilde{\lambda}, \tilde{\nu}, \mu) \\
     \nabla_s \mathcal{L}(\xi, \sigma, \tilde{\lambda}, \tilde{\nu}, \mu) \\
+    \nabla_e \mathcal{L}(\xi, \sigma, \tilde{\lambda}, \tilde{\nu}, \mu) \\
     0 \\
     0
     \end{bmatrix} \Leftrightarrow \\
 & \begin{bmatrix}
-  \nabla^2_{xx} \mathcal{L}(\xi, \sigma, \tilde{\lambda}, \tilde{\nu}, \mu, \eta) & 0 & J(c)(\xi)^T & J(g)(\xi)^T \\
-  0 & \Sigma^{-1} \Pi & 0 & I \\
-  J(c)(\xi) & 0 & -\frac{1}{\eta} I & 0 \\
-  J(g)(\xi) & I & 0 & -\frac{1}{\eta} I
+  \nabla^2_{xx} \mathcal{L}(\xi, \sigma, \tilde{\lambda}, \tilde{\nu}, \mu, \eta) & 0 & 0 & J(c)(\xi)^T & J(g)(\xi)^T \\
+  0 & \Sigma^{-1} \Pi & 0 & 0 & I \\
+  0 & 0 & \rho & 0 & I \\
+  J(c)(\xi) & 0 & 0 & -\frac{1}{\eta} I & 0 \\
+  J(g)(\xi) & I & I & 0 & -\frac{1}{\eta} I
   \end{bmatrix}
 \begin{bmatrix}
 \Delta x \\
 \Delta s \\
+\Delta e \\
 \Delta y \\
 \Delta z
 \end{bmatrix}
 = - \begin{bmatrix}
     \nabla_x \mathcal{A}(\xi, \sigma, \lambda, \nu, \mu) \\
     \nabla_s \mathcal{A}(\xi, \sigma, \lambda, \nu, \mu) \\
+    \nabla_e \mathcal{A}(\xi, \sigma, \lambda, \nu, \mu) \\
     0 \\
     0
     \end{bmatrix} .
@@ -174,60 +188,66 @@ Using $D( \cdot ; \cdot )$ to represent the directional derivative operator, not
 
 $$
 \begin{align*} 
-D(\mathcal{A}(x, s; \lambda, \nu, \mu, \eta); (\Delta x, \Delta s)) \mid_{(\xi, \sigma)} &=
+D(\mathcal{A}(x, s, e; \lambda, \nu, \mu, \eta); (\Delta x, \Delta s, \Delta e)) \mid_{(\xi, \sigma, \epsilon)} &=
 \begin{bmatrix}
-\Delta x & \Delta s
+\Delta x & \Delta s & \Delta e
 \end{bmatrix}
 \begin{bmatrix}
-\nabla_x \mathcal{A}(\xi, \sigma, \lambda, \nu, \mu) \\
-\nabla_s \mathcal{A}(\xi, \sigma, \lambda, \nu, \mu)
+\nabla_x \mathcal{A}(\xi, \sigma, \epsilon, \lambda, \nu, \mu) \\
+\nabla_s \mathcal{A}(\xi, \sigma, \epsilon, \lambda, \nu, \mu) \\
+\nabla_e \mathcal{A}(\xi, \sigma, \epsilon, \lambda, \nu, \mu)
 \end{bmatrix} \\
 &= \begin{bmatrix}
-   \Delta x & \Delta s & 0 & 0
+   \Delta x & \Delta s & \Delta e & 0 & 0
    \end{bmatrix}
 \begin{bmatrix}
-\nabla_x \mathcal{A}(\xi, \sigma, \lambda, \nu, \mu) \\
-\nabla_s \mathcal{A}(\xi, \sigma, \lambda, \nu, \mu) \\
+\nabla_x \mathcal{A}(\xi, \sigma, \epsilon, \lambda, \nu, \mu) \\
+\nabla_s \mathcal{A}(\xi, \sigma, \epsilon, \lambda, \nu, \mu) \\
+\nabla_e \mathcal{A}(\xi, \sigma, \epsilon, \lambda, \nu, \mu) \\
 0 \\
 0
 \end{bmatrix} \\
 &= - \begin{bmatrix}
-     \Delta x & \Delta s & 0 & 0
+     \Delta x & \Delta s & \Delta e & 0 & 0
      \end{bmatrix}^T 
 \begin{bmatrix}
-\nabla^2_{xx} \mathcal{L}(\xi, \sigma, \tilde{\lambda}, \tilde{\nu}, \mu, \eta) & 0 & J(c)(\xi)^T & J(g)(\xi)^T \\
-0 & \Sigma^{-1} \Pi & 0 & I \\
-J(c)(\xi) & 0 & -\frac{1}{\eta} I & 0 \\
-J(g)(\xi) & I & 0 & -\frac{1}{\eta} I
+\nabla^2_{xx} \mathcal{L}(\xi, \sigma, \tilde{\lambda}, \tilde{\nu}, \mu, \eta) & 0 & 0 & J(c)(\xi)^T & J(g)(\xi)^T \\
+0 & \Sigma^{-1} \Pi & 0 & 0 & I \\
+0 & 0 & \rho & 0 & I \\
+J(c)(\xi) & 0 & 0 & -\frac{1}{\eta} I & 0 \\
+J(g)(\xi) & I & I & 0 & -\frac{1}{\eta} I
 \end{bmatrix}
 \begin{bmatrix}
 \Delta x \\
 \Delta s \\
+\Delta e \\
 0 \\
 0
 \end{bmatrix} \\
 &= - \begin{bmatrix}
-     \Delta x & \Delta s
+     \Delta x & \Delta s & \Delta e
      \end{bmatrix}^T 
 \begin{bmatrix}
-\nabla^2_{xx} \mathcal{L}(\xi, \sigma, \tilde{\lambda}, \tilde{\nu}, \tilde{\mu}, \eta) & 0 \\
-0 & \Sigma^{-1} \Pi
+\nabla^2_{xx} \mathcal{L}(\xi, \sigma, \tilde{\lambda}, \tilde{\nu}, \tilde{\mu}, \eta) & 0 & 0 \\
+0 & \Sigma^{-1} \Pi \\
+0 & 0 & \rho
 \end{bmatrix}
 \begin{bmatrix}
 \Delta x \\
-\Delta s
+\Delta s \\
+\Delta e
 \end{bmatrix} < 0 ,
 \end{align*}
 $$
 
 assuming that $\nabla^2_{xx} \mathcal{L}(\xi, \sigma, \tilde{\lambda}, \tilde{\nu}, \mu, \eta)$
-is replaced with any symmetric positive definite approximation, as $\sigma, \nu > 0$,
-unless $(\Delta x, \Delta s) = (0, 0)$, in which case we have converged.
+is replaced with any symmetric positive definite approximation, as $\sigma, \nu, \rho > 0$,
+unless $(\Delta x, \Delta s, \Delta e) = (0, 0, 0)$, in which case we have converged.
 
-This means that $(\Delta x, \Delta s)$ is always a descent direction
-of $\mathcal{A}(x, s; \lambda, \nu, \mu, \eta)$.
-Thus, the Augmented Barrier-Lagrangian $\mathcal{A}(x, s; \lambda, \nu, \mu, \eta)$
-can be used as the merit function for a line search over the primal variables $(x, s)$.
+This means that $(\Delta x, \Delta s, \Delta e)$ is always a descent direction
+of $\mathcal{A}(x, s, e; \lambda, \nu, \mu, \eta)$.
+Thus, the Augmented Barrier-Lagrangian $\mathcal{A}(x, s, e; \lambda, \nu, \mu, \eta)$
+can be used as the merit function for a line search over the primal variables $(x, s, e)$.
 
 Once a primal line search step size $\alpha$ is found, the candidate solution
 is updated via
@@ -236,6 +256,7 @@ $$
 \begin{align*}
 \xi &\leftarrow \xi + \alpha \Delta x \\
 \sigma &\leftarrow \max(\sigma + \alpha \Delta s, (1 - \tau) \sigma) \\
+\epsilon &\leftarrow \epsilon + \alpha \Delta e \\
 \lambda &\leftarrow \tilde{\lambda} + \alpha \Delta y \\
 \nu &\leftarrow \max(\tilde{\nu} + \alpha \Delta z, (1 - \tau) \nu) ,
 \end{align*}
@@ -249,10 +270,11 @@ prevent $\sigma, \nu$ from approaching $0$ too quickly.
 In this section, we show that 
 
 $$ \begin{bmatrix}
-   \nabla^2_{xx} \mathcal{L} & 0 & J(c)^T & J(g)^T \\
-   0 & \Sigma^{-1} \Pi & 0 & I \\
-   J(c) & 0 & -\frac{1}{\eta} I & 0 \\
-   J(g) & I & 0 & -\frac{1}{\eta} I
+   \nabla^2_{xx} \mathcal{L} & 0 & 0 & J(c)^T & J(g)^T \\
+   0 & \Sigma^{-1} \Pi & 0 & 0 & I \\
+   0 & 0 & \rho & 0 & I \\
+   J(c) & 0 & 0 & -\frac{1}{\eta} I & 0 \\
+   J(g) & I & I & 0 & -\frac{1}{\eta} I
    \end{bmatrix} , $$
 
 is invertible, assuming again that $\nabla^2_{xx} \mathcal{L}$ is replaced
@@ -263,7 +285,7 @@ To prove this, letting
 $$
 \begin{align*} 
 W &= \Pi^{-1} \Sigma \\
-V &= (W + \frac{1}{\eta} I)^{-1} \\
+V &= (W + (\frac{1}{\eta} + \frac{1}{\rho}) I)^{-1} \\
 U &= (\nabla^2_{xx} \mathcal{L} + \eta J(c)^T J(c) + \eta J(g)^T J(g))^{-1} = (\nabla^2_{xx} \mathcal{A})^{-1} ,
 \end{align*} 
 $$
@@ -273,10 +295,32 @@ note that
 $$
 \begin{align*} 
 & \begin{bmatrix}
+  \nabla^2_{xx} \mathcal{L} & 0 & 0 & J(c)^T & J(g)^T \\
+  0 & \Sigma^{-1} \Pi & 0 & 0 & I \\
+   0 & 0 & \rho & 0 & I \\
+  J(c) & 0 & 0 & -\frac{1}{\eta} I & 0 \\
+  J(g) & I & I & 0 & -\frac{1}{\eta} I
+  \end{bmatrix}
+  \begin{bmatrix}
+  \Delta x \\
+  \Delta s \\
+  \Delta e \\
+  \Delta y \\
+  \Delta z
+  \end{bmatrix} =
+  -\begin{bmatrix}
+   r_x \\
+   r_s \\
+   r_e \\
+   r_y \\
+   r_z
+   \end{bmatrix} \\
+\Leftrightarrow
+& \begin{bmatrix}
   \nabla^2_{xx} \mathcal{L} & 0 & J(c)^T & J(g)^T \\
   0 & \Sigma^{-1} \Pi & 0 & I \\
   J(c) & 0 & -\frac{1}{\eta} I & 0 \\
-  J(g) & I & 0 & -\frac{1}{\eta} I
+  J(g) & I & 0 & -(\frac{1}{\eta} + \frac{1}{\rho}) I
   \end{bmatrix}
   \begin{bmatrix}
   \Delta x \\
@@ -288,13 +332,13 @@ $$
    r_x \\
    r_s \\
    r_y \\
-   r_z
+   r_z - \frac{1}{\rho} r_e
    \end{bmatrix} \\
 \Leftrightarrow
 & \begin{bmatrix}
   \nabla^2_{xx} \mathcal{L} & J(c)^T & J(g)^T \\
   J(c) & -\frac{1}{\eta} I & 0 \\
-  J(g) & 0 & -W -\frac{1}{\eta} I
+  J(g) & 0 & -W -(\frac{1}{\eta} + \frac{1}{\rho}) I
   \end{bmatrix}
   \begin{bmatrix}
   \Delta x \\
@@ -304,12 +348,12 @@ $$
   -\begin{bmatrix}
    r_x \\
    r_y \\
-   r_z - W r_s
+   r_z - \frac{1}{\rho} r_e - W r_s
    \end{bmatrix} \\
 \Leftrightarrow
 & \begin{bmatrix}
   \nabla^2_{xx} \mathcal{L} + \eta J(c)^T J(c) & J(g)^T \\
-  J(g) & -W -\frac{1}{\eta} I
+  J(g) & -W -(\frac{1}{\eta} + \frac{1}{\rho}) I
   \end{bmatrix}
   \begin{bmatrix}
   \Delta x \\
@@ -317,21 +361,22 @@ $$
   \end{bmatrix} =
   -\begin{bmatrix}
    r_x + \eta J(c)^T r_y \\
-   r_z - W r_s
+   r_z - \frac{1}{\rho} r_e - W r_s
    \end{bmatrix} \\
 \Leftrightarrow
 & (\nabla^2_{xx} \mathcal{L} + \eta J(c)^T J(c) + \eta J(g)^T J(g)) \Delta x =
-   -(r_x + \eta J(c)^T r_y + J(g)^T V (r_z - W r_s)) \\
+   -(r_x + \eta J(c)^T r_y + J(g)^T V (r_z - \frac{1}{\rho} r_e - W r_s)) \\
 \Leftrightarrow
 & \Delta x =
-   -U (r_x + \eta J(c)^T r_y + J(g)^T V (r_z - W r_s))
+   -U (r_x + \eta J(c)^T r_y + J(g)^T V (r_z - \frac{1}{\rho} r_e - W r_s))
 \end{align*} 
 $$
 
 where we eliminated $\Delta s, \Delta y, \Delta z$ respectively via
 
 $$
-\begin{align*} 
+\begin{align*}
+\Delta e &= - \frac{1}{\rho}(\Delta z + r_e) \\
 \Delta s &= -\Pi^{-1} \Sigma (\Delta z + r_s), \\
 \Delta y &= \eta (J(c) \Delta x + r_y), \\
 \Delta z &= V (J(g) \Delta x + r_z - W r_s) .
@@ -342,9 +387,3 @@ Depending on the sparsity pattern of the matrices involved,
 doing this block-elimination (in full or in part) may be reasonable,
 although typically it is faster to solve the block-3x3 formulation above
 via a sparse $L D L^T$ decomposition.
-
-<!---
-TODO(joao):
-1. add elastics to the docs.
-2. implement everything.
--->
