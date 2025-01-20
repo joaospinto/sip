@@ -49,8 +49,9 @@ $$
 \frac{\eta}{2} (\lVert c(x) \rVert^2 + \lVert g(x) + s \rVert^2).
 $$
 
-We will use $(\chi, \sigma, \lambda, \nu)$ to refer to
-the current $(x, s, y, z)$ iterate.
+We will use $(\xi, \sigma, \lambda, \nu)$ to refer to
+the current $(x, s, y, z)$ iterate. We use $\Sigma, \Pi$ to denote
+the diagonal matrices with entries $\sigma, \nu$ respectively.
 
 As we wish to employ a primal method, we compute $(\Delta x, \Delta s)$
 by applying Newton's method to $\mathcal{A}(x, s; \lambda, \nu, \mu, \eta)$.
@@ -65,7 +66,7 @@ $$
 \nabla_{x, s} \mathcal{A}(x, s; \lambda, \nu, \mu, \eta) =
 \begin{bmatrix}
 \nabla_x f(x) + J(c)(x)^T (\lambda + \eta c(x)) + J(g)(x)^T (\nu + \eta (g(x) + s)) \\
-z - \mu S^{-1} 1
+\nu + \eta (g(x) + s) - \mu S^{-1} 1
 \end{bmatrix} ,
 $$
 
@@ -90,25 +91,26 @@ This is done in order to prevent fill-in (via the presence of any
 $J(c)(x)^T J(c)(x)$ or $J(g)(x)^T J(g)(x)$ terms) in the linear system we use
 below to compute $(\Delta x, \Delta s)$.
 
-Letting $\tilde{\lambda} = \lambda + \eta c(\chi), \tilde{\nu} = \nu + \eta (g(\chi) + \sigma)$,
+Letting $\tilde{\lambda} = \lambda + \eta c(\xi), \tilde{\nu} = \nu + \eta (g(\xi) + \sigma)$,
 we can take a Newton step via
 
 $$
-J(k)(\chi, \sigma, \tilde{\lambda}, \tilde{\nu})
+\begin{align*}
+& J(k)(\xi, \sigma, \tilde{\lambda}, \tilde{\nu})
 \begin{bmatrix}
 \Delta x \\
 \Delta s \\
 \Delta y \\
 \Delta z
 \end{bmatrix} =
--k(\chi, \sigma, \tilde{\lambda}, \tilde{\nu})
-\Leftrightarrow
-\begin{bmatrix}
-H_x(\mathcal{A})(\chi, \sigma, \lambda, \nu, \mu, \eta) & 0 & J(c)(\chi)^T & J(g)(\chi)^T \\
-0 & S^{-1} Z & 0 & I \\
-J(c)(\chi) & 0 & -\frac{1}{\eta} I & 0 \\
-J(g)(\chi) & I & 0 & -\frac{1}{\eta} I
-\end{bmatrix}
+-k(\xi, \sigma, \tilde{\lambda}, \tilde{\nu})
+\Leftrightarrow \\
+& \begin{bmatrix}
+  \nabla^2_{xx} f( \xi ) + \tilde{\lambda}^T \nabla^2_{xx} c(\xi) + \tilde{\nu}^T \nabla^2_{xx} g (\xi) & 0 & J(c)(\xi)^T & J(g)(\xi)^T \\
+  0 & \Sigma^{-1} \Pi & 0 & I \\
+  J(c)(\xi) & 0 & -\frac{1}{\eta} I & 0 \\
+  J(g)(\xi) & I & 0 & -\frac{1}{\eta} I
+  \end{bmatrix}
 \begin{bmatrix}
 \Delta x \\
 \Delta s \\
@@ -116,41 +118,87 @@ J(g)(\chi) & I & 0 & -\frac{1}{\eta} I
 \Delta z
 \end{bmatrix}
 = - \begin{bmatrix}
-    \nabla_x \mathcal{f}(\chi) + J(c)(\chi)^T \tilde{\lambda} + J(g)(\chi)^T \tilde{\nu} \\
-    z - \mu S^{-1} \mathbb{1} \\
+    \nabla_x \mathcal{f}(\xi) + J(c)(\xi)^T \tilde{\lambda} + J(g)(\xi)^T \tilde{\nu} \\
+    \tilde{\nu} - \mu \Sigma^{-1} \mathbb{1} \\
     0 \\
     0
-    \end{bmatrix}. $$
+    \end{bmatrix} \Leftrightarrow \\
+& \begin{bmatrix}
+  \nabla^2_{xx} \mathcal{L}(\xi, \sigma, \tilde{\lambda}, \tilde{\nu}, \mu, \eta) & 0 & J(c)(\xi)^T & J(g)(\xi)^T \\
+  0 & \Sigma^{-1} \Pi & 0 & I \\
+  J(c)(\xi) & 0 & -\frac{1}{\eta} I & 0 \\
+  J(g)(\xi) & I & 0 & -\frac{1}{\eta} I
+  \end{bmatrix}
+\begin{bmatrix}
+\Delta x \\
+\Delta s \\
+\Delta y \\
+\Delta z
+\end{bmatrix}
+= - \begin{bmatrix}
+    \nabla_x \mathcal{L}(\xi, \sigma, \tilde{\lambda}, \tilde{\nu}, \mu) \\
+    \nabla_s \mathcal{L}(\xi, \sigma, \tilde{\lambda}, \tilde{\nu}, \mu) \\
+    0 \\
+    0
+    \end{bmatrix} \Leftrightarrow \\
+& \begin{bmatrix}
+  \nabla^2_{xx} \mathcal{L}(\xi, \sigma, \tilde{\lambda}, \tilde{\nu}, \mu, \eta) & 0 & J(c)(\xi)^T & J(g)(\xi)^T \\
+  0 & \Sigma^{-1} \Pi & 0 & I \\
+  J(c)(\xi) & 0 & -\frac{1}{\eta} I & 0 \\
+  J(g)(\xi) & I & 0 & -\frac{1}{\eta} I
+  \end{bmatrix}
+\begin{bmatrix}
+\Delta x \\
+\Delta s \\
+\Delta y \\
+\Delta z
+\end{bmatrix}
+= - \begin{bmatrix}
+    \nabla_x \mathcal{A}(\xi, \sigma, \lambda, \nu, \mu) \\
+    \nabla_s \mathcal{A}(\xi, \sigma, \lambda, \nu, \mu) \\
+    0 \\
+    0
+    \end{bmatrix} .
+\end{align*}
+$$
+
+Note that
+
+$$
+\nabla^2_{xx} \mathcal{A}(\xi, \sigma, \lambda, \nu, \mu, \eta)
+= \nabla^2_{xx} \mathcal{L}(\xi, \sigma, \tilde{\lambda}, \tilde{\nu}, \mu, \eta) +
+\eta (J(c)(\xi)^T J(c)(\xi) + J(g)(\xi)^T J(g)(\xi)).
+$$
 
 Using $D( \cdot ; \cdot )$ to represent the directional derivative operator, note that
 
 $$
 \begin{align*} 
-D(\mathcal{A}(x, s; \lambda, \nu, \mu, \eta); (\Delta x, \Delta s)) \mid_{(\chi, \sigma)} &=
+D(\mathcal{A}(x, s; \lambda, \nu, \mu, \eta); (\Delta x, \Delta s)) \mid_{(\xi, \sigma)} &=
 \begin{bmatrix}
 \Delta x & \Delta s
 \end{bmatrix}
 \begin{bmatrix}
-\nabla_x \mathcal{f}(\chi) + J(c)(\chi)^T \tilde{\lambda} + J(g)(\chi)^T \tilde{\nu} \\
-z - \mu S^{-1} \mathbb{1}
+\nabla_x \mathcal{A}(\xi, \sigma, \lambda, \nu, \mu) \\
+\nabla_s \mathcal{A}(\xi, \sigma, \lambda, \nu, \mu)
 \end{bmatrix} \\
 &= \begin{bmatrix}
    \Delta x & \Delta s & 0 & 0
    \end{bmatrix}
 \begin{bmatrix}
-   \nabla_x \mathcal{f}(\chi) + J(c)(\chi)^T \tilde{\lambda} + J(g)(\chi)^T \tilde{\nu} \\
-   z - \mu S^{-1} \mathbb{1} \\
-   0 \\
-   0
-   \end{bmatrix} \\
+\nabla_x \mathcal{A}(\xi, \sigma, \lambda, \nu, \mu) \\
+\nabla_s \mathcal{A}(\xi, \sigma, \lambda, \nu, \mu) \\
+0 \\
+0
+\end{bmatrix} \\
 &= - \begin{bmatrix}
      \Delta x & \Delta s & 0 & 0
      \end{bmatrix}^T 
 \begin{bmatrix}
-H_x(\mathcal{A})(\chi, \sigma, \lambda, \nu, \mu, \eta) & 0 & J(c)(\chi)^T & J(g)(\chi)^T \\
-0 & S^{-1} Z & 0 & I \\
-J(c)(\chi) & 0 & -\frac{1}{\eta} I & 0 \\
-J(g)(\chi) & I & 0 & -\frac{1}{\eta} I
+\nabla^2_{xx} \mathcal{L}(\xi, \sigma, \tilde{\lambda}, \tilde{\nu}, \mu, \eta) & 0 & J(c)(\xi)^T & J(g)(\xi)^T \\
+0 & \Sigma^{-1} \Pi & 0 & I \\
+J(c)(\xi) & 0 & -\frac{1}{\eta} I & 0 \\
+J(g)(\xi) & I & 0 & -\frac{1}{\eta} I
 \end{bmatrix}
 \begin{bmatrix}
 \Delta x \\
@@ -162,8 +210,8 @@ J(g)(\chi) & I & 0 & -\frac{1}{\eta} I
      \Delta x & \Delta s
      \end{bmatrix}^T 
 \begin{bmatrix}
-H_x(\mathcal{A})(\chi, \sigma, \lambda, \nu, \mu, \eta) & 0 \\
-0 & S^{-1} Z
+\nabla^2_{xx} \mathcal{L}(\xi, \sigma, \tilde{\lambda}, \tilde{\nu}, \tilde{\mu}, \eta) & 0 \\
+0 & \Sigma^{-1} \Pi
 \end{bmatrix}
 \begin{bmatrix}
 \Delta x \\
@@ -172,8 +220,8 @@ H_x(\mathcal{A})(\chi, \sigma, \lambda, \nu, \mu, \eta) & 0 \\
 \end{align*}
 $$
 
-assuming that $H_x(\mathcal{A})(\chi, \sigma, \lambda, \nu, \mu, \eta)$ is replaced
-with any symmetric positive definite approximation, as $s, z > 0$,
+assuming that $\nabla^2_{xx} \mathcal{L}(\xi, \sigma, \tilde{\lambda}, \tilde{\nu}, \mu, \eta)$
+is replaced with any symmetric positive definite approximation, as $\sigma, \nu > 0$,
 unless $(\Delta x, \Delta s) = (0, 0)$, in which case we have converged.
 
 This means that $(\Delta x, \Delta s)$ is always a descent direction
@@ -186,38 +234,37 @@ is updated via
 
 $$
 \begin{align*}
-\chi &\leftarrow \chi + \alpha \Delta x \\
-\sigma &\leftarrow \sigma + \alpha \Delta s \\
+\xi &\leftarrow \xi + \alpha \Delta x \\
+\sigma &\leftarrow \max(\sigma + \alpha \Delta s, (1 - \tau) \sigma) \\
 \lambda &\leftarrow \tilde{\lambda} + \alpha \Delta y \\
-\nu &\leftarrow \tilde{\nu} + \alpha \Delta z .
+\nu &\leftarrow \max(\tilde{\nu} + \alpha \Delta z, (1 - \tau) \nu) ,
 \end{align*}
 $$
 
-Note that $\alpha$ is selected so that $\sigma$ remains positive; moreover, a
-fraction-to-the-boundary rule is applied to prevent $\sigma, \nu$
-from approaching $0$ too quickly.
+where $\tau$ is the fraction-to-the-boundary parameter, which is applied to
+prevent $\sigma, \nu$ from approaching $0$ too quickly.
 
 ### Solving the linear system
 
 In this section, we show that 
 
 $$ \begin{bmatrix}
-   H_x(\mathcal{A}) & 0 & J(c)^T & J(g)^T \\
-   0 & S^{-1} Z & 0 & I \\
+   \nabla^2_{xx} \mathcal{L} & 0 & J(c)^T & J(g)^T \\
+   0 & \Sigma^{-1} \Pi & 0 & I \\
    J(c) & 0 & -\frac{1}{\eta} I & 0 \\
    J(g) & I & 0 & -\frac{1}{\eta} I
    \end{bmatrix} , $$
 
-is invertible, assuming again that $H_x(\mathcal{A})$ is replaced
+is invertible, assuming again that $\nabla^2_{xx} \mathcal{L}$ is replaced
 with any symmetric positive definite approximation.
 
 To prove this, letting
 
 $$
 \begin{align*} 
-W &= Z^{-1} S \\
+W &= \Pi^{-1} \Sigma \\
 V &= (W + \frac{1}{\eta} I)^{-1} \\
-U &= (H_x(\mathcal{A}) + \eta J(c)^T J(c) + \eta J(g)^T J(g))^{-1} ,
+U &= (\nabla^2_{xx} \mathcal{L} + \eta J(c)^T J(c) + \eta J(g)^T J(g))^{-1} = (\nabla^2_{xx} \mathcal{A})^{-1} ,
 \end{align*} 
 $$
 
@@ -226,8 +273,8 @@ note that
 $$
 \begin{align*} 
 & \begin{bmatrix}
-  H_x(\mathcal{A}) & 0 & J(c)^T & J(g)^T \\
-  0 & S^{-1} Z & 0 & I \\
+  \nabla^2_{xx} \mathcal{L} & 0 & J(c)^T & J(g)^T \\
+  0 & \Sigma^{-1} \Pi & 0 & I \\
   J(c) & 0 & -\frac{1}{\eta} I & 0 \\
   J(g) & I & 0 & -\frac{1}{\eta} I
   \end{bmatrix}
@@ -245,7 +292,7 @@ $$
    \end{bmatrix} \\
 \Leftrightarrow
 & \begin{bmatrix}
-  H_x(\mathcal{A}) & J(c)^T & J(g)^T \\
+  \nabla^2_{xx} \mathcal{L} & J(c)^T & J(g)^T \\
   J(c) & -\frac{1}{\eta} I & 0 \\
   J(g) & 0 & -W -\frac{1}{\eta} I
   \end{bmatrix}
@@ -261,7 +308,7 @@ $$
    \end{bmatrix} \\
 \Leftrightarrow
 & \begin{bmatrix}
-  H_x(\mathcal{A}) + \eta J(c)^T J(c) & J(g)^T \\
+  \nabla^2_{xx} \mathcal{L} + \eta J(c)^T J(c) & J(g)^T \\
   J(g) & -W -\frac{1}{\eta} I
   \end{bmatrix}
   \begin{bmatrix}
@@ -273,7 +320,7 @@ $$
    r_z - W r_s
    \end{bmatrix} \\
 \Leftrightarrow
-& (H_x(\mathcal{A}) + \eta J(c)^T J(c) + \eta J(g)^T J(g)) \Delta x =
+& (\nabla^2_{xx} \mathcal{L} + \eta J(c)^T J(c) + \eta J(g)^T J(g)) \Delta x =
    -(r_x + \eta J(c)^T r_y + J(g)^T V (r_z - W r_s)) \\
 \Leftrightarrow
 & \Delta x =
@@ -285,7 +332,7 @@ where we eliminated $\Delta s, \Delta y, \Delta z$ respectively via
 
 $$
 \begin{align*} 
-\Delta s &= -Z^{-1} S (\Delta z + r_s), \\
+\Delta s &= -\Pi^{-1} \Sigma (\Delta z + r_s), \\
 \Delta y &= \eta (J(c) \Delta x + r_y), \\
 \Delta z &= V (J(g) \Delta x + r_z - W r_s) .
 \end{align*} 
