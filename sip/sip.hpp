@@ -23,21 +23,21 @@ struct Settings {
   // A parameter of the fraction-to-the-boundary rule.
   double tau_min = 0.995;
   // A parameter of the merit function and descent direction computation.
-  double mu_min = 1e-12;
-  // A regularization parameter, applied to the yy-block of the LHS of the
-  // Newton-KKT system.
-  double gamma_y = 1e-6;
-  // A regularization parameter, applied to the zz-block of the LHS of the
-  // Newton-KKT system.
-  double gamma_z = 1e-6;
-  // When the merit slope becomes larger than this, no line search is done.
-  double min_merit_slope_to_skip_line_search = -1e-3;
-  // When the slope of the barrier Lagrangian is smaller, force rho = 0.
-  double max_barrier_lagrangian_slope_for_zero_rho = -1e-3;
+  double initial_mu = 1e-3;
+  // Determines how much mu decreases per iteration.
+  double mu_update_factor = 1e-1;
+  // A parameter of the merit function and descent direction computation.
+  double mu_min = 1e-16;
+  // The initial penalty parameter of the Augmented Lagrangian.
+  double initial_penalty_parameter = 1e3;
+  // Minimum acceptable constraint violation ratio for eta to not increase.
+  double min_acceptable_constraint_violation_ratio = 0.25;
+  // By what factor to increase eta.
+  double penalty_parameter_increase_factor = 10.0;
+  // By what factor to decrease eta.
+  double penalty_parameter_decrease_factor = 0.5;
   // The maximum allowed penalty parameter in the AL merit function.
-  double max_rho = 1e9;
-  // The minimum absolute merit slope we should try to achieve when picking rho.
-  double min_abs_merit_slope = 1.0;
+  double max_penalty_parameter = 1e9;
   // Determines when we accept a line search step, by the merit decrease and
   // slope.
   double armijo_factor = 1e-4;
@@ -45,6 +45,8 @@ struct Settings {
   double line_search_factor = 0.5;
   // Determines when we declare a line search failure.
   double line_search_min_step_size = 1e-6;
+  // When the merit slope becomes larger than this, no line search is done.
+  double min_merit_slope_to_skip_line_search = -1e-3;
   // Whether to enable the usage of elastic variables.
   bool enable_elastics = false;
   // Determines how elastic variables are penalized in the cost function.
@@ -61,18 +63,27 @@ struct Settings {
 auto operator<<(std::ostream &os, Status const &status) -> std::ostream &;
 
 struct ModelCallbackInput {
+  // The primal variables.
   double *x;
+  // The Lagrange multipliers associated with the equality constraints
+  double *y;
+  // The Lagrange multipliers associated with the inequality constraints
+  double *z;
 };
 
 struct ModelCallbackOutput {
   // NOTE: all sparse matrices should be represented in CSC format.
 
-  // The objective and its first two derivatives.
-  // NOTE: only the upper triangle should be filled in upper_hessian_f.
-  // NOTE: upper_hessian_f should be a positive definite approximation.
+  // The objective and its first derivative.
   double f;
   double *gradient_f;
-  SparseMatrix upper_hessian_f;
+
+  // The Hessian of the Lagrangian.
+  // NOTE:
+  // 1. Only the upper triangle should be filled in upper_hessian_lagrangian.
+  // 2. upper_hessian_lagrangian should be a positive definite approximation.
+  // 3. An positive definite approximation of the Hessian of f is often used.
+  SparseMatrix upper_hessian_lagrangian;
 
   // The equality constraints and their first derivative.
   double *c;
@@ -83,61 +94,67 @@ struct ModelCallbackOutput {
   SparseMatrix jacobian_g;
 
   // To dynamically allocate the required memory.
-  void reserve(int x_dim, int s_dim, int y_dim, int upper_hessian_f_nnz,
-               int jacobian_c_nnz, int jacobian_g_nnz,
-               bool is_jacobian_c_transposed, bool is_jacobian_g_transposed);
+  void reserve(int x_dim, int s_dim, int y_dim,
+               int upper_hessian_lagrangian_nnz, int jacobian_c_nnz,
+               int jacobian_g_nnz, bool is_jacobian_c_transposed,
+               bool is_jacobian_g_transposed);
   void free();
 
   // For using pre-allocated (possibly statically allocated) memory.
-  auto mem_assign(int x_dim, int s_dim, int y_dim, int upper_hessian_f_nnz,
-                  int jacobian_c_nnz, int jacobian_g_nnz,
-                  bool is_jacobian_c_transposed, bool is_jacobian_g_transposed,
-                  unsigned char *mem_ptr) -> int;
+  auto mem_assign(int x_dim, int s_dim, int y_dim,
+                  int upper_hessian_lagrangian_nnz, int jacobian_c_nnz,
+                  int jacobian_g_nnz, bool is_jacobian_c_transposed,
+                  bool is_jacobian_g_transposed, unsigned char *mem_ptr) -> int;
 };
 
 struct Input {
   // NOTE: the user should ensure that no dynamic memory allocation happens
-  //       when passing in model_callback and lin_sys_solver, possibly by
-  //       wrapping them with std::cref (in case they are lambdas).
+  //       when passing in the callbacks below, possibly by declaring them
+  //       as lambdas and wrapping them with std::cref.
+
+  // NOTE: the LDLT factor/solve callbacks should solve Kv = b, where:
+  // 1. A = [ K + r1 I_x      C.T        G.T   ]
+  //        [     C        -r2 * I_y      0    ]
+  //        [     G            0       -r3 I_z ]
+  // 2. (H + r1 I_x) is symmetric and positive definite;
+  // 3. H_data is expected to represent np.triu(H) in CSC order.
+  // 4. C_data and G_data are expected to represent C and G in CSC order.
+  // 5. r1, r2, r3 are non-negative regularization parameters;
+
+  using LDLTFactorCallback = std::function<void(
+      const double *H_data, const double *C_data, const double *G_data,
+      const double *w, const double r1, const double r2, const double r3,
+      double *LT_data, double *D_diag)>;
+
+  using LDLTSolveCallback = std::function<void(
+      const double *LT_data, const double *D_diag, const double *b, double *v)>;
+
+  using Block3x3KKTProductCallback = std::function<void(
+      const double *H_data, const double *C_data, const double *G_data,
+      const double *w, const double r1, const double r2, const double r3,
+      const double *x_x, const double *x_y, const double *x_z, double *y_x,
+      double *y_y, double *y_z)>;
+
+  using MatrixVectorMultiplicationCallback =
+      std::function<void(const double *M_data, const double *x, double *y)>;
 
   using ModelCallback =
       std::function<void(const ModelCallbackInput &, ModelCallbackOutput **)>;
 
-  // Callback type for solving Av + b = 0, where:
-  // 1. A = [ H + r1 I_x       0         C.T        G.T         0   ]
-  //        [     0        S^{-1} Z       0         I_s         0   ]
-  //        [     C            0      -r2 * I_y      0          0   ]
-  //        [     G           I_s         0       -r3 I_z   (1/p) I ]
-  //        [     0            0          0       (1/p) I   (1/p) I ];
-  // 2. v = (dx, ds, dy, dz, p de);
-  // 3. b = [ grad_f + C.T @ y + G.T @ z ]
-  //        [        z - mu / s          ]
-  //        [             c              ]
-  //        [         g + s + e          ]
-  //        [         e + z / p          ]
-  // 4. (H + r1 I_x) is symmetric and positive definite;
-  // 5. H_data is expected to represent np.triu(H) in CSC order.
-  // 6. C_data and G_data are expected to represent C and G in CSC order.
-  // 7. S = np.diag(s);
-  // 8. Z = np.diag(z);
-  // 9. r1, r2, r3 are non-negative regularization parameters;
-  // 10. p is the penalty term on the elastic variables;
-  // 11. When elastics are inactive, p = +inf and e = 0.
-  using LinearSystemSolver = std::function<void(
-      const double *c, const double *g, const double *grad_f,
-      const double *H_data, const double *C_data, const double *G_data,
-      const double *s, const double *y, const double *z, const double *e,
-      const double mu, const double p, const double r1, const double r2,
-      const double r3, double *dx, double *ds, double *dy, double *dz,
-      double *de, double *rx, double *rs, double *ry, double *rz, double *re,
-      double &kkt_error, double *maybe_lin_sys_error)>;
-
   using TimeoutCallback = std::function<bool(void)>;
 
+  // Callback for factoring the reduced-block-3x3 Newton-KKT system.
+  LDLTFactorCallback ldlt_factor;
+  // Callback for solving the reduced-block-3x3 Newton-KKT system.
+  LDLTSolveCallback ldlt_solve;
+  // Callback for y += Kx, where K is the block-3x3 Newton-KKT system's LHS.
+  Block3x3KKTProductCallback add_Kx_to_y;
+  // Callback for adding C^T x to y.
+  MatrixVectorMultiplicationCallback add_CTx_to_y;
+  // Callback for adding G^T x to y.
+  MatrixVectorMultiplicationCallback add_GTx_to_y;
   // Callback for filling the ModelCallbackOutput object.
   ModelCallback model_callback;
-  // Callback for solving the Newton-KKT linear systems.
-  LinearSystemSolver lin_sys_solver;
   // Callback for (optionally) declaring a timeout. Return true for timeout.
   TimeoutCallback timeout_callback;
 };
@@ -183,6 +200,33 @@ struct MiscellaneousWorkspace {
   auto mem_assign(int s_dim, unsigned char *mem_ptr) -> int;
 };
 
+struct ComputeSearchDirectionWorkspace {
+  // Stores S^{-1} Z
+  double *w;
+  // Stores y + eta * c(x).
+  double *y_tilde;
+  // Stores z + eta * (g(x) + s + e).
+  double *z_tilde;
+  // Stores the data of the L^T matrix in the L D L^T decomposition.
+  double *LT_data;
+  // Stores the data of the D matrix in the L D L^T decomposition.
+  double *D_diag;
+  // The RHS of the reduced block-3x3 Newton-KKT system.
+  double *rhs_block_3x3;
+  // The solution of the reduced block-3x3 Newton-KKT system.
+  double *sol_block_3x3;
+  // Stores the residual of the full Newton-KKT system.
+  double *residual;
+
+  // To dynamically allocate the required memory.
+  void reserve(int s_dim, int y_dim, int kkt_dim, int full_dim, int L_nnz);
+  void free();
+
+  // For using pre-allocated (possibly statically allocated) memory.
+  auto mem_assign(int s_dim, int y_dim, int kkt_dim, int full_dim, int L_nnz,
+                  unsigned char *mem_ptr) -> int;
+};
+
 // This data structure is used to avoid doing dynamic memory allocation inside
 // of the solver, as well as avoiding excessive templating in the solver code.
 struct Workspace {
@@ -203,14 +247,16 @@ struct Workspace {
   ModelCallbackOutput *model_callback_output;
   // Stores miscellaneous items.
   MiscellaneousWorkspace miscellaneous_workspace;
+  // Stores the workspace used in compute_search_direction.
+  ComputeSearchDirectionWorkspace csd_workspace;
 
   // To dynamically allocate the required memory.
-  void reserve(int x_dim, int s_dim, int y_dim);
+  void reserve(int x_dim, int s_dim, int y_dim, int L_nnz);
   void free();
 
   // For using pre-allocated (possibly statically allocated) memory.
-  auto mem_assign(int x_dim, int s_dim, int y_dim, unsigned char *mem_ptr)
-      -> int;
+  auto mem_assign(int x_dim, int s_dim, int y_dim, int L_nnz,
+                  unsigned char *mem_ptr) -> int;
 };
 
 auto solve(const Input &input, const Settings &settings, Workspace &workspace,
