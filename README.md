@@ -113,7 +113,7 @@ $$
 & \begin{bmatrix}
   \nabla^2_{xx} f( \xi ) + \tilde{\lambda}^T \nabla^2_{xx} c(\xi) + \tilde{\nu}^T \nabla^2_{xx} g (\xi) & 0 & 0 & J(c)(\xi)^T & J(g)(\xi)^T \\
   0 & \Sigma^{-1} \Pi & 0 & 0 & I \\
-  0 & 0 & \rho & 0 & I \\
+  0 & 0 & \rho I & 0 & I \\
   J(c)(\xi) & 0 & 0 & -\frac{1}{\eta} I & 0 \\
   J(g)(\xi) & I & I & 0 & -\frac{1}{\eta} I
   \end{bmatrix}
@@ -134,7 +134,7 @@ $$
 & \begin{bmatrix}
   \nabla^2_{xx} \mathcal{L}(\xi, \sigma, \tilde{\lambda}, \tilde{\nu}, \mu, \eta) & 0 & 0 & J(c)(\xi)^T & J(g)(\xi)^T \\
   0 & \Sigma^{-1} \Pi & 0 & 0 & I \\
-  0 & 0 & \rho & 0 & I \\
+  0 & 0 & \rho I & 0 & I \\
   J(c)(\xi) & 0 & 0 & -\frac{1}{\eta} I & 0 \\
   J(g)(\xi) & I & I & 0 & -\frac{1}{\eta} I
   \end{bmatrix}
@@ -155,7 +155,7 @@ $$
 & \begin{bmatrix}
   \nabla^2_{xx} \mathcal{L}(\xi, \sigma, \tilde{\lambda}, \tilde{\nu}, \mu, \eta) & 0 & 0 & J(c)(\xi)^T & J(g)(\xi)^T \\
   0 & \Sigma^{-1} \Pi & 0 & 0 & I \\
-  0 & 0 & \rho & 0 & I \\
+  0 & 0 & \rho I & 0 & I \\
   J(c)(\xi) & 0 & 0 & -\frac{1}{\eta} I & 0 \\
   J(g)(\xi) & I & I & 0 & -\frac{1}{\eta} I
   \end{bmatrix}
@@ -213,7 +213,7 @@ D(\mathcal{A}(x, s, e; \lambda, \nu, \mu, \eta); (\Delta x, \Delta s, \Delta e))
 \begin{bmatrix}
 \nabla^2_{xx} \mathcal{L}(\xi, \sigma, \tilde{\lambda}, \tilde{\nu}, \mu, \eta) & 0 & 0 & J(c)(\xi)^T & J(g)(\xi)^T \\
 0 & \Sigma^{-1} \Pi & 0 & 0 & I \\
-0 & 0 & \rho & 0 & I \\
+0 & 0 & \rho I & 0 & I \\
 J(c)(\xi) & 0 & 0 & -\frac{1}{\eta} I & 0 \\
 J(g)(\xi) & I & I & 0 & -\frac{1}{\eta} I
 \end{bmatrix}
@@ -230,7 +230,7 @@ J(g)(\xi) & I & I & 0 & -\frac{1}{\eta} I
 \begin{bmatrix}
 \nabla^2_{xx} \mathcal{L}(\xi, \sigma, \tilde{\lambda}, \tilde{\nu}, \tilde{\mu}, \eta) & 0 & 0 \\
 0 & \Sigma^{-1} \Pi \\
-0 & 0 & \rho
+0 & 0 & \rho I
 \end{bmatrix}
 \begin{bmatrix}
 \Delta x \\
@@ -272,7 +272,7 @@ In this section, we show that
 $$ \begin{bmatrix}
    \nabla^2_{xx} \mathcal{L} & 0 & 0 & J(c)^T & J(g)^T \\
    0 & \Sigma^{-1} \Pi & 0 & 0 & I \\
-   0 & 0 & \rho & 0 & I \\
+   0 & 0 & \rho I & 0 & I \\
    J(c) & 0 & 0 & -\frac{1}{\eta} I & 0 \\
    J(g) & I & I & 0 & -\frac{1}{\eta} I
    \end{bmatrix} , $$
@@ -286,7 +286,7 @@ $$
 \begin{align*} 
 W &= \Pi^{-1} \Sigma \\
 V &= (W + (\frac{1}{\eta} + \frac{1}{\rho}) I)^{-1} \\
-U &= (\nabla^2_{xx} \mathcal{L} + \eta J(c)^T J(c) + \eta J(g)^T J(g))^{-1} = (\nabla^2_{xx} \mathcal{A})^{-1} ,
+U &= (\nabla^2_{xx} \mathcal{L} + \eta J(c)^T J(c) + \eta J(g)^T J(g))^{-1} ,
 \end{align*} 
 $$
 
@@ -297,7 +297,7 @@ $$
 & \begin{bmatrix}
   \nabla^2_{xx} \mathcal{L} & 0 & 0 & J(c)^T & J(g)^T \\
   0 & \Sigma^{-1} \Pi & 0 & 0 & I \\
-   0 & 0 & \rho & 0 & I \\
+   0 & 0 & \rho I & 0 & I \\
   J(c) & 0 & 0 & -\frac{1}{\eta} I & 0 \\
   J(g) & I & I & 0 & -\frac{1}{\eta} I
   \end{bmatrix}
@@ -364,7 +364,7 @@ $$
    r_z - \frac{1}{\rho} r_e - W r_s
    \end{bmatrix} \\
 \Leftrightarrow
-& (\nabla^2_{xx} \mathcal{L} + \eta J(c)^T J(c) + \eta J(g)^T J(g)) \Delta x =
+& (\nabla^2_{xx} \mathcal{L} + \eta J(c)^T J(c) + \eta J(g)^T V J(g)) \Delta x =
    -(r_x + \eta J(c)^T r_y + J(g)^T V (r_z - \frac{1}{\rho} r_e - W r_s)) \\
 \Leftrightarrow
 & \Delta x =
@@ -379,7 +379,7 @@ $$
 \Delta e &= - \frac{1}{\rho}(\Delta z + r_e) \\
 \Delta s &= -\Pi^{-1} \Sigma (\Delta z + r_s), \\
 \Delta y &= \eta (J(c) \Delta x + r_y), \\
-\Delta z &= V (J(g) \Delta x + r_z - W r_s) .
+\Delta z &= V (J(g) \Delta x + r_z - \frac{1}{\rho} r_e - W r_s) .
 \end{align*} 
 $$
 
