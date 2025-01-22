@@ -37,19 +37,15 @@ auto get_alpha_s_max(const int s_dim, const double tau, const double *s,
 auto augmented_barrier_lagrangian_slope(const Settings &settings,
                                         const Workspace &workspace,
                                         const double *dx, const double *ds,
-                                        const double *dy, const double *dz,
                                         const double *de) -> double {
   const auto &mco = *workspace.model_callback_output;
   const int x_dim = mco.upper_hessian_lagrangian.rows;
   const int s_dim = get_s_dim(mco.jacobian_g);
-  const int y_dim = get_y_dim(mco.jacobian_c);
   const double x_slope = dot(workspace.nrhs.x, dx, x_dim);
   const double s_slope = dot(workspace.nrhs.s, ds, s_dim);
-  const double y_slope = dot(workspace.nrhs.y, dy, y_dim);
-  const double z_slope = dot(workspace.nrhs.z, dz, s_dim);
   const double e_slope =
       settings.enable_elastics ? dot(workspace.nrhs.e, de, s_dim) : 0.0;
-  const double abl_slope = x_slope + s_slope + y_slope + z_slope + e_slope;
+  const double abl_slope = x_slope + s_slope + e_slope;
   return abl_slope;
 }
 
@@ -262,7 +258,13 @@ auto compute_search_direction(const Input &input, const Settings &settings,
 }
 
 auto check_settings(const Settings &settings) -> bool {
-  return !settings.enable_elastics || settings.elastic_var_cost_coeff > 0.0;
+  if (settings.enable_elastics && settings.elastic_var_cost_coeff <= 0.0) {
+    return false;
+  }
+  if (settings.max_penalty_parameter < settings.initial_penalty_parameter) {
+    return false;
+  }
+  return true;
 }
 
 auto solve(const Input &input, const Settings &settings, Workspace &workspace,
@@ -354,8 +356,8 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace,
     const auto [dx, ds, dy, dz, de, kkt_error, lin_sys_error] =
         compute_search_direction(input, settings, eta, mu, workspace);
 
-    const double merit_slope = augmented_barrier_lagrangian_slope(
-        settings, workspace, dx, ds, dy, dz, de);
+    const double merit_slope =
+        augmented_barrier_lagrangian_slope(settings, workspace, dx, ds, de);
 
     if (kkt_error < settings.max_kkt_violation) {
       if (settings.print_logs) {
@@ -477,7 +479,8 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace,
       eta = std::min(eta * settings.penalty_parameter_increase_factor,
                      settings.max_penalty_parameter);
     } else {
-      eta *= settings.penalty_parameter_decrease_factor;
+      eta = std::min(eta * settings.penalty_parameter_decrease_factor,
+                     settings.max_penalty_parameter);
     }
 
     if (settings.print_logs) {
