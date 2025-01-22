@@ -264,6 +264,9 @@ auto check_settings(const Settings &settings) -> bool {
   if (settings.max_penalty_parameter < settings.initial_penalty_parameter) {
     return false;
   }
+  if (settings.print_line_search_logs && !settings.print_logs) {
+    return false;
+  }
   return true;
 }
 
@@ -393,6 +396,17 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace,
     double alpha = 1.0;
     double constraint_violation_ratio =
         std::numeric_limits<double>::signaling_NaN();
+    if (settings.print_line_search_logs) {
+      std::cout << fmt::format(
+                       // clang-format off
+                       "{:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10}",
+                       // clang-format on
+                       "", "ls_iteration", "alpha", "merit", "f", "|c|",
+                       "|g+s+e|", "merit_delta", "dm_f", "dm_s", "dm_c", "dm_g",
+                       "dm_e", "dm_aug")
+                << std::endl;
+    }
+    int ls_iteration = 0;
     do {
       for (int i = 0; i < x_dim; ++i) {
         workspace.next_vars.x[i] = workspace.vars.x[i] + alpha * dx[i];
@@ -436,10 +450,11 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace,
                   workspace.miscellaneous_workspace.g_plus_s_plus_e);
       }
 
-      const double next_sq_constraint_violation_norm =
-          squared_norm(workspace.model_callback_output->c, y_dim) +
-          squared_norm(workspace.miscellaneous_workspace.g_plus_s_plus_e,
-                       s_dim);
+      const double next_ctc =
+          squared_norm(workspace.model_callback_output->c, y_dim);
+      const double next_gsetgse = squared_norm(
+          workspace.miscellaneous_workspace.g_plus_s_plus_e, s_dim);
+      const double next_sq_constraint_violation_norm = next_ctc + next_gsetgse;
 
       const auto [m_f, m_s, m_c, m_g, m_e, m_aug, m] = merit_function(
           settings, workspace, workspace.next_vars.s, workspace.vars.y,
@@ -459,6 +474,18 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace,
           next_sq_constraint_violation_norm /
           std::max(sq_constraint_violation_norm, 1e-12);
 
+      if (settings.print_line_search_logs) {
+        std::cout
+            << fmt::format(
+                   // clang-format off
+                       "{:^10} {:^+10} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g}",
+                   // clang-format on
+                   "", ls_iteration, alpha, m, m_f, std::sqrt(next_ctc),
+                   std::sqrt(next_gsetgse), merit_delta, dm_f, dm_s, dm_c, dm_g,
+                   dm_e, dm_aug)
+            << std::endl;
+      }
+
       if (merit_slope > settings.min_merit_slope_to_skip_line_search ||
           merit_delta < settings.armijo_factor * merit_slope * alpha) {
         ls_succeeded = true;
@@ -466,6 +493,7 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace,
       }
 
       alpha *= settings.line_search_factor;
+      ++ls_iteration;
     } while (alpha > settings.line_search_min_step_size);
 
     if (alpha <= settings.line_search_min_step_size) {

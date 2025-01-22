@@ -55,6 +55,8 @@ struct Settings {
   bool enable_line_search_failures = false;
   // Determines whether we should print the solver logs.
   bool print_logs = true;
+  // Determines whether we should print the line search logs.
+  bool print_line_search_logs = true;
   // Handle checks with assert calls.
   bool assert_checks_pass = false;
 };
