@@ -1,4 +1,5 @@
 #include "sip.hpp"
+#include "sip/helpers.hpp"
 
 #include <algorithm>
 #include <cassert>
@@ -74,9 +75,9 @@ void print_search_direction_log_header() {
              // clang-format off
                        "{:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10}\n",
              // clang-format on
-             "", "linsys_res", "alpha_s_m", "m_slope", "obs_slope", "m_sl_x",
-             "obs_sl_x", "m_sl_s", "obs_sl_s", "m_sl_e", "obs_sl_e", "|nrhs_x|",
-             "|nrhs_s|", "|nrhs_e|");
+             "", "linsys_res", "alpha_s_m", "m_slope", "m_slope_v2",
+             "obs_slope", "m_sl_x", "obs_sl_x", "m_sl_s", "obs_sl_s", "m_sl_e",
+             "obs_sl_e", "|nrhs_x|", "|nrhs_s|", "|nrhs_e|");
 }
 
 void print_line_search_log_header() {
@@ -389,12 +390,42 @@ auto compute_search_direction(const Input &input, const Settings &settings,
     const auto alpha_s_max =
         get_alpha_s_max(s_dim, tau, workspace.vars.s, workspace.delta_vars.s);
 
+    double *tmp_x = workspace.next_vars.x;
+    double *tmp_y = workspace.next_vars.y;
+    double *tmp_s = workspace.next_vars.s;
+    std::fill(tmp_x, tmp_x + x_dim, 0.0);
+    input.add_upper_symmetric_Hx_to_y(H_data, dx, tmp_x);
+    const double dxTHdx = dot(tmp_x, dx, x_dim);
+    std::fill(tmp_y, tmp_y + y_dim, 0.0);
+    input.add_Cx_to_y(C_data, dx, tmp_y);
+    const double Cdx2 = squared_norm(tmp_y, y_dim);
+    double Winvds = 0.0;
+    for (int i = 0; i < s_dim; ++i) {
+      Winvds += ds[i] * ds[i] / w[i];
+    }
+    if (settings.enable_elastics) {
+      for (int i = 0; i < s_dim; ++i) {
+        tmp_s[i] = ds[i] + de[i];
+      }
+    } else {
+      for (int i = 0; i < s_dim; ++i) {
+        tmp_s[i] = ds[i];
+      }
+    }
+    input.add_Gx_to_y(G_data, dx, tmp_s);
+    const double Gdepdspde2 = squared_norm(tmp_s, s_dim);
+    double ms_v2 = -dxTHdx - Winvds - eta * (Cdx2 + Gdepdspde2);
+    if (settings.enable_elastics) {
+      ms_v2 -= settings.elastic_var_cost_coeff * squared_norm(de, s_dim);
+    }
+
     fmt::print(fg(fmt::color::green),
                // clang-format off
                    "{:^10} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g}\n",
                // clang-format on
-               "", lin_sys_error, alpha_s_max, ms, os, ms_x, os_x, ms_s, os_s,
-               ms_e, os_e, norm(rx, x_dim), norm(rs, s_dim), norm(re, s_dim));
+               "", lin_sys_error, alpha_s_max, ms, ms_v2, os, ms_x, os_x, ms_s,
+               os_s, ms_e, os_e, norm(rx, x_dim), norm(rs, s_dim),
+               norm(re, s_dim));
   }
 
   return std::make_tuple(dx, ds, dy, dz, de, ms, kkt_error, lin_sys_error);

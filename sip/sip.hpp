@@ -153,8 +153,14 @@ struct Input {
   LDLTSolveCallback ldlt_solve;
   // Callback for y += Kx, where K is the block-3x3 Newton-KKT system's LHS.
   Block3x3KKTProductCallback add_Kx_to_y;
+  // Callback for adding H^T x to y.
+  MatrixVectorMultiplicationCallback add_upper_symmetric_Hx_to_y;
+  // Callback for adding C x to y.
+  MatrixVectorMultiplicationCallback add_Cx_to_y;
   // Callback for adding C^T x to y.
   MatrixVectorMultiplicationCallback add_CTx_to_y;
+  // Callback for adding G x to y.
+  MatrixVectorMultiplicationCallback add_Gx_to_y;
   // Callback for adding G^T x to y.
   MatrixVectorMultiplicationCallback add_GTx_to_y;
   // Callback for filling the ModelCallbackOutput object.
