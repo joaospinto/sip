@@ -394,6 +394,129 @@ auto compute_search_direction(const Input &input, const Settings &settings,
   return std::make_tuple(dx, ds, dy, dz, de, ms, kkt_error, lin_sys_error);
 }
 
+auto do_line_search(const Input &input, const Settings &settings,
+                    const double eta, const double mu, const double tau,
+                    const double sq_constraint_violation_norm,
+                    const double merit_slope, Workspace &workspace)
+    -> std::tuple<double, double, double, double> {
+  const int x_dim =
+      workspace.model_callback_output->upper_hessian_lagrangian.cols;
+  const int s_dim = get_s_dim(workspace.model_callback_output->jacobian_g);
+  const int y_dim = get_y_dim(workspace.model_callback_output->jacobian_c);
+
+  const auto [m0_f, m0_s, m0_c, m0_g, m0_e, m0_aug, m0] = merit_function(
+      settings, workspace, workspace.vars.s, workspace.vars.y, workspace.vars.z,
+      workspace.vars.e, mu, eta, sq_constraint_violation_norm);
+
+  bool ls_succeeded = false;
+  double alpha = 1.0;
+  int ls_iteration = 0;
+  double constraint_violation_ratio =
+      std::numeric_limits<double>::signaling_NaN();
+
+  if (settings.print_line_search_logs) {
+    print_line_search_log_header();
+  }
+
+  double *dx = workspace.delta_vars.x;
+  double *ds = workspace.delta_vars.s;
+  double *dy = workspace.delta_vars.y;
+  double *dz = workspace.delta_vars.z;
+  double *de = workspace.delta_vars.e;
+
+  do {
+    for (int i = 0; i < x_dim; ++i) {
+      workspace.next_vars.x[i] = workspace.vars.x[i] + alpha * dx[i];
+    }
+
+    for (int i = 0; i < y_dim; ++i) {
+      workspace.next_vars.y[i] =
+          workspace.csd_workspace.y_tilde[i] + alpha * dy[i];
+    }
+
+    for (int i = 0; i < s_dim; ++i) {
+      workspace.next_vars.s[i] = std::max(workspace.vars.s[i] + alpha * ds[i],
+                                          (1.0 - tau) * workspace.vars.s[i]);
+      workspace.next_vars.z[i] =
+          std::max(workspace.csd_workspace.z_tilde[i] + alpha * dz[i],
+                   (1.0 - tau) * workspace.vars.z[i]);
+    }
+
+    if (settings.enable_elastics) {
+      for (int i = 0; i < s_dim; ++i) {
+        workspace.next_vars.e[i] = workspace.vars.e[i] + alpha * de[i];
+      }
+    }
+
+    ModelCallbackInput mci{
+        .x = workspace.next_vars.x,
+        .y = workspace.next_vars.y,
+        .z = workspace.next_vars.z,
+    };
+    input.model_callback(mci, &workspace.model_callback_output);
+
+    add(workspace.model_callback_output->g, workspace.next_vars.s, s_dim,
+        workspace.miscellaneous_workspace.g_plus_s);
+
+    if (settings.enable_elastics) {
+      add(workspace.miscellaneous_workspace.g_plus_s, workspace.next_vars.e,
+          s_dim, workspace.miscellaneous_workspace.g_plus_s_plus_e);
+    } else {
+      std::copy(workspace.miscellaneous_workspace.g_plus_s,
+                workspace.miscellaneous_workspace.g_plus_s + s_dim,
+                workspace.miscellaneous_workspace.g_plus_s_plus_e);
+    }
+
+    const double next_ctc =
+        squared_norm(workspace.model_callback_output->c, y_dim);
+    const double next_gsetgse =
+        squared_norm(workspace.miscellaneous_workspace.g_plus_s_plus_e, s_dim);
+    const double next_sq_constraint_violation_norm = next_ctc + next_gsetgse;
+
+    const auto [m_f, m_s, m_c, m_g, m_e, m_aug, m] = merit_function(
+        settings, workspace, workspace.next_vars.s, workspace.vars.y,
+        workspace.vars.z, workspace.next_vars.e, mu, eta,
+        next_sq_constraint_violation_norm);
+
+    const double dm_f = m_f - m0_f;
+    const double dm_s = m_s - m0_s;
+    const double dm_c = m_c - m0_c;
+    const double dm_g = m_g - m0_g;
+    const double dm_e = m_e - m0_e;
+    const double dm_aug = m_aug - m0_aug;
+
+    const double merit_delta = dm_f + dm_s + dm_c + dm_g + dm_e + dm_aug;
+
+    constraint_violation_ratio = next_sq_constraint_violation_norm /
+                                 std::max(sq_constraint_violation_norm, 1e-12);
+
+    if (settings.print_line_search_logs) {
+      fmt::print(fg(fmt::color::yellow),
+                 // clang-format off
+                       "{:^10} {:^+10} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g}\n",
+                 // clang-format on
+                 "", ls_iteration, alpha, m, m_f, std::sqrt(next_ctc),
+                 std::sqrt(next_gsetgse), merit_delta, merit_delta / alpha,
+                 dm_f, dm_s, dm_c, dm_g, dm_e, dm_aug);
+    }
+
+    if (merit_slope > settings.min_merit_slope_to_skip_line_search ||
+        merit_delta < settings.armijo_factor * merit_slope * alpha) {
+      ls_succeeded = true;
+      break;
+    }
+
+    alpha *= settings.line_search_factor;
+    ++ls_iteration;
+  } while (alpha > settings.line_search_min_step_size);
+
+  if (alpha <= settings.line_search_min_step_size) {
+    alpha /= settings.line_search_factor;
+  }
+
+  return std::make_tuple(ls_succeeded, alpha, m0, constraint_violation_ratio);
+}
+
 auto check_settings(const Settings &settings) -> bool {
   if (settings.enable_elastics && settings.elastic_var_cost_coeff <= 0.0) {
     return false;
@@ -512,109 +635,9 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace,
       return;
     }
 
-    const auto [m0_f, m0_s, m0_c, m0_g, m0_e, m0_aug, m0] =
-        merit_function(settings, workspace, workspace.vars.s, workspace.vars.y,
-                       workspace.vars.z, workspace.vars.e, mu, eta,
-                       sq_constraint_violation_norm);
-
-    bool ls_succeeded = false;
-    double alpha = 1.0;
-    double constraint_violation_ratio =
-        std::numeric_limits<double>::signaling_NaN();
-    if (settings.print_line_search_logs) {
-      print_line_search_log_header();
-    }
-    int ls_iteration = 0;
-    do {
-      for (int i = 0; i < x_dim; ++i) {
-        workspace.next_vars.x[i] = workspace.vars.x[i] + alpha * dx[i];
-      }
-
-      for (int i = 0; i < y_dim; ++i) {
-        workspace.next_vars.y[i] =
-            workspace.csd_workspace.y_tilde[i] + alpha * dy[i];
-      }
-
-      for (int i = 0; i < s_dim; ++i) {
-        workspace.next_vars.s[i] = std::max(workspace.vars.s[i] + alpha * ds[i],
-                                            (1.0 - tau) * workspace.vars.s[i]);
-        workspace.next_vars.z[i] =
-            std::max(workspace.csd_workspace.z_tilde[i] + alpha * dz[i],
-                     (1.0 - tau) * workspace.vars.z[i]);
-      }
-
-      if (settings.enable_elastics) {
-        for (int i = 0; i < s_dim; ++i) {
-          workspace.next_vars.e[i] = workspace.vars.e[i] + alpha * de[i];
-        }
-      }
-
-      ModelCallbackInput mci{
-          .x = workspace.next_vars.x,
-          .y = workspace.next_vars.y,
-          .z = workspace.next_vars.z,
-      };
-      input.model_callback(mci, &workspace.model_callback_output);
-
-      add(workspace.model_callback_output->g, workspace.next_vars.s, s_dim,
-          workspace.miscellaneous_workspace.g_plus_s);
-
-      if (settings.enable_elastics) {
-        add(workspace.miscellaneous_workspace.g_plus_s, workspace.next_vars.e,
-            s_dim, workspace.miscellaneous_workspace.g_plus_s_plus_e);
-      } else {
-        std::copy(workspace.miscellaneous_workspace.g_plus_s,
-                  workspace.miscellaneous_workspace.g_plus_s + s_dim,
-                  workspace.miscellaneous_workspace.g_plus_s_plus_e);
-      }
-
-      const double next_ctc =
-          squared_norm(workspace.model_callback_output->c, y_dim);
-      const double next_gsetgse = squared_norm(
-          workspace.miscellaneous_workspace.g_plus_s_plus_e, s_dim);
-      const double next_sq_constraint_violation_norm = next_ctc + next_gsetgse;
-
-      const auto [m_f, m_s, m_c, m_g, m_e, m_aug, m] = merit_function(
-          settings, workspace, workspace.next_vars.s, workspace.vars.y,
-          workspace.vars.z, workspace.next_vars.e, mu, eta,
-          next_sq_constraint_violation_norm);
-
-      const double dm_f = m_f - m0_f;
-      const double dm_s = m_s - m0_s;
-      const double dm_c = m_c - m0_c;
-      const double dm_g = m_g - m0_g;
-      const double dm_e = m_e - m0_e;
-      const double dm_aug = m_aug - m0_aug;
-
-      const double merit_delta = dm_f + dm_s + dm_c + dm_g + dm_e + dm_aug;
-
-      constraint_violation_ratio =
-          next_sq_constraint_violation_norm /
-          std::max(sq_constraint_violation_norm, 1e-12);
-
-      if (settings.print_line_search_logs) {
-        fmt::print(fg(fmt::color::yellow),
-                   // clang-format off
-                       "{:^10} {:^+10} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g}\n",
-                   // clang-format on
-                   "", ls_iteration, alpha, m, m_f, std::sqrt(next_ctc),
-                   std::sqrt(next_gsetgse), merit_delta, merit_delta / alpha,
-                   dm_f, dm_s, dm_c, dm_g, dm_e, dm_aug);
-      }
-
-      if (merit_slope > settings.min_merit_slope_to_skip_line_search ||
-          merit_delta < settings.armijo_factor * merit_slope * alpha) {
-        ls_succeeded = true;
-        break;
-      }
-
-      alpha *= settings.line_search_factor;
-      ++ls_iteration;
-    } while (alpha > settings.line_search_min_step_size);
-
-    if (alpha <= settings.line_search_min_step_size) {
-      alpha /= settings.line_search_factor;
-    }
+    const auto [ls_succeeded, alpha, m0, constraint_violation_ratio] =
+        do_line_search(input, settings, eta, mu, tau,
+                       sq_constraint_violation_norm, merit_slope, workspace);
 
     if (settings.print_logs) {
       if (iteration == 0 || settings.print_line_search_logs) {
