@@ -355,8 +355,6 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace,
   double eta = settings.initial_penalty_parameter;
 
   for (int iteration = 0; iteration < settings.max_iterations; ++iteration) {
-    mu = std::max(mu * settings.mu_update_factor, settings.mu_min);
-
     const double f0 = workspace.model_callback_output->f;
 
     const double ctc = squared_norm(workspace.model_callback_output->c, y_dim);
@@ -503,15 +501,6 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace,
 
     std::swap(workspace.vars, workspace.next_vars);
 
-    if (constraint_violation_ratio >
-        settings.min_acceptable_constraint_violation_ratio) {
-      eta = std::min(eta * settings.penalty_parameter_increase_factor,
-                     settings.max_penalty_parameter);
-    } else {
-      eta = std::min(eta * settings.penalty_parameter_decrease_factor,
-                     settings.max_penalty_parameter);
-    }
-
     if (settings.print_logs) {
       if (iteration == 0 || settings.print_line_search_logs) {
         print_log_header();
@@ -527,6 +516,17 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace,
           merit_slope, alpha_s_max, norm(dx, x_dim), norm(ds, s_dim),
           norm(dy, y_dim), norm(dz, s_dim), de_norm, mu, eta, lin_sys_error,
           kkt_error);
+    }
+
+    mu = std::max(mu * settings.mu_update_factor, settings.mu_min);
+
+    if (constraint_violation_ratio >
+        settings.min_acceptable_constraint_violation_ratio) {
+      eta = std::min(eta * settings.penalty_parameter_increase_factor,
+                     settings.max_penalty_parameter);
+    } else {
+      eta = std::min(eta * settings.penalty_parameter_decrease_factor,
+                     settings.max_penalty_parameter);
     }
 
     if (settings.enable_line_search_failures && !ls_succeeded) {
