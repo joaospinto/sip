@@ -12,42 +12,14 @@
 
 namespace sip {
 
+namespace {
+
 auto get_s_dim(const SparseMatrix &jacobian_g) -> int {
   return jacobian_g.is_transposed ? jacobian_g.cols : jacobian_g.rows;
 }
 
 auto get_y_dim(const SparseMatrix &jacobian_c) -> int {
   return jacobian_c.is_transposed ? jacobian_c.cols : jacobian_c.rows;
-}
-
-auto get_alpha_s_max(const int s_dim, const double tau, const double *s,
-                     const double *ds) -> double {
-  // s + alpha_s_max * ds >= (1 - tau) * s
-
-  double alpha_s_max = 1.0;
-
-  for (int i = 0; i < s_dim; ++i) {
-    if (ds[i] < 0.0) {
-      alpha_s_max = std::min(alpha_s_max, tau * s[i] / std::max(-ds[i], 1e-12));
-    }
-  }
-
-  return alpha_s_max;
-}
-
-auto augmented_barrier_lagrangian_slope(const Settings &settings,
-                                        const Workspace &workspace,
-                                        const double *dx, const double *ds,
-                                        const double *de) -> double {
-  const auto &mco = *workspace.model_callback_output;
-  const int x_dim = mco.upper_hessian_lagrangian.rows;
-  const int s_dim = get_s_dim(mco.jacobian_g);
-  const double x_slope = dot(workspace.nrhs.x, dx, x_dim);
-  const double s_slope = dot(workspace.nrhs.s, ds, s_dim);
-  const double e_slope =
-      settings.enable_elastics ? dot(workspace.nrhs.e, de, s_dim) : 0.0;
-  const double abl_slope = x_slope + s_slope + e_slope;
-  return abl_slope;
 }
 
 auto merit_function(const Settings &settings, const Workspace &workspace,
@@ -73,11 +45,157 @@ auto merit_function(const Settings &settings, const Workspace &workspace,
                          merit);
 }
 
+auto get_alpha_s_max(const int s_dim, const double tau, const double *s,
+                     const double *ds) -> double {
+  // s + alpha_s_max * ds >= (1 - tau) * s
+
+  double alpha_s_max = 1.0;
+
+  for (int i = 0; i < s_dim; ++i) {
+    if (ds[i] < 0.0) {
+      alpha_s_max = std::min(alpha_s_max, tau * s[i] / std::max(-ds[i], 1e-12));
+    }
+  }
+
+  return alpha_s_max;
+}
+
+void print_log_header() {
+  fmt::print(fmt::emphasis::bold | fg(fmt::color::red),
+             // clang-format off
+                     "{:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10}\n",
+             // clang-format on
+             "iteration", "alpha", "f", "|c|", "|g+s+e|", "merit", "|dx|",
+             "|ds|", "|dy|", "|dz|", "|de|", "mu", "eta", "kkt_error");
+}
+
+void print_search_direction_log_header() {
+  fmt::print(fmt::emphasis::bold | fg(fmt::color::green),
+             // clang-format off
+                       "{:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10}\n",
+             // clang-format on
+             "", "linsys_res", "alpha_s_m", "m_slope", "obs_slope", "m_sl_x",
+             "obs_sl_x", "m_sl_s", "obs_sl_s", "m_sl_e", "obs_sl_e", "|nrhs_x|",
+             "|nrhs_s|", "|nrhs_e|");
+}
+
+void print_line_search_log_header() {
+  fmt::print(fmt::emphasis::bold | fg(fmt::color::yellow),
+             // clang-format off
+                       "{:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10}\n",
+             // clang-format on
+             "", "ls_iteration", "alpha", "merit", "f", "|c|", "|g+s+e|", "dm",
+             "dm/alpha", "dm[f]", "dm[s]", "dm[c]", "dm[g]", "dm[e]",
+             "dm[aug]");
+}
+
+auto get_observed_merit_slope(const Input &input, const Settings &settings,
+                              const double eta, const double mu,
+                              const double tau, Workspace &workspace)
+    -> std::tuple<double, double, double, double> {
+  const int x_dim =
+      workspace.model_callback_output->upper_hessian_lagrangian.rows;
+  const int s_dim = get_s_dim(workspace.model_callback_output->jacobian_g);
+  const int y_dim = get_y_dim(workspace.model_callback_output->jacobian_c);
+
+  const auto update_next_vars = [&](const double beta, const bool update_x,
+                                    const bool update_s,
+                                    const bool update_e) -> void {
+    for (int i = 0; i < x_dim; ++i) {
+      if (update_x) {
+        workspace.next_vars.x[i] =
+            workspace.vars.x[i] + beta * workspace.delta_vars.x[i];
+      } else {
+        workspace.next_vars.x[i] = workspace.vars.x[i];
+      }
+      if (update_s) {
+        workspace.next_vars.s[i] =
+            std::max(workspace.vars.s[i] + beta * workspace.delta_vars.s[i],
+                     (1.0 - tau) * workspace.vars.s[i]);
+      } else {
+        workspace.next_vars.s[i] = workspace.vars.s[i];
+      }
+      if (update_e) {
+        workspace.next_vars.e[i] =
+            workspace.vars.e[i] + beta * workspace.delta_vars.e[i];
+      } else {
+        workspace.next_vars.e[i] = workspace.vars.e[i];
+      }
+    }
+    ModelCallbackInput mci{
+        .x = workspace.next_vars.x,
+        .y = workspace.next_vars.y,
+        .z = workspace.next_vars.z,
+    };
+    input.model_callback(mci, &workspace.model_callback_output);
+
+    add(workspace.model_callback_output->g, workspace.next_vars.s, s_dim,
+        workspace.miscellaneous_workspace.g_plus_s);
+
+    if (settings.enable_elastics) {
+      add(workspace.miscellaneous_workspace.g_plus_s, workspace.next_vars.e,
+          s_dim, workspace.miscellaneous_workspace.g_plus_s_plus_e);
+    } else {
+      std::copy(workspace.miscellaneous_workspace.g_plus_s,
+                workspace.miscellaneous_workspace.g_plus_s + s_dim,
+                workspace.miscellaneous_workspace.g_plus_s_plus_e);
+    }
+  };
+
+  const auto compute_empirical_merit_slope =
+      [&](const bool update_x, const bool update_s, const bool update_e) {
+        const auto get_perturbed_merit = [&](const double beta) -> double {
+          update_next_vars(beta, update_x, update_s, update_e);
+          const double ctc =
+              squared_norm(workspace.model_callback_output->c, y_dim);
+          const double gsetgse = squared_norm(
+              workspace.miscellaneous_workspace.g_plus_s_plus_e, s_dim);
+          const double sq_constraint_violation_norm = ctc + gsetgse;
+          const auto [_mP_f, _mP_s, _mP_c, _mP_g, _mP_e, _mP_aug, mP] =
+              merit_function(settings, workspace, workspace.next_vars.s,
+                             workspace.vars.y, workspace.vars.z,
+                             workspace.next_vars.e, mu, eta,
+                             sq_constraint_violation_norm);
+          return mP;
+        };
+
+        const double h = std::sqrt(std::numeric_limits<double>::epsilon());
+
+        const double mP = get_perturbed_merit(h);
+        const double mM = get_perturbed_merit(-h);
+
+        return (mP - mM) / (2 * h);
+      };
+
+  const double os_x = compute_empirical_merit_slope(true, false, false);
+  const double os_s = compute_empirical_merit_slope(false, true, false);
+  const double os_e = compute_empirical_merit_slope(false, false, true);
+  const double os = compute_empirical_merit_slope(true, true, true);
+
+  return std::make_tuple(os_x, os_s, os_e, os);
+}
+
+auto augmented_barrier_lagrangian_slope(const Settings &settings,
+                                        const Workspace &workspace,
+                                        const double *dx, const double *ds,
+                                        const double *de)
+    -> std::tuple<double, double, double, double> {
+  const auto &mco = *workspace.model_callback_output;
+  const int x_dim = mco.upper_hessian_lagrangian.rows;
+  const int s_dim = get_s_dim(mco.jacobian_g);
+  const double x_slope = dot(workspace.nrhs.x, dx, x_dim);
+  const double s_slope = dot(workspace.nrhs.s, ds, s_dim);
+  const double e_slope =
+      settings.enable_elastics ? dot(workspace.nrhs.e, de, s_dim) : 0.0;
+  const double abl_slope = x_slope + s_slope + e_slope;
+  return std::make_tuple(x_slope, s_slope, e_slope, abl_slope);
+}
+
 auto compute_search_direction(const Input &input, const Settings &settings,
                               const double eta, const double mu,
-                              Workspace &workspace)
+                              const double tau, Workspace &workspace)
     -> std::tuple<const double *, const double *, const double *,
-                  const double *, const double *, double, double> {
+                  const double *, const double *, double, double, double> {
   const double rho = settings.enable_elastics
                          ? settings.elastic_var_cost_coeff
                          : std::numeric_limits<double>::signaling_NaN();
@@ -197,7 +315,24 @@ auto compute_search_direction(const Input &input, const Settings &settings,
     }
   }
 
-  if (settings.print_logs) {
+  const auto [ms_x, ms_s, ms_e, ms] =
+      augmented_barrier_lagrangian_slope(settings, workspace, dx, ds, de);
+
+  kkt_error = 0.0;
+
+  for (int i = 0; i < x_dim; ++i) {
+    kkt_error = std::max(kkt_error, std::fabs(bx[i]));
+  }
+  for (int i = 0; i < y_dim; ++i) {
+    kkt_error = std::max(kkt_error, std::fabs(c[i]));
+  }
+  for (int i = 0; i < s_dim; ++i) {
+    kkt_error = std::max(
+        kkt_error,
+        std::fabs(workspace.miscellaneous_workspace.g_plus_s_plus_e[i]));
+  }
+
+  if (settings.print_search_direction_logs) {
     double *residual = workspace.csd_workspace.residual;
     double *res_x = residual;
     double *res_s = res_x + x_dim;
@@ -239,23 +374,24 @@ auto compute_search_direction(const Input &input, const Settings &settings,
     for (int i = 0; i < full_dim; ++i) {
       lin_sys_error = std::max(lin_sys_error, std::fabs(residual[i]));
     }
+
+    print_search_direction_log_header();
+
+    const auto [os_x, os_s, os_e, os] =
+        get_observed_merit_slope(input, settings, eta, mu, tau, workspace);
+
+    const auto alpha_s_max =
+        get_alpha_s_max(s_dim, tau, workspace.vars.s, workspace.delta_vars.s);
+
+    fmt::print(fg(fmt::color::green),
+               // clang-format off
+                   "{:^10} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g}\n",
+               // clang-format on
+               "", lin_sys_error, alpha_s_max, ms, os, ms_x, os_x, ms_s, os_s,
+               ms_e, os_e, norm(rx, x_dim), norm(rs, s_dim), norm(re, s_dim));
   }
 
-  kkt_error = 0.0;
-
-  for (int i = 0; i < x_dim; ++i) {
-    kkt_error = std::max(kkt_error, std::fabs(bx[i]));
-  }
-  for (int i = 0; i < y_dim; ++i) {
-    kkt_error = std::max(kkt_error, std::fabs(c[i]));
-  }
-  for (int i = 0; i < s_dim; ++i) {
-    kkt_error = std::max(
-        kkt_error,
-        std::fabs(workspace.miscellaneous_workspace.g_plus_s_plus_e[i]));
-  }
-
-  return std::make_tuple(dx, ds, dy, dz, de, kkt_error, lin_sys_error);
+  return std::make_tuple(dx, ds, dy, dz, de, ms, kkt_error, lin_sys_error);
 }
 
 auto check_settings(const Settings &settings) -> bool {
@@ -268,28 +404,13 @@ auto check_settings(const Settings &settings) -> bool {
   if (settings.print_line_search_logs && !settings.print_logs) {
     return false;
   }
+  if (settings.print_search_direction_logs && !settings.print_logs) {
+    return false;
+  }
   return true;
 }
 
-void print_log_header() {
-  fmt::print(fmt::emphasis::bold | fg(fmt::color::red),
-             // clang-format off
-                     "{:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10}\n",
-             // clang-format on
-             "iteration", "alpha", "merit", "f", "|c|", "|g+s+e|", "m_slope",
-             "obs_slope", "alpha_s_m", "|dx|", "|ds|", "|dy|", "|dz|", "|de|",
-             "mu", "eta", "linsys_res", "kkt_error");
-}
-
-void print_line_search_log_header() {
-  fmt::print(fmt::emphasis::bold | fg(fmt::color::yellow),
-             // clang-format off
-                       "{:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10}\n",
-             // clang-format on
-             "", "ls_iteration", "alpha", "merit", "f", "|c|", "|g+s+e|", "dm",
-             "dm/alpha", "dm[f]", "dm[s]", "dm[c]", "dm[g]", "dm[e]",
-             "dm[aug]");
-}
+} // namespace
 
 auto solve(const Input &input, const Settings &settings, Workspace &workspace,
            Output &output) -> void {
@@ -355,6 +476,8 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace,
   double eta = settings.initial_penalty_parameter;
 
   for (int iteration = 0; iteration < settings.max_iterations; ++iteration) {
+    const double tau = std::max(settings.tau_min, mu > 0.0 ? 1.0 - mu : 0.0);
+
     const double f0 = workspace.model_callback_output->f;
 
     const double ctc = squared_norm(workspace.model_callback_output->c, y_dim);
@@ -363,37 +486,31 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace,
 
     const double sq_constraint_violation_norm = ctc + gsetgse;
 
-    const auto [dx, ds, dy, dz, de, kkt_error, lin_sys_error] =
-        compute_search_direction(input, settings, eta, mu, workspace);
-
-    const double merit_slope =
-        augmented_barrier_lagrangian_slope(settings, workspace, dx, ds, de);
+    const auto [dx, ds, dy, dz, de, merit_slope, kkt_error, lin_sys_error] =
+        compute_search_direction(input, settings, eta, mu, tau, workspace);
 
     if (kkt_error < settings.max_kkt_violation) {
       if (settings.print_logs) {
-        if (iteration == 0 || settings.print_line_search_logs) {
+        if (iteration == 0 || settings.print_line_search_logs ||
+            settings.print_search_direction_logs) {
           print_log_header();
         }
         const double de_norm =
             settings.enable_elastics ? norm(de, s_dim) : -1.0;
         fmt::print(fg(fmt::color::red),
                    // clang-format off
-                         "{:^+10} {:^10} {:^10} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^10} {:^10} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^10} {:^+10.4g} {:^+10.4g}\n",
+                         "{:^+10} {:^10} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^10} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g}\n",
                    // clang-format on
-                   iteration, "", "", workspace.model_callback_output->f,
-                   std::sqrt(ctc), std::sqrt(gsetgse), "", "", norm(dx, x_dim),
+                   iteration, "", workspace.model_callback_output->f,
+                   std::sqrt(ctc), std::sqrt(gsetgse), "", norm(dx, x_dim),
                    norm(ds, s_dim), norm(dy, y_dim), norm(dz, s_dim), de_norm,
-                   mu, "", lin_sys_error, kkt_error);
+                   mu, eta, kkt_error);
       }
 
       output.exit_status = Status::SOLVED;
       output.num_iterations = iteration;
       return;
     }
-
-    const double tau = std::max(settings.tau_min, mu > 0.0 ? 1.0 - mu : 0.0);
-
-    const auto alpha_s_max = get_alpha_s_max(s_dim, tau, workspace.vars.s, ds);
 
     const auto [m0_f, m0_s, m0_c, m0_g, m0_e, m0_aug, m0] =
         merit_function(settings, workspace, workspace.vars.s, workspace.vars.y,
@@ -504,55 +621,14 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace,
         print_log_header();
       }
 
-      const auto update_next_vars = [&](const double beta) -> void {
-        for (int i = 0; i < x_dim; ++i) {
-          workspace.next_vars.x[i] =
-              workspace.vars.x[i] + beta * workspace.delta_vars.x[i];
-          workspace.next_vars.s[i] =
-              std::max(workspace.vars.s[i] + beta * workspace.delta_vars.s[i],
-                       (1.0 - tau) * workspace.vars.s[i]);
-          workspace.next_vars.e[i] =
-              workspace.vars.e[i] + beta * workspace.delta_vars.e[i];
-        }
-        ModelCallbackInput mci{
-            .x = workspace.next_vars.x,
-            .y = workspace.next_vars.y,
-            .z = workspace.next_vars.z,
-        };
-        input.model_callback(mci, &workspace.model_callback_output);
-      };
-
-      const double empirical_merit_slope = [&]() {
-        const auto get_perturbed_merit = [&](const double beta) -> double {
-          update_next_vars(beta);
-          const auto [_mP_f, _mP_s, _mP_c, _mP_g, _mP_e, _mP_aug, mP] =
-              merit_function(settings, workspace, workspace.next_vars.s,
-                             workspace.vars.y, workspace.vars.z,
-                             workspace.next_vars.e, mu, eta,
-                             sq_constraint_violation_norm);
-          return mP;
-        };
-
-        const double h = std::sqrt(std::numeric_limits<double>::epsilon());
-
-        const double mP = get_perturbed_merit(h);
-        const double mM = get_perturbed_merit(-h);
-
-        update_next_vars(alpha);
-
-        return (mP - mM) / (2 * h);
-      }();
-
       const double de_norm = settings.enable_elastics ? norm(de, s_dim) : -1.0;
-      fmt::print(
-          fg(fmt::color::red),
-          // clang-format off
-                       "{:^+10} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g}\n",
-          // clang-format on
-          iteration, alpha, m0, f0, std::sqrt(ctc), std::sqrt(gsetgse),
-          merit_slope, empirical_merit_slope, alpha_s_max, norm(dx, x_dim),
-          norm(ds, s_dim), norm(dy, y_dim), norm(dz, s_dim), de_norm, mu, eta,
-          lin_sys_error, kkt_error);
+      fmt::print(fg(fmt::color::red),
+                 // clang-format off
+                       "{:^+10} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g}\n",
+                 // clang-format on
+                 iteration, alpha, f0, std::sqrt(ctc), std::sqrt(gsetgse), m0,
+                 norm(dx, x_dim), norm(ds, s_dim), norm(dy, y_dim),
+                 norm(dz, s_dim), de_norm, mu, eta, kkt_error);
     }
 
     std::swap(workspace.vars, workspace.next_vars);
