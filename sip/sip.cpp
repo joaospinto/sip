@@ -108,6 +108,8 @@ auto get_observed_merit_slope(const Input &input, const Settings &settings,
       } else {
         workspace.next_vars.x[i] = workspace.vars.x[i];
       }
+    }
+    for (int i = 0; i < s_dim; ++i) {
       if (update_s) {
         workspace.next_vars.s[i] =
             std::max(workspace.vars.s[i] + beta * workspace.delta_vars.s[i],
@@ -115,11 +117,15 @@ auto get_observed_merit_slope(const Input &input, const Settings &settings,
       } else {
         workspace.next_vars.s[i] = workspace.vars.s[i];
       }
-      if (update_e) {
-        workspace.next_vars.e[i] =
-            workspace.vars.e[i] + beta * workspace.delta_vars.e[i];
-      } else {
-        workspace.next_vars.e[i] = workspace.vars.e[i];
+    }
+    if (settings.enable_elastics) {
+      for (int i = 0; i < s_dim; ++i) {
+        if (update_e) {
+          workspace.next_vars.e[i] =
+              workspace.vars.e[i] + beta * workspace.delta_vars.e[i];
+        } else {
+          workspace.next_vars.e[i] = workspace.vars.e[i];
+        }
       }
     }
     ModelCallbackInput mci{
