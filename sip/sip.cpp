@@ -274,11 +274,11 @@ auto check_settings(const Settings &settings) -> bool {
 void print_log_header() {
   fmt::print(fmt::emphasis::bold | fg(fmt::color::red),
              // clang-format off
-                     "{:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10}\n",
+                     "{:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10}\n",
              // clang-format on
              "iteration", "alpha", "merit", "f", "|c|", "|g+s+e|", "m_slope",
-             "alpha_s_m", "|dx|", "|ds|", "|dy|", "|dz|", "|de|", "mu", "eta",
-             "linsys_res", "kkt_error");
+             "obs_slope", "alpha_s_m", "|dx|", "|ds|", "|dy|", "|dz|", "|de|",
+             "mu", "eta", "linsys_res", "kkt_error");
 }
 
 void print_line_search_log_header() {
@@ -499,24 +499,63 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace,
       alpha /= settings.line_search_factor;
     }
 
-    std::swap(workspace.vars, workspace.next_vars);
-
     if (settings.print_logs) {
       if (iteration == 0 || settings.print_line_search_logs) {
         print_log_header();
       }
 
+      const auto update_next_vars = [&](const double beta) -> void {
+        for (int i = 0; i < x_dim; ++i) {
+          workspace.next_vars.x[i] =
+              workspace.vars.x[i] + beta * workspace.delta_vars.x[i];
+          workspace.next_vars.s[i] =
+              std::max(workspace.vars.s[i] + beta * workspace.delta_vars.s[i],
+                       (1.0 - tau) * workspace.vars.s[i]);
+          workspace.next_vars.e[i] =
+              workspace.vars.e[i] + beta * workspace.delta_vars.e[i];
+        }
+        ModelCallbackInput mci{
+            .x = workspace.next_vars.x,
+            .y = workspace.next_vars.y,
+            .z = workspace.next_vars.z,
+        };
+        input.model_callback(mci, &workspace.model_callback_output);
+      };
+
+      const double empirical_merit_slope = [&]() {
+        const auto get_perturbed_merit = [&](const double beta) -> double {
+          update_next_vars(beta);
+          const auto [_mP_f, _mP_s, _mP_c, _mP_g, _mP_e, _mP_aug, mP] =
+              merit_function(settings, workspace, workspace.next_vars.s,
+                             workspace.vars.y, workspace.vars.z,
+                             workspace.next_vars.e, mu, eta,
+                             sq_constraint_violation_norm);
+          return mP;
+        };
+
+        const double h = std::sqrt(std::numeric_limits<double>::epsilon());
+
+        const double mP = get_perturbed_merit(h);
+        const double mM = get_perturbed_merit(-h);
+
+        update_next_vars(alpha);
+
+        return (mP - mM) / (2 * h);
+      }();
+
       const double de_norm = settings.enable_elastics ? norm(de, s_dim) : -1.0;
       fmt::print(
           fg(fmt::color::red),
           // clang-format off
-                       "{:^+10} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g}\n",
+                       "{:^+10} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g}\n",
           // clang-format on
           iteration, alpha, m0, f0, std::sqrt(ctc), std::sqrt(gsetgse),
-          merit_slope, alpha_s_max, norm(dx, x_dim), norm(ds, s_dim),
-          norm(dy, y_dim), norm(dz, s_dim), de_norm, mu, eta, lin_sys_error,
-          kkt_error);
+          merit_slope, empirical_merit_slope, alpha_s_max, norm(dx, x_dim),
+          norm(ds, s_dim), norm(dy, y_dim), norm(dz, s_dim), de_norm, mu, eta,
+          lin_sys_error, kkt_error);
     }
+
+    std::swap(workspace.vars, workspace.next_vars);
 
     mu = std::max(mu * settings.mu_update_factor, settings.mu_min);
 
