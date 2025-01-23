@@ -54,8 +54,8 @@ We will use $(\xi, \sigma, \epsilon, \lambda, \nu)$ to refer to
 the current $(x, s, e, y, z)$ iterate. We use $\Sigma, \Pi$ to denote
 the diagonal matrices with entries $\sigma, \nu$ respectively.
 
-As we wish to employ a primal method, we compute $(\Delta x, \Delta e, \Delta s)$
-by applying Newton's method to $\mathcal{A}(x, e, s; \lambda, \nu, \mu, \eta)$.
+As we wish to employ a primal method, we compute $(\Delta x, \Delta s, \Delta e)$
+by applying Newton's method to $\mathcal{A}(x, s, e; \lambda, \nu, \mu, \eta)$.
 
 Below, we use $S, Z$ to represent the diagonal matrices containing $s, z$
 along the diagonal, respectively. Moreover, we use $\mathbb{1}$ to represent
@@ -64,7 +64,7 @@ the all- $1$ vector, and $\circ$ to represent elementwise vector multiplication.
 Noting that
 
 $$
-\nabla_{x, e, s} \mathcal{A}(x, e, s; \lambda, \nu, \mu, \eta) =
+\nabla_{x, s, e} \mathcal{A}(x, s, e; \lambda, \nu, \mu, \eta) =
 \begin{bmatrix}
 \nabla_x f(x) + J(c)(x)^T (\lambda + \eta c(x)) + J(g)(x)^T (\nu + \eta (g(x) + s + e)) \\
 \nu + \eta (g(x) + s + e) - \mu S^{-1} 1 \\
