@@ -209,7 +209,7 @@ D(\mathcal{A}(x, s, e; \lambda, \nu, \mu, \eta); (\Delta x, \Delta s, \Delta e))
 \end{bmatrix} \\
 &= - \begin{bmatrix}
      \Delta x & \Delta s & \Delta e & 0 & 0
-     \end{bmatrix}^T 
+     \end{bmatrix}
 \begin{bmatrix}
 \nabla^2_{xx} \mathcal{L}(\xi, \sigma, \tilde{\lambda}, \tilde{\nu}, \mu, \eta) & 0 & 0 & J(c)(\xi)^T & J(g)(\xi)^T \\
 0 & \Sigma^{-1} \Pi & 0 & 0 & I \\
@@ -221,12 +221,12 @@ J(g)(\xi) & I & I & 0 & -\frac{1}{\eta} I
 \Delta x \\
 \Delta s \\
 \Delta e \\
-0 \\
-0
+\Delta y \\
+\Delta z
 \end{bmatrix} \\
 &= - \begin{bmatrix}
      \Delta x & \Delta s & \Delta e
-     \end{bmatrix}^T 
+     \end{bmatrix} 
 \begin{bmatrix}
 \nabla^2_{xx} \mathcal{L}(\xi, \sigma, \tilde{\lambda}, \tilde{\nu}, \tilde{\mu}, \eta) & 0 & 0 \\
 0 & \Sigma^{-1} \Pi \\
@@ -236,7 +236,54 @@ J(g)(\xi) & I & I & 0 & -\frac{1}{\eta} I
 \Delta x \\
 \Delta s \\
 \Delta e
-\end{bmatrix} < 0 ,
+\end{bmatrix} -
+\begin{bmatrix}
+\Delta x & \Delta s & \Delta e
+\end{bmatrix}
+\begin{bmatrix}
+J(c)(\xi)^T & J(g)(\xi)^T \\
+0 & I \\
+0 & I
+\end{bmatrix}
+\begin{bmatrix}
+\Delta y \\
+\Delta z
+\end{bmatrix} \\
+&= - \begin{bmatrix}
+     \Delta x & \Delta s & \Delta e
+     \end{bmatrix} 
+\begin{bmatrix}
+\nabla^2_{xx} \mathcal{L}(\xi, \sigma, \tilde{\lambda}, \tilde{\nu}, \tilde{\mu}, \eta) & 0 & 0 \\
+0 & \Sigma^{-1} \Pi \\
+0 & 0 & \rho I
+\end{bmatrix}
+\begin{bmatrix}
+\Delta x \\
+\Delta s \\
+\Delta e
+\end{bmatrix} -
+\begin{bmatrix}
+J(c)(\xi) \Delta x \\
+J(g)(\xi) \Delta x + \Delta s + \Delta e
+\end{bmatrix}^T
+\begin{bmatrix}
+\eta (J(c)(\xi) \Delta x) \\
+\eta (J(g)(\xi) \Delta x + \Delta s + \Delta e)
+\end{bmatrix} \\
+&= - \begin{bmatrix}
+     \Delta x & \Delta s & \Delta e
+     \end{bmatrix} 
+\begin{bmatrix}
+\nabla^2_{xx} \mathcal{L}(\xi, \sigma, \tilde{\lambda}, \tilde{\nu}, \tilde{\mu}, \eta) & 0 & 0 \\
+0 & \Sigma^{-1} \Pi \\
+0 & 0 & \rho I
+\end{bmatrix}
+\begin{bmatrix}
+\Delta x \\
+\Delta s \\
+\Delta e
+\end{bmatrix} -
+\eta (\lVert J(c)(\xi) \Delta x \rVert^2 + \lVert J(g)(\xi) \Delta x + \Delta s + \Delta e \rVert^2) < 0,
 \end{align*}
 $$
 
