@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cassert>
 #include <cmath>
+#include <fmt/color.h>
 #include <fmt/core.h>
 #include <iostream>
 #include <limits>
@@ -270,6 +271,26 @@ auto check_settings(const Settings &settings) -> bool {
   return true;
 }
 
+void print_log_header() {
+  fmt::print(fmt::emphasis::bold | fg(fmt::color::red),
+             // clang-format off
+                     "{:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10}\n",
+             // clang-format on
+             "iteration", "alpha", "merit", "f", "|c|", "|g+s+e|", "m_slope",
+             "alpha_s_m", "|dx|", "|ds|", "|dy|", "|dz|", "|de|", "mu", "eta",
+             "linsys_res", "kkt_error");
+}
+
+void print_line_search_log_header() {
+  fmt::print(fmt::emphasis::bold | fg(fmt::color::yellow),
+             // clang-format off
+                       "{:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10}\n",
+             // clang-format on
+             "", "ls_iteration", "alpha", "merit", "f", "|c|", "|g+s+e|", "dm",
+             "dm/alpha", "dm[f]", "dm[s]", "dm[c]", "dm[g]", "dm[e]",
+             "dm[aug]");
+}
+
 auto solve(const Input &input, const Settings &settings, Workspace &workspace,
            Output &output) -> void {
   {
@@ -333,18 +354,6 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace,
   double mu = settings.initial_mu;
   double eta = settings.initial_penalty_parameter;
 
-  if (settings.print_logs) {
-    std::cout
-        << fmt::format(
-               // clang-format off
-                     "{:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10}",
-               // clang-format on
-               "iteration", "alpha", "merit", "f", "|c|", "|g+s+e|", "m_slope",
-               "alpha_s_m", "|dx|", "|ds|", "|dy|", "|dz|", "|de|", "mu", "eta",
-               "linsys_res", "kkt_error")
-        << std::endl;
-  }
-
   for (int iteration = 0; iteration < settings.max_iterations; ++iteration) {
     mu = std::max(mu * settings.mu_update_factor, settings.mu_min);
 
@@ -364,18 +373,19 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace,
 
     if (kkt_error < settings.max_kkt_violation) {
       if (settings.print_logs) {
+        if (iteration == 0 || settings.print_line_search_logs) {
+          print_log_header();
+        }
         const double de_norm =
             settings.enable_elastics ? norm(de, s_dim) : -1.0;
-        std::cout
-            << fmt::format(
+        fmt::print(fg(fmt::color::red),
                    // clang-format off
-                         "{:^+10} {:^10} {:^10} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^10} {:^10} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^10} {:^+10.4g} {:^+10.4g}",
+                         "{:^+10} {:^10} {:^10} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^10} {:^10} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^10} {:^+10.4g} {:^+10.4g}\n",
                    // clang-format on
                    iteration, "", "", workspace.model_callback_output->f,
                    std::sqrt(ctc), std::sqrt(gsetgse), "", "", norm(dx, x_dim),
                    norm(ds, s_dim), norm(dy, y_dim), norm(dz, s_dim), de_norm,
-                   mu, "", lin_sys_error, kkt_error)
-            << std::endl;
+                   mu, "", lin_sys_error, kkt_error);
       }
 
       output.exit_status = Status::SOLVED;
@@ -397,14 +407,7 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace,
     double constraint_violation_ratio =
         std::numeric_limits<double>::signaling_NaN();
     if (settings.print_line_search_logs) {
-      std::cout << fmt::format(
-                       // clang-format off
-                       "{:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10}",
-                       // clang-format on
-                       "", "ls_iteration", "alpha", "merit", "f", "|c|",
-                       "|g+s+e|", "merit_delta", "dm_f", "dm_s", "dm_c", "dm_g",
-                       "dm_e", "dm_aug")
-                << std::endl;
+      print_line_search_log_header();
     }
     int ls_iteration = 0;
     do {
@@ -475,15 +478,13 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace,
           std::max(sq_constraint_violation_norm, 1e-12);
 
       if (settings.print_line_search_logs) {
-        std::cout
-            << fmt::format(
+        fmt::print(fg(fmt::color::yellow),
                    // clang-format off
-                       "{:^10} {:^+10} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g}",
+                       "{:^10} {:^+10} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g}\n",
                    // clang-format on
                    "", ls_iteration, alpha, m, m_f, std::sqrt(next_ctc),
-                   std::sqrt(next_gsetgse), merit_delta, dm_f, dm_s, dm_c, dm_g,
-                   dm_e, dm_aug)
-            << std::endl;
+                   std::sqrt(next_gsetgse), merit_delta, merit_delta / alpha,
+                   dm_f, dm_s, dm_c, dm_g, dm_e, dm_aug);
       }
 
       if (merit_slope > settings.min_merit_slope_to_skip_line_search ||
@@ -512,17 +513,20 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace,
     }
 
     if (settings.print_logs) {
+      if (iteration == 0 || settings.print_line_search_logs) {
+        print_log_header();
+      }
+
       const double de_norm = settings.enable_elastics ? norm(de, s_dim) : -1.0;
-      std::cout << fmt::format(
-                       // clang-format off
-                       "{:^+10} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g}",
-                       // clang-format on
-                       iteration, alpha, m0, f0, std::sqrt(ctc),
-                       std::sqrt(gsetgse), merit_slope, alpha_s_max,
-                       norm(dx, x_dim), norm(ds, s_dim), norm(dy, y_dim),
-                       norm(dz, s_dim), de_norm, mu, eta, lin_sys_error,
-                       kkt_error)
-                << std::endl;
+      fmt::print(
+          fg(fmt::color::red),
+          // clang-format off
+                       "{:^+10} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g}\n",
+          // clang-format on
+          iteration, alpha, m0, f0, std::sqrt(ctc), std::sqrt(gsetgse),
+          merit_slope, alpha_s_max, norm(dx, x_dim), norm(ds, s_dim),
+          norm(dy, y_dim), norm(dz, s_dim), de_norm, mu, eta, lin_sys_error,
+          kkt_error);
     }
 
     if (settings.enable_line_search_failures && !ls_succeeded) {
