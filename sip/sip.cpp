@@ -64,10 +64,10 @@ auto get_alpha_s_max(const int s_dim, const double tau, const double *s,
 void print_log_header() {
   fmt::print(fmt::emphasis::bold | fg(fmt::color::red),
              // clang-format off
-                     "{:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10}\n",
+                     "{:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10}\n",
              // clang-format on
              "iteration", "alpha", "f", "|c|", "|g+s+e|", "merit", "|dx|",
-             "|ds|", "|dy|", "|dz|", "|de|", "mu", "eta", "kkt_error");
+             "|ds|", "|dy|", "|dz|", "|de|", "mu", "eta", "tau", "kkt_error");
 }
 
 void print_search_direction_log_header() {
@@ -204,7 +204,7 @@ auto compute_search_direction(const Input &input, const Settings &settings,
                               const double eta, const double mu,
                               const double tau, Workspace &workspace)
     -> std::tuple<const double *, const double *, const double *,
-                  const double *, const double *, double, double, double> {
+                  const double *, const double *, double, double, double, double> {
   const double rho = settings.enable_elastics
                          ? settings.elastic_var_cost_coeff
                          : std::numeric_limits<double>::signaling_NaN();
@@ -341,6 +341,9 @@ auto compute_search_direction(const Input &input, const Settings &settings,
         std::fabs(workspace.miscellaneous_workspace.g_plus_s_plus_e[i]));
   }
 
+  const auto alpha_s_max =
+      get_alpha_s_max(s_dim, tau, workspace.vars.s, workspace.delta_vars.s);
+
   if (settings.print_search_direction_logs) {
     double *residual = workspace.csd_workspace.residual;
     double *res_x = residual;
@@ -386,9 +389,6 @@ auto compute_search_direction(const Input &input, const Settings &settings,
 
     print_search_direction_log_header();
 
-    const auto alpha_s_max =
-        get_alpha_s_max(s_dim, tau, workspace.vars.s, workspace.delta_vars.s);
-
     double *tmp_x = workspace.next_vars.x;
     double *tmp_y = workspace.next_vars.y;
     double *tmp_s = workspace.next_vars.s;
@@ -430,13 +430,14 @@ auto compute_search_direction(const Input &input, const Settings &settings,
                os_s, ms_e, os_e, norm(rx, x_dim), norm(rs, s_dim), re_norm);
   }
 
-  return std::make_tuple(dx, ds, dy, dz, de, ms, kkt_error, lin_sys_error);
+  return std::make_tuple(dx, ds, dy, dz, de, ms, alpha_s_max, kkt_error, lin_sys_error);
 }
 
 auto do_line_search(const Input &input, const Settings &settings,
                     const double eta, const double mu, const double tau,
                     const double sq_constraint_violation_norm,
-                    const double merit_slope, Workspace &workspace)
+                    const double merit_slope, const double alpha_s_max,
+                    Workspace &workspace)
     -> std::tuple<double, double, double, double> {
   const int x_dim =
       workspace.model_callback_output->upper_hessian_lagrangian.cols;
@@ -448,7 +449,7 @@ auto do_line_search(const Input &input, const Settings &settings,
       workspace.vars.e, mu, eta, sq_constraint_violation_norm);
 
   bool ls_succeeded = false;
-  double alpha = 1.0;
+  double alpha = settings.start_ls_with_alpha_s_max ? alpha_s_max : 1.0;
   int ls_iteration = 0;
   double constraint_violation_ratio =
       std::numeric_limits<double>::signaling_NaN();
@@ -634,12 +635,11 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace,
               workspace.miscellaneous_workspace.g_plus_s_plus_e);
   }
 
-  double mu = settings.initial_mu;
   double eta = settings.initial_penalty_parameter;
+  double mu = settings.initial_mu;
+  const double tau = settings.tau;
 
   for (int iteration = 0; iteration < settings.max_iterations; ++iteration) {
-    const double tau = std::max(settings.tau_min, mu > 0.0 ? 1.0 - mu : 0.0);
-
     const double f0 = workspace.model_callback_output->f;
 
     const double ctc = squared_norm(workspace.model_callback_output->c, y_dim);
@@ -648,10 +648,11 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace,
 
     const double sq_constraint_violation_norm = ctc + gsetgse;
 
-    const auto [dx, ds, dy, dz, de, merit_slope, kkt_error, lin_sys_error] =
+    const auto [dx, ds, dy, dz, de, merit_slope, alpha_s_max, kkt_error, lin_sys_error] =
         compute_search_direction(input, settings, eta, mu, tau, workspace);
 
-    if (kkt_error < settings.max_kkt_violation) {
+    if (iteration >= settings.min_iterations_for_convergence &&
+        (kkt_error < settings.max_kkt_violation || std::fabs(merit_slope) < settings.max_merit_slope)) {
       if (settings.print_logs) {
         if (iteration == 0 || settings.print_line_search_logs ||
             settings.print_search_direction_logs) {
@@ -661,12 +662,12 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace,
             settings.enable_elastics ? norm(de, s_dim) : -1.0;
         fmt::print(fg(fmt::color::red),
                    // clang-format off
-                         "{:^+10} {:^10} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^10} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g}\n",
+                         "{:^+10} {:^10} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^10} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g}\n",
                    // clang-format on
                    iteration, "", workspace.model_callback_output->f,
                    std::sqrt(ctc), std::sqrt(gsetgse), "", norm(dx, x_dim),
                    norm(ds, s_dim), norm(dy, y_dim), norm(dz, s_dim), de_norm,
-                   mu, eta, kkt_error);
+                   mu, eta, tau, kkt_error);
       }
 
       output.exit_status = Status::SOLVED;
@@ -676,7 +677,7 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace,
 
     const auto [ls_succeeded, alpha, m0, constraint_violation_ratio] =
         do_line_search(input, settings, eta, mu, tau,
-                       sq_constraint_violation_norm, merit_slope, workspace);
+                       sq_constraint_violation_norm, merit_slope, alpha_s_max, workspace);
 
     if (settings.print_logs) {
       if (iteration == 0 || settings.print_line_search_logs) {
@@ -686,11 +687,11 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace,
       const double de_norm = settings.enable_elastics ? norm(de, s_dim) : -1.0;
       fmt::print(fg(fmt::color::red),
                  // clang-format off
-                       "{:^+10} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g}\n",
+                       "{:^+10} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g}\n",
                  // clang-format on
                  iteration, alpha, f0, std::sqrt(ctc), std::sqrt(gsetgse), m0,
                  norm(dx, x_dim), norm(ds, s_dim), norm(dy, y_dim),
-                 norm(dz, s_dim), de_norm, mu, eta, kkt_error);
+                 norm(dz, s_dim), de_norm, mu, eta, tau, kkt_error);
     }
 
     std::swap(workspace.vars, workspace.next_vars);

@@ -18,15 +18,21 @@ enum class Status {
 struct Settings {
   // The maximum number of iterations the solver can do.
   int max_iterations = 100;
+  // The minimum number of iterations before we can declare convergence.
+  int min_iterations_for_convergence = 0;
   // The maximum allowed violation of the KKT system.
   double max_kkt_violation = 1e-6;
+  // The maximum allowed merit function slope.
+  double max_merit_slope = 1e-8;
   // A parameter of the fraction-to-the-boundary rule.
-  double tau_min = 0.995;
+  double tau = 0.995;
+  // Determines whether we start with alpha=alpha_s_max or alpha=1.
+  bool start_ls_with_alpha_s_max = false;
   // A parameter of the merit function and descent direction computation.
   double initial_mu = 1e-3;
   // Determines how much mu decreases per iteration.
-  double mu_update_factor = 1e-1;
-  // A parameter of the merit function and descent direction computation.
+  double mu_update_factor = 0.9;
+  // The minimum barrier coefficient.
   double mu_min = 1e-16;
   // The initial penalty parameter of the Augmented Lagrangian.
   double initial_penalty_parameter = 1e3;
