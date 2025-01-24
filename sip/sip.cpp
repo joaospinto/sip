@@ -73,7 +73,7 @@ void print_log_header() {
 void print_search_direction_log_header() {
   fmt::print(fmt::emphasis::bold | fg(fmt::color::green),
              // clang-format off
-                       "{:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10}\n",
+                       "{:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10}\n",
              // clang-format on
              "", "linsys_res", "alpha_s_m", "m_slope", "m_slope_v2",
              "obs_slope", "m_sl_x", "obs_sl_x", "m_sl_s", "obs_sl_s", "m_sl_e",
@@ -419,13 +419,13 @@ auto compute_search_direction(const Input &input, const Settings &settings,
       ms_v2 -= settings.elastic_var_cost_coeff * squared_norm(de, s_dim);
     }
 
+    const double re_norm = settings.enable_elastics ? norm(re, s_dim) : -1.0;
     fmt::print(fg(fmt::color::green),
                // clang-format off
-                   "{:^10} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g}\n",
+                   "{:^10} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g}\n",
                // clang-format on
                "", lin_sys_error, alpha_s_max, ms, ms_v2, os, ms_x, os_x, ms_s,
-               os_s, ms_e, os_e, norm(rx, x_dim), norm(rs, s_dim),
-               norm(re, s_dim));
+               os_s, ms_e, os_e, norm(rx, x_dim), norm(rs, s_dim), re_norm);
   }
 
   return std::make_tuple(dx, ds, dy, dz, de, ms, kkt_error, lin_sys_error);
