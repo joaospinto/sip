@@ -179,6 +179,8 @@ auto get_observed_merit_slope(const Input &input, const Settings &settings,
   const double os_e = compute_empirical_merit_slope(false, false, true);
   const double os = compute_empirical_merit_slope(true, true, true);
 
+  update_next_vars(0.0, false, false, false);
+
   return std::make_tuple(os_x, os_s, os_e, os);
 }
 
@@ -384,9 +386,6 @@ auto compute_search_direction(const Input &input, const Settings &settings,
 
     print_search_direction_log_header();
 
-    const auto [os_x, os_s, os_e, os] =
-        get_observed_merit_slope(input, settings, eta, mu, tau, workspace);
-
     const auto alpha_s_max =
         get_alpha_s_max(s_dim, tau, workspace.vars.s, workspace.delta_vars.s);
 
@@ -418,6 +417,9 @@ auto compute_search_direction(const Input &input, const Settings &settings,
     if (settings.enable_elastics) {
       ms_v2 -= settings.elastic_var_cost_coeff * squared_norm(de, s_dim);
     }
+
+    const auto [os_x, os_s, os_e, os] =
+        get_observed_merit_slope(input, settings, eta, mu, tau, workspace);
 
     const double re_norm = settings.enable_elastics ? norm(re, s_dim) : -1.0;
     fmt::print(fg(fmt::color::green),
