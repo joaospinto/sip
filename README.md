@@ -333,7 +333,7 @@ $$
 \begin{align*} 
 W &= \Pi^{-1} \Sigma \\
 V &= (W + (\frac{1}{\eta} + \frac{1}{\rho}) I)^{-1} \\
-U &= (\nabla^2_{xx} \mathcal{L} + \eta J(c)^T J(c) + \eta J(g)^T J(g))^{-1} ,
+U &= (\nabla^2_{xx} \mathcal{L} + \eta J(c)^T J(c) + \eta J(g)^T V J(g))^{-1} ,
 \end{align*} 
 $$
 

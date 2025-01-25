@@ -17,7 +17,7 @@ enum class Status {
 
 struct Settings {
   // The maximum number of iterations the solver can do.
-  double max_iterations = 100;
+  int max_iterations = 100;
   // The maximum allowed violation of the KKT system.
   double max_kkt_violation = 1e-6;
   // A parameter of the fraction-to-the-boundary rule.
