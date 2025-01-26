@@ -204,7 +204,8 @@ auto compute_search_direction(const Input &input, const Settings &settings,
                               const double eta, const double mu,
                               const double tau, Workspace &workspace)
     -> std::tuple<const double *, const double *, const double *,
-                  const double *, const double *, double, double, double, double> {
+                  const double *, const double *, double, double, double,
+                  double> {
   const double rho = settings.enable_elastics
                          ? settings.elastic_var_cost_coeff
                          : std::numeric_limits<double>::signaling_NaN();
@@ -430,7 +431,8 @@ auto compute_search_direction(const Input &input, const Settings &settings,
                os_s, ms_e, os_e, norm(rx, x_dim), norm(rs, s_dim), re_norm);
   }
 
-  return std::make_tuple(dx, ds, dy, dz, de, ms, alpha_s_max, kkt_error, lin_sys_error);
+  return std::make_tuple(dx, ds, dy, dz, de, ms, alpha_s_max, kkt_error,
+                         lin_sys_error);
 }
 
 auto do_line_search(const Input &input, const Settings &settings,
@@ -575,8 +577,8 @@ auto check_settings(const Settings &settings) -> bool {
 
 } // namespace
 
-auto solve(const Input &input, const Settings &settings, Workspace &workspace,
-           Output &output) -> void {
+auto solve(const Input &input, const Settings &settings, Workspace &workspace)
+    -> Output {
   {
     ModelCallbackInput mci{
         .x = workspace.vars.x,
@@ -591,9 +593,12 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace,
     if (settings.assert_checks_pass) {
       assert(false && "check_settings returned false.");
     } else {
-      output.exit_status = Status::FAILED_CHECK;
-      output.num_iterations = 0;
-      return;
+      return Output{
+          .exit_status = Status::FAILED_CHECK,
+          .num_iterations = 0,
+          .max_primal_violation = std::numeric_limits<double>::signaling_NaN(),
+          .max_dual_violation = -std::numeric_limits<double>::signaling_NaN(),
+      };
     }
   }
 
@@ -607,18 +612,26 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace,
       if (settings.assert_checks_pass) {
         assert(false && "workspace.vars.s[i] <= 0.0.");
       } else {
-        output.exit_status = Status::FAILED_CHECK;
-        output.num_iterations = 0;
-        return;
+        return Output{
+            .exit_status = Status::FAILED_CHECK,
+            .num_iterations = 0,
+            .max_primal_violation =
+                std::numeric_limits<double>::signaling_NaN(),
+            .max_dual_violation = -std::numeric_limits<double>::signaling_NaN(),
+        };
       }
     }
     if (workspace.vars.z[i] <= 0.0) {
       if (settings.assert_checks_pass) {
         assert(false && "workspace.vars.z[i] <= 0.0.");
       } else {
-        output.exit_status = Status::FAILED_CHECK;
-        output.num_iterations = 0;
-        return;
+        return Output{
+            .exit_status = Status::FAILED_CHECK,
+            .num_iterations = 0,
+            .max_primal_violation =
+                std::numeric_limits<double>::signaling_NaN(),
+            .max_dual_violation = -std::numeric_limits<double>::signaling_NaN(),
+        };
       }
     }
   }
@@ -648,11 +661,13 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace,
 
     const double sq_constraint_violation_norm = ctc + gsetgse;
 
-    const auto [dx, ds, dy, dz, de, merit_slope, alpha_s_max, kkt_error, lin_sys_error] =
+    const auto [dx, ds, dy, dz, de, merit_slope, alpha_s_max, kkt_error,
+                lin_sys_error] =
         compute_search_direction(input, settings, eta, mu, tau, workspace);
 
     if (iteration >= settings.min_iterations_for_convergence &&
-        (kkt_error < settings.max_kkt_violation || std::fabs(merit_slope) < settings.max_merit_slope)) {
+        (kkt_error < settings.max_kkt_violation ||
+         std::fabs(merit_slope) < settings.max_merit_slope)) {
       if (settings.print_logs) {
         if (iteration == 0 || settings.print_line_search_logs ||
             settings.print_search_direction_logs) {
@@ -670,14 +685,19 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace,
                    mu, eta, tau, kkt_error);
       }
 
-      output.exit_status = Status::SOLVED;
-      output.num_iterations = iteration;
-      return;
+      return Output{
+          .exit_status = Status::SOLVED,
+          .num_iterations = iteration,
+          .max_primal_violation =
+              inf_norm(workspace.model_callback_output->c, y_dim),
+          .max_dual_violation = inf_norm(workspace.nrhs.x, x_dim),
+      };
     }
 
     const auto [ls_succeeded, alpha, m0, constraint_violation_ratio] =
         do_line_search(input, settings, eta, mu, tau,
-                       sq_constraint_violation_norm, merit_slope, alpha_s_max, workspace);
+                       sq_constraint_violation_norm, merit_slope, alpha_s_max,
+                       workspace);
 
     if (settings.print_logs) {
       if (iteration == 0 || settings.print_line_search_logs) {
@@ -694,6 +714,26 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace,
                  norm(dz, s_dim), de_norm, mu, eta, tau, kkt_error);
     }
 
+    if (settings.enable_line_search_failures && !ls_succeeded) {
+      return Output{
+          .exit_status = Status::LINE_SEARCH_FAILURE,
+          .num_iterations = iteration,
+          .max_primal_violation =
+              inf_norm(workspace.model_callback_output->c, y_dim),
+          .max_dual_violation = inf_norm(workspace.nrhs.x, x_dim),
+      };
+    }
+
+    if (input.timeout_callback()) {
+      return Output{
+          .exit_status = Status::TIMEOUT,
+          .num_iterations = iteration,
+          .max_primal_violation =
+              inf_norm(workspace.model_callback_output->c, y_dim),
+          .max_dual_violation = inf_norm(workspace.nrhs.x, x_dim),
+      };
+    }
+
     std::swap(workspace.vars, workspace.next_vars);
 
     mu = std::max(mu * settings.mu_update_factor, settings.mu_min);
@@ -706,22 +746,15 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace,
       eta = std::min(eta * settings.penalty_parameter_decrease_factor,
                      settings.max_penalty_parameter);
     }
-
-    if (settings.enable_line_search_failures && !ls_succeeded) {
-      output.exit_status = Status::LINE_SEARCH_FAILURE;
-      output.num_iterations = iteration;
-      return;
-    }
-
-    if (input.timeout_callback()) {
-      output.exit_status = Status::TIMEOUT;
-      output.num_iterations = iteration;
-      return;
-    }
   }
 
-  output.exit_status = Status::ITERATION_LIMIT;
-  output.num_iterations = settings.max_iterations;
+  return Output{
+      .exit_status = Status::ITERATION_LIMIT,
+      .num_iterations = settings.max_iterations,
+      .max_primal_violation =
+          inf_norm(workspace.model_callback_output->c, y_dim),
+      .max_dual_violation = inf_norm(workspace.nrhs.x, x_dim),
+  };
 }
 
 void ModelCallbackOutput::reserve(int x_dim, int s_dim, int y_dim,

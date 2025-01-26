@@ -24,6 +24,11 @@ struct SparseMatrix {
 
   // For using pre-allocated (possibly statically allocated) memory.
   auto mem_assign(int dim, int nnz, unsigned char *mem_ptr) -> int;
+
+  // For knowing how much memory to pre-allocate.
+  static constexpr auto num_bytes(int dim, int nnz) -> int {
+    return (nnz + dim + 1) * sizeof(int) + nnz * sizeof(double);
+  }
 };
 
 // Useful for debugging.
@@ -41,6 +46,8 @@ auto min_element_product(const double *x, const double *y, const int dim)
 auto squared_norm(const double *x, const int dim) -> double;
 
 auto norm(const double *x, const int dim) -> double;
+
+auto inf_norm(const double *x, const int dim) -> double;
 
 auto x_dot_y_inverse(const double *x, const double *y, const int dim) -> double;
 

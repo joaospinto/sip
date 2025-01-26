@@ -102,6 +102,14 @@ auto norm(const double *x, const int dim) -> double {
   return std::sqrt(squared_norm(x, dim));
 }
 
+auto inf_norm(const double *x, const int dim) -> double {
+  double out = 0.0;
+  for (int i = 0; i < dim; ++i) {
+    out = std::max(out, x[i]);
+  }
+  return out;
+}
+
 auto x_dot_y_inverse(const double *x, const double *y, const int dim)
     -> double {
   double out = 0.0;

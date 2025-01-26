@@ -115,6 +115,27 @@ struct ModelCallbackOutput {
                   int upper_hessian_lagrangian_nnz, int jacobian_c_nnz,
                   int jacobian_g_nnz, bool is_jacobian_c_transposed,
                   bool is_jacobian_g_transposed, unsigned char *mem_ptr) -> int;
+
+  // For knowing how much memory to pre-allocate.
+  static constexpr auto num_bytes(int x_dim, int s_dim, int y_dim,
+                                  int upper_hessian_lagrangian_nnz,
+                                  int jacobian_c_nnz, int jacobian_g_nnz,
+                                  bool is_jacobian_c_transposed,
+                                  bool is_jacobian_g_transposed) -> int {
+    int out = (x_dim + s_dim + y_dim) * sizeof(double) +
+              SparseMatrix::num_bytes(x_dim, upper_hessian_lagrangian_nnz);
+    if (is_jacobian_c_transposed) {
+      out += SparseMatrix::num_bytes(y_dim, jacobian_c_nnz);
+    } else {
+      out += SparseMatrix::num_bytes(x_dim, jacobian_c_nnz);
+    }
+    if (is_jacobian_g_transposed) {
+      out += SparseMatrix::num_bytes(s_dim, jacobian_g_nnz);
+    } else {
+      out += SparseMatrix::num_bytes(x_dim, jacobian_g_nnz);
+    }
+    return out;
+  }
 };
 
 struct Input {
@@ -179,6 +200,8 @@ struct Output {
   // The exit status of the optimization process.
   Status exit_status;
   int num_iterations;
+  double max_primal_violation;
+  double max_dual_violation;
 };
 
 struct VariablesWorkspace {
@@ -200,6 +223,11 @@ struct VariablesWorkspace {
   // For using pre-allocated (possibly statically allocated) memory.
   auto mem_assign(int x_dim, int s_dim, int y_dim, unsigned char *mem_ptr)
       -> int;
+
+  // For knowing how much memory to pre-allocate.
+  static constexpr auto num_bytes(int x_dim, int s_dim, int y_dim) -> int {
+    return (x_dim + y_dim + 3 * s_dim) * sizeof(double);
+  }
 };
 
 struct MiscellaneousWorkspace {
@@ -214,6 +242,11 @@ struct MiscellaneousWorkspace {
 
   // For using pre-allocated (possibly statically allocated) memory.
   auto mem_assign(int s_dim, unsigned char *mem_ptr) -> int;
+
+  // For knowing how much memory to pre-allocate.
+  static constexpr auto num_bytes(int s_dim) -> int {
+    return 2 * s_dim * sizeof(double);
+  }
 };
 
 struct ComputeSearchDirectionWorkspace {
@@ -241,6 +274,13 @@ struct ComputeSearchDirectionWorkspace {
   // For using pre-allocated (possibly statically allocated) memory.
   auto mem_assign(int s_dim, int y_dim, int kkt_dim, int full_dim, int L_nnz,
                   unsigned char *mem_ptr) -> int;
+
+  // For knowing how much memory to pre-allocate.
+  static constexpr auto num_bytes(int s_dim, int y_dim, int kkt_dim,
+                                  int full_dim, int L_nnz) -> int {
+    return (2 * s_dim + y_dim + L_nnz + 3 * kkt_dim + full_dim) *
+           sizeof(double);
+  }
 };
 
 // This data structure is used to avoid doing dynamic memory allocation inside
@@ -273,9 +313,20 @@ struct Workspace {
   // For using pre-allocated (possibly statically allocated) memory.
   auto mem_assign(int x_dim, int s_dim, int y_dim, int L_nnz,
                   unsigned char *mem_ptr) -> int;
+
+  // For knowing how much memory to pre-allocate.
+  static constexpr auto num_bytes(int x_dim, int s_dim, int y_dim, int L_nnz)
+      -> int {
+    const int kkt_dim = x_dim + s_dim + y_dim;
+    const int full_dim = kkt_dim + s_dim + s_dim;
+    return 4 * VariablesWorkspace::num_bytes(x_dim, s_dim, y_dim) +
+           MiscellaneousWorkspace::num_bytes(s_dim) +
+           ComputeSearchDirectionWorkspace::num_bytes(s_dim, y_dim, kkt_dim,
+                                                      full_dim, L_nnz);
+  }
 };
 
-auto solve(const Input &input, const Settings &settings, Workspace &workspace,
-           Output &output) -> void;
+auto solve(const Input &input, const Settings &settings, Workspace &workspace)
+    -> Output;
 
 } // namespace sip
