@@ -20,6 +20,8 @@ struct Settings {
   int max_iterations = 100;
   // The minimum number of iterations before we can declare convergence.
   int min_iterations_for_convergence = 0;
+  // The number of iterative refinement steps.
+  int num_iterative_refinement_steps = 0;
   // The maximum allowed violation of the KKT system.
   double max_kkt_violation = 1e-6;
   // The maximum allowed merit function slope.
@@ -264,6 +266,8 @@ struct ComputeSearchDirectionWorkspace {
   double *rhs_block_3x3;
   // The solution of the reduced block-3x3 Newton-KKT system.
   double *sol_block_3x3;
+  // The solution of the iterative refinement system.
+  double *iterative_refinement_error_sol;
   // Stores the residual of the full Newton-KKT system.
   double *residual;
 
@@ -278,7 +282,7 @@ struct ComputeSearchDirectionWorkspace {
   // For knowing how much memory to pre-allocate.
   static constexpr auto num_bytes(int s_dim, int y_dim, int kkt_dim,
                                   int full_dim, int L_nnz) -> int {
-    return (2 * s_dim + y_dim + L_nnz + 3 * kkt_dim + full_dim) *
+    return (2 * s_dim + y_dim + L_nnz + 4 * kkt_dim + full_dim) *
            sizeof(double);
   }
 };

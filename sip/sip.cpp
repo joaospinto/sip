@@ -250,7 +250,17 @@ auto compute_search_direction(const Input &input, const Settings &settings,
   double *LT_data = workspace.csd_workspace.LT_data;
   double *D_diag = workspace.csd_workspace.D_diag;
   double *b = workspace.csd_workspace.rhs_block_3x3;
+  double *residual = workspace.csd_workspace.residual;
   double *v = workspace.csd_workspace.sol_block_3x3;
+  double *u = workspace.csd_workspace.iterative_refinement_error_sol;
+
+  double *bx = b;
+  double *by = bx + x_dim;
+  double *bz = by + y_dim;
+
+  double *vx = v;
+  double *vy = vx + x_dim;
+  double *vz = vy + y_dim;
 
   for (int i = 0; i < y_dim; ++i) {
     y_tilde[i] = y[i] + eta * c[i];
@@ -267,10 +277,6 @@ auto compute_search_direction(const Input &input, const Settings &settings,
 
   input.ldlt_factor(H_data, C_data, G_data, w, r1, eta_inv, r3p, LT_data,
                     D_diag);
-
-  double *bx = b;
-  double *by = bx + x_dim;
-  double *bz = by + y_dim;
 
   for (int i = 0; i < x_dim; ++i) {
     bx[i] = grad_f[i];
@@ -305,6 +311,29 @@ auto compute_search_direction(const Input &input, const Settings &settings,
 
   input.ldlt_solve(LT_data, D_diag, b, v);
 
+  for (int i = 0; i < settings.num_iterative_refinement_steps; ++i) {
+    // We do an iterative refinement step:
+    // res = Kv - b
+    // Ku = res => Ku = Kv - b => K(v - u) = b
+
+    double *res_x = residual;
+    double *res_y = res_x + x_dim;
+    double *res_z = res_y + y_dim;
+
+    for (int i = 0; i < dim_3x3; ++i) {
+      residual[i] = -b[i];
+    }
+
+    input.add_Kx_to_y(H_data, C_data, G_data, w, r1, eta_inv, r3p, vx, vy, vz,
+                      res_x, res_y, res_z);
+
+    input.ldlt_solve(LT_data, D_diag, residual, u);
+
+    for (int i = 0; i < dim_3x3; ++i) {
+      v[i] -= u[i];
+    }
+  }
+
   {
     auto ptr = v;
     std::copy(ptr, ptr + x_dim, dx);
@@ -331,7 +360,7 @@ auto compute_search_direction(const Input &input, const Settings &settings,
   kkt_error = 0.0;
 
   for (int i = 0; i < x_dim; ++i) {
-    kkt_error = std::max(kkt_error, std::fabs(bx[i]));
+    kkt_error = std::max(kkt_error, std::fabs(rx[i]));
   }
   for (int i = 0; i < y_dim; ++i) {
     kkt_error = std::max(kkt_error, std::fabs(c[i]));
@@ -346,7 +375,6 @@ auto compute_search_direction(const Input &input, const Settings &settings,
       get_alpha_s_max(s_dim, tau, workspace.vars.s, workspace.delta_vars.s);
 
   if (settings.print_search_direction_logs) {
-    double *residual = workspace.csd_workspace.residual;
     double *res_x = residual;
     double *res_s = res_x + x_dim;
     double *res_y = res_s + s_dim;
@@ -356,9 +384,7 @@ auto compute_search_direction(const Input &input, const Settings &settings,
       res_x[i] = -bx[i];
     }
 
-    for (int i = 0; i < y_dim; ++i) {
-      res_y[i] = -by[i];
-    }
+    std::fill(res_y, res_y + y_dim, 0.0);
 
     for (int i = 0; i < s_dim; ++i) {
       res_z[i] = -bz[i];
@@ -896,6 +922,7 @@ void ComputeSearchDirectionWorkspace::reserve(int s_dim, int y_dim, int kkt_dim,
   D_diag = new double[kkt_dim];
   rhs_block_3x3 = new double[kkt_dim];
   sol_block_3x3 = new double[kkt_dim];
+  iterative_refinement_error_sol = new double[kkt_dim];
   residual = new double[full_dim];
 }
 
@@ -907,6 +934,7 @@ void ComputeSearchDirectionWorkspace::free() {
   delete[] D_diag;
   delete[] rhs_block_3x3;
   delete[] sol_block_3x3;
+  delete[] iterative_refinement_error_sol;
   delete[] residual;
 }
 
@@ -930,6 +958,10 @@ auto ComputeSearchDirectionWorkspace::mem_assign(int s_dim, int y_dim,
   rhs_block_3x3 = reinterpret_cast<decltype(rhs_block_3x3)>(mem_ptr + cum_size);
   cum_size += kkt_dim * sizeof(double);
   sol_block_3x3 = reinterpret_cast<decltype(sol_block_3x3)>(mem_ptr + cum_size);
+  cum_size += kkt_dim * sizeof(double);
+  iterative_refinement_error_sol =
+      reinterpret_cast<decltype(iterative_refinement_error_sol)>(mem_ptr +
+                                                                 cum_size);
   cum_size += kkt_dim * sizeof(double);
   residual = reinterpret_cast<decltype(residual)>(mem_ptr + cum_size);
   cum_size += full_dim * sizeof(double);
