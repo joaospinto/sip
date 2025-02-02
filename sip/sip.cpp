@@ -750,6 +750,8 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
       };
     }
 
+    std::swap(workspace.vars, workspace.next_vars);
+
     if (input.timeout_callback()) {
       return Output{
           .exit_status = Status::TIMEOUT,
@@ -759,8 +761,6 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
           .max_dual_violation = inf_norm(workspace.nrhs.x, x_dim),
       };
     }
-
-    std::swap(workspace.vars, workspace.next_vars);
 
     mu = std::max(mu * settings.mu_update_factor, settings.mu_min);
 
