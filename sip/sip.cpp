@@ -8,6 +8,7 @@
 #include <fmt/core.h>
 #include <iostream>
 #include <limits>
+#include <optional>
 #include <tuple>
 #include <utility>
 
@@ -64,10 +65,11 @@ auto get_alpha_s_max(const int s_dim, const double tau, const double *s,
 void print_log_header() {
   fmt::print(fmt::emphasis::bold | fg(fmt::color::red),
              // clang-format off
-                     "{:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10}\n",
+                     "{:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10}\n",
              // clang-format on
              "iteration", "alpha", "f", "|c|", "|g+s+e|", "merit", "|dx|",
-             "|ds|", "|dy|", "|dz|", "|de|", "mu", "eta", "tau", "kkt_error");
+             "|ds|", "|dy|", "|dz|", "|de|", "mu", "eta", "tau", "akkt_error",
+             "kkt_error");
 }
 
 void print_search_direction_log_header() {
@@ -601,6 +603,49 @@ auto check_settings(const Settings &settings) -> bool {
   return true;
 }
 
+auto compute_nonaugmented_kkt_error(const Input &input, Workspace &workspace)
+    -> double {
+  const int x_dim =
+      workspace.model_callback_output->upper_hessian_lagrangian.cols;
+  const int s_dim = get_s_dim(workspace.model_callback_output->jacobian_g);
+  const int y_dim = get_y_dim(workspace.model_callback_output->jacobian_c);
+
+  const double *y = workspace.vars.y;
+  const double *z = workspace.vars.z;
+
+  const double *grad_f = workspace.model_callback_output->gradient_f;
+  const double *C_data = workspace.model_callback_output->jacobian_c.data;
+  const double *G_data = workspace.model_callback_output->jacobian_g.data;
+
+  double *r = workspace.csd_workspace.residual;
+
+  for (int i = 0; i < x_dim; ++i) {
+    r[i] = grad_f[i];
+  }
+
+  input.add_CTx_to_y(C_data, y, r);
+  input.add_GTx_to_y(G_data, z, r);
+
+  double kkt_error = 0.0;
+
+  for (int i = 0; i < x_dim; ++i) {
+    kkt_error = std::max(kkt_error, std::fabs(r[i]));
+  }
+
+  for (int i = 0; i < y_dim; ++i) {
+    kkt_error =
+        std::max(kkt_error, std::fabs(workspace.model_callback_output->c[i]));
+  }
+
+  for (int i = 0; i < s_dim; ++i) {
+    kkt_error = std::max(
+        kkt_error,
+        std::fabs(workspace.miscellaneous_workspace.g_plus_s_plus_e[i]));
+  }
+
+  return kkt_error;
+}
+
 } // namespace
 
 auto solve(const Input &input, const Settings &settings, Workspace &workspace)
@@ -687,12 +732,12 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
 
     const double sq_constraint_violation_norm = ctc + gsetgse;
 
-    const auto [dx, ds, dy, dz, de, merit_slope, alpha_s_max, kkt_error,
+    const auto [dx, ds, dy, dz, de, merit_slope, alpha_s_max, aug_kkt_error,
                 lin_sys_error] =
         compute_search_direction(input, settings, eta, mu, tau, workspace);
 
     if (iteration >= settings.min_iterations_for_convergence &&
-        (kkt_error < settings.max_kkt_violation ||
+        (aug_kkt_error < settings.max_aug_kkt_violation ||
          std::fabs(merit_slope) < settings.max_merit_slope)) {
       if (settings.print_logs) {
         if (iteration == 0 || settings.print_line_search_logs ||
@@ -701,14 +746,16 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
         }
         const double de_norm =
             settings.enable_elastics ? norm(de, s_dim) : -1.0;
+        const double kkt_error =
+            compute_nonaugmented_kkt_error(input, workspace);
         fmt::print(fg(fmt::color::red),
                    // clang-format off
-                         "{:^+10} {:^10} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^10} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g}\n",
+                         "{:^+10} {:^10} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^10} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g}\n",
                    // clang-format on
                    iteration, "", workspace.model_callback_output->f,
                    std::sqrt(ctc), std::sqrt(gsetgse), "", norm(dx, x_dim),
                    norm(ds, s_dim), norm(dy, y_dim), norm(dz, s_dim), de_norm,
-                   mu, eta, tau, kkt_error);
+                   mu, eta, tau, aug_kkt_error, kkt_error);
       }
 
       return Output{
@@ -718,6 +765,11 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
               inf_norm(workspace.model_callback_output->c, y_dim),
           .max_dual_violation = inf_norm(workspace.nrhs.x, x_dim),
       };
+    }
+
+    std::optional<double> kkt_error;
+    if (settings.print_logs) {
+      kkt_error = compute_nonaugmented_kkt_error(input, workspace);
     }
 
     const auto [ls_succeeded, alpha, m0, constraint_violation_ratio] =
@@ -731,13 +783,14 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
       }
 
       const double de_norm = settings.enable_elastics ? norm(de, s_dim) : -1.0;
-      fmt::print(fg(fmt::color::red),
-                 // clang-format off
-                       "{:^+10} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g}\n",
-                 // clang-format on
-                 iteration, alpha, f0, std::sqrt(ctc), std::sqrt(gsetgse), m0,
-                 norm(dx, x_dim), norm(ds, s_dim), norm(dy, y_dim),
-                 norm(dz, s_dim), de_norm, mu, eta, tau, kkt_error);
+      fmt::print(
+          fg(fmt::color::red),
+          // clang-format off
+                       "{:^+10} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g}  {:^+10.4g} {:^+10.4g} {:^+10.4g}\n",
+          // clang-format on
+          iteration, alpha, f0, std::sqrt(ctc), std::sqrt(gsetgse), m0,
+          norm(dx, x_dim), norm(ds, s_dim), norm(dy, y_dim), norm(dz, s_dim),
+          de_norm, mu, eta, tau, aug_kkt_error, kkt_error.value());
     }
 
     if (settings.enable_line_search_failures && !ls_succeeded) {

@@ -23,7 +23,7 @@ struct Settings {
   // The number of iterative refinement steps.
   int num_iterative_refinement_steps = 0;
   // The maximum allowed violation of the KKT system.
-  double max_kkt_violation = 1e-6;
+  double max_aug_kkt_violation = 1e-6;
   // The maximum allowed merit function slope.
   double max_merit_slope = 1e-8;
   // A parameter of the fraction-to-the-boundary rule.
