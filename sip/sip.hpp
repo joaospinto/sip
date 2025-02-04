@@ -67,6 +67,8 @@ struct Settings {
   bool print_line_search_logs = true;
   // Determines whether we should print the search direction computation logs.
   bool print_search_direction_logs = true;
+  // Whether to print derivative check logs when something looks off.
+  bool print_derivative_check_logs = true;
   // Handle checks with assert calls.
   bool assert_checks_pass = false;
 };
