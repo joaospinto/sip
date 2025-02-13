@@ -1,9 +1,5 @@
 # SIP
 
-## Important note
-
-SIP is still in active development, and not yet ready for external usage.
-
 ## Introduction
 
 This repository implements a sparse interior point solver in C++.
@@ -24,7 +20,7 @@ or
 Some examples with code can be found in the
 [SIP Examples](https://github.com/joaospinto/sip_examples) repository.
 
-No dynamic memory allocation is done inside of the solver.
+No dynamic memory allocation is done inside of the solver, as long as logging is off.
 
 
 ## Basic approach

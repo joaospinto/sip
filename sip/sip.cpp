@@ -94,11 +94,12 @@ void print_line_search_log_header() {
 }
 
 void print_derivative_check_log_header() {
-  fmt::print(fmt::emphasis::bold | fg(fmt::color::blue),
+  fmt::print(fmt::emphasis::bold | fg(fmt::color::orange),
              // clang-format off
-             "{:^10} {:^10} {:^10} {:^10}\n",
+             "{:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10}\n",
              // clang-format on
-             "", "f/c/g", "index", "error");
+             "", "f/c/g", "out_index", "var_index", "rel_error", "abs_error",
+             "est_slope", "theo_slope");
 }
 
 void update_next_vars(const Input &input, const Settings &settings,
@@ -183,147 +184,179 @@ void update_next_vars(const Input &input, const Settings &settings,
 
 auto check_derivatives(const Input &input, const Settings &settings,
                        const double tau, Workspace &workspace) -> void {
+
   const int x_dim =
       workspace.model_callback_output->upper_hessian_lagrangian.rows;
   const int s_dim = get_s_dim(workspace.model_callback_output->jacobian_g);
   const int y_dim = get_y_dim(workspace.model_callback_output->jacobian_c);
+
   bool has_printed_header = false;
-  {
-    const auto compute_empirical_equality_constraint_slope_errors = [&]() {
-      const auto get_perturbed_value =
-          [&](const double beta) -> std::vector<double> {
-        update_next_vars(input, settings, tau, workspace, beta, true, false,
-                         false, false, false);
-        std::vector<double> out(y_dim);
+
+  const auto check_direction = [&](const std::optional<int> var_index) {
+    {
+      const auto compute_empirical_equality_constraint_slope_errors = [&]() {
+        const auto get_perturbed_value =
+            [&](const double beta) -> std::vector<double> {
+          update_next_vars(input, settings, tau, workspace, beta, true, false,
+                           false, false, false);
+          std::vector<double> out(y_dim);
+          for (int i = 0; i < y_dim; ++i) {
+            out[i] = workspace.model_callback_output->c[i];
+          }
+          return out;
+        };
+
+        const double h = std::sqrt(std::numeric_limits<double>::epsilon());
+
+        const std::vector<double> mP = get_perturbed_value(h);
+        const std::vector<double> mM = get_perturbed_value(-h);
+
+        std::vector<double> theoretical_slopes(y_dim);
+        std::fill(theoretical_slopes.begin(), theoretical_slopes.end(), 0.0);
+        input.add_Cx_to_y(workspace.model_callback_output->jacobian_c.data,
+                          workspace.delta_vars.x, theoretical_slopes.data());
+
+        std::vector<std::tuple<double, double, double, double>> errors(y_dim);
         for (int i = 0; i < y_dim; ++i) {
-          out[i] = workspace.model_callback_output->c[i];
+          const double estimated_slope = (mP[i] - mM[i]) / (2 * h);
+          const double absolute_error =
+              std::fabs(estimated_slope - theoretical_slopes[i]);
+          const double relative_error =
+              absolute_error /
+              std::max({std::fabs(estimated_slope),
+                        std::fabs(theoretical_slopes[i]), 1e-3});
+          errors[i] = {relative_error, absolute_error, estimated_slope,
+                       theoretical_slopes[i]};
         }
-        return out;
+        return errors;
       };
-
-      const double h = std::sqrt(std::numeric_limits<double>::epsilon());
-
-      const std::vector<double> mP = get_perturbed_value(h);
-      const std::vector<double> mM = get_perturbed_value(-h);
-
-      std::vector<double> theoretical_slopes(y_dim);
-      std::fill(theoretical_slopes.begin(), theoretical_slopes.end(), 0.0);
-      input.add_Cx_to_y(workspace.model_callback_output->jacobian_c.data,
-                        workspace.delta_vars.x, theoretical_slopes.data());
-
-      std::vector<double> errors(y_dim);
+      const auto errors = compute_empirical_equality_constraint_slope_errors();
       for (int i = 0; i < y_dim; ++i) {
-        const double estimated_slope = (mP[i] - mM[i]) / (2 * h);
-        const double absolute_error =
-            std::fabs(estimated_slope - theoretical_slopes[i]);
-        const double relative_error =
-            absolute_error / std::max({std::fabs(estimated_slope),
-                                       std::fabs(theoretical_slopes[i]), 1e-3});
-        errors[i] = relative_error;
-      }
-      return errors;
-    };
-    const auto errors = compute_empirical_equality_constraint_slope_errors();
-    for (int i = 0; i < y_dim; ++i) {
-      if (errors[i] < 0.1) {
-        continue;
-      }
-      if (!has_printed_header) {
-        print_derivative_check_log_header();
-        has_printed_header = true;
-      }
-      fmt::print(fg(fmt::color::blue),
-                 // clang-format off
-                 "{:^10} {:^10} {:^10} {:^+10.4g}\n",
-                 // clang-format on
-                 "", "c", i, errors[i]);
-    }
-  }
-  {
-    const auto compute_empirical_inequality_constraint_slope_errors = [&]() {
-      const auto get_perturbed_value =
-          [&](const double beta) -> std::vector<double> {
-        update_next_vars(input, settings, tau, workspace, beta, true, false,
-                         false, false, false);
-        std::vector<double> out(s_dim);
-        for (int i = 0; i < s_dim; ++i) {
-          out[i] = workspace.model_callback_output->g[i];
+        if (std::get<0>(errors[i]) < 0.1) {
+          continue;
         }
-        return out;
+        if (!has_printed_header) {
+          print_derivative_check_log_header();
+          has_printed_header = true;
+        }
+        fmt::print(fg(fmt::color::orange),
+                   // clang-format off
+                   "{:^10} {:^10} {:^10} {:^10} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g}\n",
+                   // clang-format on
+                   "", "c", i, var_index.value_or(-1), std::get<0>(errors[i]),
+                   std::get<1>(errors[i]), std::get<2>(errors[i]),
+                   std::get<3>(errors[i]));
+      }
+    }
+
+    {
+      const auto compute_empirical_inequality_constraint_slope_errors = [&]() {
+        const auto get_perturbed_value =
+            [&](const double beta) -> std::vector<double> {
+          update_next_vars(input, settings, tau, workspace, beta, true, false,
+                           false, false, false);
+          std::vector<double> out(s_dim);
+          for (int i = 0; i < s_dim; ++i) {
+            out[i] = workspace.model_callback_output->g[i];
+          }
+          return out;
+        };
+
+        const double h = std::sqrt(std::numeric_limits<double>::epsilon());
+
+        const std::vector<double> mP = get_perturbed_value(h);
+        const std::vector<double> mM = get_perturbed_value(-h);
+
+        std::vector<double> theoretical_slopes(s_dim);
+        std::fill(theoretical_slopes.begin(), theoretical_slopes.end(), 0.0);
+        input.add_Gx_to_y(workspace.model_callback_output->jacobian_g.data,
+                          workspace.delta_vars.x, theoretical_slopes.data());
+
+        std::vector<std::tuple<double, double, double, double>> errors(s_dim);
+        for (int i = 0; i < s_dim; ++i) {
+          const double estimated_slope = (mP[i] - mM[i]) / (2 * h);
+          const double absolute_error =
+              std::fabs(estimated_slope - theoretical_slopes[i]);
+          const double relative_error =
+              absolute_error /
+              std::max({std::fabs(estimated_slope),
+                        std::fabs(theoretical_slopes[i]), 1e-3});
+          errors[i] = {relative_error, absolute_error, estimated_slope,
+                       theoretical_slopes[i]};
+        }
+        return errors;
       };
-
-      const double h = std::sqrt(std::numeric_limits<double>::epsilon());
-
-      const std::vector<double> mP = get_perturbed_value(h);
-      const std::vector<double> mM = get_perturbed_value(-h);
-
-      std::vector<double> theoretical_slopes(s_dim);
-      std::fill(theoretical_slopes.begin(), theoretical_slopes.end(), 0.0);
-      input.add_Gx_to_y(workspace.model_callback_output->jacobian_g.data,
-                        workspace.delta_vars.x, theoretical_slopes.data());
-
-      std::vector<double> errors(s_dim);
+      const auto errors =
+          compute_empirical_inequality_constraint_slope_errors();
       for (int i = 0; i < s_dim; ++i) {
-        const double estimated_slope = (mP[i] - mM[i]) / (2 * h);
+        if (std::get<0>(errors[i]) < 0.1) {
+          continue;
+        }
+        if (!has_printed_header) {
+          print_derivative_check_log_header();
+          has_printed_header = true;
+        }
+        fmt::print(fg(fmt::color::orange),
+                   // clang-format off
+                   "{:^10} {:^10} {:^10} {:^10} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g}\n",
+                   // clang-format on
+                   "", "g", i, var_index.value_or(-1), std::get<0>(errors[i]),
+                   std::get<1>(errors[i]), std::get<2>(errors[i]),
+                   std::get<3>(errors[i]));
+      }
+    }
+    {
+      const auto compute_empirical_cost_slope_error = [&]() {
+        const auto get_perturbed_value = [&](const double beta) -> double {
+          update_next_vars(input, settings, tau, workspace, beta, true, false,
+                           false, false, false);
+          return workspace.model_callback_output->f;
+        };
+
+        const double h = std::sqrt(std::numeric_limits<double>::epsilon());
+        const double mP = get_perturbed_value(h);
+        const double mM = get_perturbed_value(-h);
+        const double estimated_slope = (mP - mM) / (2 * h);
+        const double theoretical_slope =
+            dot(workspace.model_callback_output->gradient_f,
+                workspace.delta_vars.x, x_dim);
         const double absolute_error =
-            std::fabs(estimated_slope - theoretical_slopes[i]);
+            std::fabs(estimated_slope - theoretical_slope);
         const double relative_error =
             absolute_error / std::max({std::fabs(estimated_slope),
-                                       std::fabs(theoretical_slopes[i]), 1e-3});
-        errors[i] = relative_error;
-      }
-      return errors;
-    };
-    const auto errors = compute_empirical_inequality_constraint_slope_errors();
-    for (int i = 0; i < s_dim; ++i) {
-      if (errors[i] < 0.1) {
-        continue;
-      }
-      if (!has_printed_header) {
-        print_derivative_check_log_header();
-        has_printed_header = true;
-      }
-      fmt::print(fg(fmt::color::blue),
-                 // clang-format off
-                 "{:^10} {:^10} {:^10} {:^+10.4g}\n",
-                 // clang-format on
-                 "", "g", i, errors[i]);
-    }
-  }
-  {
-    const auto compute_empirical_cost_slope_error = [&]() {
-      const auto get_perturbed_value = [&](const double beta) -> double {
-        update_next_vars(input, settings, tau, workspace, beta, true, false,
-                         false, false, false);
-        return workspace.model_callback_output->f;
+                                       std::fabs(theoretical_slope), 1e-3});
+        return std::make_tuple(relative_error, absolute_error, estimated_slope,
+                               theoretical_slope);
       };
-
-      const double h = std::sqrt(std::numeric_limits<double>::epsilon());
-      const double mP = get_perturbed_value(h);
-      const double mM = get_perturbed_value(-h);
-      const double estimated_slope = (mP - mM) / (2 * h);
-      const double theoretical_slope =
-          dot(workspace.model_callback_output->gradient_f,
-              workspace.delta_vars.x, x_dim);
-      const double absolute_error =
-          std::fabs(estimated_slope - theoretical_slope);
-      const double relative_error =
-          absolute_error / std::max({std::fabs(estimated_slope),
-                                     std::fabs(theoretical_slope), 1e-3});
-      return relative_error;
-    };
-    const double error = compute_empirical_cost_slope_error();
-    if (error > 0.1) {
-      if (!has_printed_header) {
-        print_derivative_check_log_header();
-        has_printed_header = true;
+      const auto error = compute_empirical_cost_slope_error();
+      if (std::get<0>(error) > 0.1) {
+        if (!has_printed_header) {
+          print_derivative_check_log_header();
+          has_printed_header = true;
+        }
+        fmt::print(fg(fmt::color::orange),
+                   // clang-format off
+                   "{:^10} {:^10} {:^10} {:^10} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g}\n",
+                   // clang-format on
+                   "", "f", 0, var_index.value_or(-1), std::get<0>(error),
+                   std::get<1>(error), std::get<2>(error), std::get<3>(error));
       }
-      fmt::print(fg(fmt::color::blue),
-                 // clang-format off
-                 "{:^10} {:^10} {:^10} {:^+10.4g}\n",
-                 // clang-format on
-                 "", "f", 0, error, error);
     }
+  };
+
+  if (settings.only_check_search_direction_slope) {
+    check_direction(std::nullopt);
+  } else {
+    VariablesWorkspace delta_vars_tmp;
+    delta_vars_tmp.reserve(x_dim, s_dim, y_dim);
+    std::swap(delta_vars_tmp, workspace.delta_vars);
+    std::fill(workspace.delta_vars.x, workspace.delta_vars.x + x_dim, 0.0);
+    for (int jj = 0; jj < x_dim; ++jj) {
+      workspace.delta_vars.x[jj] = 1.0;
+      check_direction(jj);
+      workspace.delta_vars.x[jj] = 0.0;
+    }
+    std::swap(delta_vars_tmp, workspace.delta_vars);
   }
   update_next_vars(input, settings, tau, workspace, 0.0, false, false, false,
                    false, false);

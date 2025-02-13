@@ -69,6 +69,9 @@ struct Settings {
   bool print_search_direction_logs = true;
   // Whether to print derivative check logs when something looks off.
   bool print_derivative_check_logs = true;
+  // When running derivative checks, will only use the search direction when
+  // true.
+  bool only_check_search_direction_slope = false;
   // Handle checks with assert calls.
   bool assert_checks_pass = false;
 };
