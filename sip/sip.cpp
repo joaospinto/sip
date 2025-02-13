@@ -696,7 +696,7 @@ auto do_line_search(const Input &input, const Settings &settings,
                     const double eta, const double mu, const double tau,
                     const double sq_constraint_violation_norm,
                     const double merit_slope, const double alpha_s_max,
-                    Workspace &workspace)
+                    int &total_ls_iterations, Workspace &workspace)
     -> std::tuple<double, double, double, double> {
   const int s_dim = get_s_dim(workspace.model_callback_output->jacobian_g);
   const int y_dim = get_y_dim(workspace.model_callback_output->jacobian_c);
@@ -707,7 +707,6 @@ auto do_line_search(const Input &input, const Settings &settings,
 
   bool ls_succeeded = false;
   double alpha = settings.start_ls_with_alpha_s_max ? alpha_s_max : 1.0;
-  int ls_iteration = 0;
   double constraint_violation_ratio =
       std::numeric_limits<double>::signaling_NaN();
 
@@ -746,10 +745,12 @@ auto do_line_search(const Input &input, const Settings &settings,
                  // clang-format off
                        "{:^10} {:^+10} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g}\n",
                  // clang-format on
-                 "", ls_iteration, alpha, m, m_f, std::sqrt(next_ctc),
+                 "", total_ls_iterations, alpha, m, m_f, std::sqrt(next_ctc),
                  std::sqrt(next_gsetgse), merit_delta, merit_delta / alpha,
                  dm_f, dm_s, dm_c, dm_g, dm_e, dm_aug);
     }
+
+    ++total_ls_iterations;
 
     if (merit_slope > settings.min_merit_slope_to_skip_line_search ||
         merit_delta < settings.armijo_factor * merit_slope * alpha) {
@@ -758,8 +759,8 @@ auto do_line_search(const Input &input, const Settings &settings,
     }
 
     alpha *= settings.line_search_factor;
-    ++ls_iteration;
-  } while (alpha > settings.line_search_min_step_size);
+  } while (alpha > settings.line_search_min_step_size &&
+           total_ls_iterations < settings.max_ls_iterations);
 
   if (alpha <= settings.line_search_min_step_size) {
     alpha /= settings.line_search_factor;
@@ -907,6 +908,8 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
   double mu = settings.initial_mu;
   const double tau = settings.tau;
 
+  int total_ls_iterations = 0;
+
   for (int iteration = 0; iteration < settings.max_iterations; ++iteration) {
     const double f0 = workspace.model_callback_output->f;
 
@@ -920,30 +923,44 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
                 lin_sys_error] =
         compute_search_direction(input, settings, eta, mu, tau, workspace);
 
-    if (iteration >= settings.min_iterations_for_convergence &&
+    const bool succeeded =
+        iteration >= settings.min_iterations_for_convergence &&
         (aug_kkt_error < settings.max_aug_kkt_violation ||
-         std::fabs(merit_slope) < settings.max_merit_slope)) {
-      if (settings.print_logs) {
-        if (iteration == 0 || settings.print_line_search_logs ||
-            settings.print_search_direction_logs) {
-          print_log_header();
-        }
-        const double de_norm =
-            settings.enable_elastics ? norm(de, s_dim) : -1.0;
-        const double kkt_error =
-            compute_nonaugmented_kkt_error(input, workspace);
-        fmt::print(fg(fmt::color::red),
-                   // clang-format off
-                         "{:^+10} {:^10} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^10} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g}\n",
-                   // clang-format on
-                   iteration, "", workspace.model_callback_output->f,
-                   std::sqrt(ctc), std::sqrt(gsetgse), "", norm(dx, x_dim),
-                   norm(ds, s_dim), norm(dy, y_dim), norm(dz, s_dim), de_norm,
-                   mu, eta, tau, aug_kkt_error, kkt_error);
-      }
+         std::fabs(merit_slope) < settings.max_merit_slope);
 
+    const bool hit_ls_iteration_limit =
+        total_ls_iterations >= settings.max_ls_iterations;
+
+    if (settings.print_logs && (succeeded || hit_ls_iteration_limit)) {
+      if (iteration == 0 || settings.print_line_search_logs ||
+          settings.print_search_direction_logs) {
+        print_log_header();
+      }
+      const double de_norm = settings.enable_elastics ? norm(de, s_dim) : -1.0;
+      const double kkt_error = compute_nonaugmented_kkt_error(input, workspace);
+      fmt::print(fg(fmt::color::red),
+                 // clang-format off
+                       "{:^+10} {:^10} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^10} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g}\n",
+                 // clang-format on
+                 iteration, "", workspace.model_callback_output->f,
+                 std::sqrt(ctc), std::sqrt(gsetgse), "", norm(dx, x_dim),
+                 norm(ds, s_dim), norm(dy, y_dim), norm(dz, s_dim), de_norm, mu,
+                 eta, tau, aug_kkt_error, kkt_error);
+    }
+
+    if (succeeded) {
       return Output{
           .exit_status = Status::SOLVED,
+          .num_iterations = iteration,
+          .max_primal_violation =
+              inf_norm(workspace.model_callback_output->c, y_dim),
+          .max_dual_violation = inf_norm(workspace.nrhs.x, x_dim),
+      };
+    }
+
+    if (hit_ls_iteration_limit) {
+      return Output{
+          .exit_status = Status::LINE_SEARCH_ITERATION_LIMIT,
           .num_iterations = iteration,
           .max_primal_violation =
               inf_norm(workspace.model_callback_output->c, y_dim),
@@ -959,7 +976,7 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
     const auto [ls_succeeded, alpha, m0, constraint_violation_ratio] =
         do_line_search(input, settings, eta, mu, tau,
                        sq_constraint_violation_norm, merit_slope, alpha_s_max,
-                       workspace);
+                       total_ls_iterations, workspace);
 
     if (settings.print_logs) {
       if (iteration == 0 || settings.print_line_search_logs) {
@@ -1250,6 +1267,9 @@ auto operator<<(std::ostream &os, Status const &status) -> std::ostream & {
     break;
   case Status::ITERATION_LIMIT:
     os << "ITERATION_LIMIT";
+    break;
+  case Status::LINE_SEARCH_ITERATION_LIMIT:
+    os << "LINE_SEARCH_ITERATION_LIMIT";
     break;
   case Status::LINE_SEARCH_FAILURE:
     os << "LINE_SEARCH_FAILURE";

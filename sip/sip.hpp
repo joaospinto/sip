@@ -10,14 +10,17 @@ namespace sip {
 enum class Status {
   SOLVED = 0,
   ITERATION_LIMIT = 1,
-  LINE_SEARCH_FAILURE = 2,
-  TIMEOUT = 3,
-  FAILED_CHECK = 4,
+  LINE_SEARCH_ITERATION_LIMIT = 2,
+  LINE_SEARCH_FAILURE = 3,
+  TIMEOUT = 4,
+  FAILED_CHECK = 5,
 };
 
 struct Settings {
   // The maximum number of iterations the solver can do.
   int max_iterations = 100;
+  // The maximum cumulative number of line search iterations.
+  int max_ls_iterations = 500;
   // The minimum number of iterations before we can declare convergence.
   int min_iterations_for_convergence = 0;
   // The number of iterative refinement steps.
