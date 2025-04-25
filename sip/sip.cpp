@@ -158,14 +158,26 @@ void update_next_primal_vars(const Input &input, const Settings &settings,
   }
 }
 
-void update_next_dual_vars(const Input &input, const double tau,
-                           Workspace &workspace, const double alpha) {
+void update_next_dual_vars(const Input &input, const Settings &settings,
+                           const double tau, Workspace &workspace,
+                           const double merit_delta, const double alpha) {
   const int s_dim = get_s_dim(workspace.model_callback_output->jacobian_g);
   const int y_dim = get_y_dim(workspace.model_callback_output->jacobian_c);
+
+  double allowed_merit_increase =
+      std::max(-settings.dual_armijo_factor * merit_delta,
+               settings.min_allowed_merit_increase);
+
   for (int i = 0; i < y_dim; ++i) {
     workspace.next_vars.y[i] =
         workspace.csd_workspace.y_tilde[i] + alpha * workspace.delta_vars.y[i];
   }
+
+  const double original_y_merit =
+      dot(workspace.vars.y, workspace.model_callback_output->c, y_dim);
+  const double new_y_merit =
+      dot(workspace.next_vars.y, workspace.model_callback_output->c, y_dim);
+  const double dm_y = new_y_merit - original_y_merit;
 
   for (int i = 0; i < s_dim; ++i) {
     workspace.next_vars.z[i] = std::max(workspace.csd_workspace.z_tilde[i] +
@@ -173,16 +185,77 @@ void update_next_dual_vars(const Input &input, const double tau,
                                         (1.0 - tau) * workspace.vars.z[i]);
   }
 
-  ModelCallbackInput mci{
-      .x = workspace.next_vars.x,
-      .y = workspace.next_vars.y,
-      .z = workspace.next_vars.z,
-      .new_x = false,
-      .new_y = true,
-      .new_z = true,
-  };
-  input.model_callback(mci, &workspace.model_callback_output);
-}
+  const double original_z_merit =
+      dot(workspace.vars.z, workspace.miscellaneous_workspace.g_plus_s_plus_e,
+          s_dim);
+  const double new_z_merit =
+      dot(workspace.next_vars.z,
+          workspace.miscellaneous_workspace.g_plus_s_plus_e, s_dim);
+  const double dm_z = new_z_merit - original_z_merit;
+
+  double beta_y = 0.0;
+  double beta_z = 0.0;
+
+  if (dm_y <= 0.0) {
+    allowed_merit_increase -= dm_y;
+    beta_y = 1.0;
+  }
+
+  if (dm_z <= 0.0) {
+    allowed_merit_increase -= dm_z;
+    beta_z = 1.0;
+  }
+
+  if (dm_y > 0.0 && dm_z > 0.0) {
+    if (dm_y + dm_z < allowed_merit_increase) {
+      beta_y = 1.0;
+      beta_z = 1.0;
+    } else {
+      beta_y = 0.5 * allowed_merit_increase / dm_y;
+      beta_z = 0.5 * allowed_merit_increase / dm_z;
+      if (beta_y > 1.0 && beta_z > 1.0) {
+        beta_y = 1.0;
+        beta_z = 1.0;
+      } else if (beta_y > 1.0) {
+        beta_y = 1.0;
+        allowed_merit_increase -= dm_y;
+        beta_z = std::min(allowed_merit_increase / dm_z, 1.0);
+      } else if (beta_z > 0.0) {
+        beta_z = 1.0;
+        allowed_merit_increase -= dm_z;
+        beta_y = std::min(allowed_merit_increase / dm_y, 1.0);
+      }
+    }
+  } else if (dm_y > 0.0 && dm_z <= 0.0) {
+    beta_y = std::min(allowed_merit_increase / dm_y, 1.0);
+  } else if (dm_z > 0.0 && dm_y <= 0.0) {
+    beta_z = std::min(allowed_merit_increase / dm_z, 1.0);
+  }
+
+  for (int i = 0; i < y_dim; ++i) {
+    workspace.next_vars.y[i] =
+        workspace.vars.y[i] +
+        beta_y * (workspace.next_vars.y[i] - workspace.vars.y[i]);
+  }
+
+  for (int i = 0; i < s_dim; ++i) {
+    workspace.next_vars.z[i] =
+        workspace.vars.z[i] +
+        beta_z * (workspace.next_vars.z[i] - workspace.vars.z[i]);
+  }
+
+  if (beta_y > 0.0 || beta_z > 0.0) {
+    ModelCallbackInput mci{
+        .x = workspace.next_vars.x,
+        .y = workspace.next_vars.y,
+        .z = workspace.next_vars.z,
+        .new_x = false,
+        .new_y = true,
+        .new_z = true,
+    };
+    input.model_callback(mci, &workspace.model_callback_output);
+  }
+};
 
 auto check_derivatives(const Input &input, const Settings &settings,
                        const double tau, Workspace &workspace) -> void {
@@ -698,6 +771,7 @@ auto do_line_search(const Input &input, const Settings &settings,
 
   bool ls_succeeded = false;
   double alpha = settings.start_ls_with_alpha_s_max ? alpha_s_max : 1.0;
+  double merit_delta = std::numeric_limits<double>::signaling_NaN();
   double constraint_violation_ratio =
       std::numeric_limits<double>::signaling_NaN();
 
@@ -714,6 +788,8 @@ auto do_line_search(const Input &input, const Settings &settings,
         squared_norm(workspace.miscellaneous_workspace.g_plus_s_plus_e, s_dim);
     const double next_sq_constraint_violation_norm = next_ctc + next_gsetgse;
 
+    // NOTE: the line search is only over the primal variables, so we cannot
+    // use next_vars.y and next_vars.z.
     const auto [m_f, m_s, m_c, m_g, m_e, m_aug, m] = merit_function(
         settings, workspace, workspace.next_vars.s, workspace.vars.y,
         workspace.vars.z, workspace.next_vars.e, mu, eta,
@@ -726,7 +802,7 @@ auto do_line_search(const Input &input, const Settings &settings,
     const double dm_e = m_e - m0_e;
     const double dm_aug = m_aug - m0_aug;
 
-    const double merit_delta = dm_f + dm_s + dm_c + dm_g + dm_e + dm_aug;
+    merit_delta = dm_f + dm_s + dm_c + dm_g + dm_e + dm_aug;
 
     constraint_violation_ratio = next_sq_constraint_violation_norm /
                                  std::max(sq_constraint_violation_norm, 1e-12);
@@ -757,7 +833,7 @@ auto do_line_search(const Input &input, const Settings &settings,
     alpha /= settings.line_search_factor;
   }
 
-  update_next_dual_vars(input, tau, workspace, alpha);
+  update_next_dual_vars(input, settings, tau, workspace, merit_delta, alpha);
 
   return std::make_tuple(ls_succeeded, alpha, m0, constraint_violation_ratio);
 }
