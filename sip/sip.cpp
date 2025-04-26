@@ -117,9 +117,7 @@ void update_next_vars(const Input &input, const Settings &settings,
           workspace.vars.x[i] + alpha * workspace.delta_vars.x[i];
     }
   } else {
-    for (int i = 0; i < x_dim; ++i) {
-      workspace.next_vars.x[i] = workspace.vars.x[i];
-    }
+    std::copy_n(workspace.vars.x, x_dim, workspace.next_vars.x);
   }
 
   if (update_s) {
@@ -129,9 +127,7 @@ void update_next_vars(const Input &input, const Settings &settings,
                    (1.0 - tau) * workspace.vars.s[i]);
     }
   } else {
-    for (int i = 0; i < s_dim; ++i) {
-      workspace.next_vars.s[i] = workspace.vars.s[i];
-    }
+    std::copy_n(workspace.vars.s, s_dim, workspace.next_vars.s);
   }
 
   if (update_y) {
@@ -156,9 +152,7 @@ void update_next_vars(const Input &input, const Settings &settings,
             workspace.vars.e[i] + alpha * workspace.delta_vars.e[i];
       }
     } else {
-      for (int i = 0; i < s_dim; ++i) {
-        workspace.next_vars.e[i] = workspace.vars.e[i];
-      }
+      std::copy_n(workspace.vars.e, s_dim, workspace.next_vars.e);
     }
   }
   ModelCallbackInput mci{
@@ -178,9 +172,8 @@ void update_next_vars(const Input &input, const Settings &settings,
     add(workspace.miscellaneous_workspace.g_plus_s, workspace.next_vars.e,
         s_dim, workspace.miscellaneous_workspace.g_plus_s_plus_e);
   } else {
-    std::copy(workspace.miscellaneous_workspace.g_plus_s,
-              workspace.miscellaneous_workspace.g_plus_s + s_dim,
-              workspace.miscellaneous_workspace.g_plus_s_plus_e);
+    std::copy_n(workspace.miscellaneous_workspace.g_plus_s, s_dim,
+                workspace.miscellaneous_workspace.g_plus_s_plus_e);
   }
 };
 
@@ -202,9 +195,7 @@ auto check_derivatives(const Input &input, const Settings &settings,
           update_next_vars(input, settings, tau, workspace, beta, true, false,
                            false, false, false);
           std::vector<double> out(y_dim);
-          for (int i = 0; i < y_dim; ++i) {
-            out[i] = workspace.model_callback_output->c[i];
-          }
+          std::copy_n(workspace.model_callback_output->c, y_dim, out.data());
           return out;
         };
 
@@ -258,9 +249,7 @@ auto check_derivatives(const Input &input, const Settings &settings,
           update_next_vars(input, settings, tau, workspace, beta, true, false,
                            false, false, false);
           std::vector<double> out(s_dim);
-          for (int i = 0; i < s_dim; ++i) {
-            out[i] = workspace.model_callback_output->g[i];
-          }
+          std::copy_n(workspace.model_callback_output->g, s_dim, out.data());
           return out;
         };
 
@@ -352,7 +341,7 @@ auto check_derivatives(const Input &input, const Settings &settings,
     VariablesWorkspace delta_vars_tmp;
     delta_vars_tmp.reserve(x_dim, s_dim, y_dim);
     std::swap(delta_vars_tmp, workspace.delta_vars);
-    std::fill(workspace.delta_vars.x, workspace.delta_vars.x + x_dim, 0.0);
+    std::fill_n(workspace.delta_vars.x, x_dim, 0.0);
     for (int jj = 0; jj < x_dim; ++jj) {
       workspace.delta_vars.x[jj] = 1.0;
       check_direction(jj);
@@ -504,29 +493,26 @@ auto compute_search_direction(const Input &input, const Settings &settings,
   input.ldlt_factor(H_data, C_data, G_data, w, r1, eta_inv, r3p, LT_data,
                     D_diag);
 
-  for (int i = 0; i < x_dim; ++i) {
-    bx[i] = grad_f[i];
-  }
+  std::copy_n(grad_f, x_dim, bx);
 
   input.add_CTx_to_y(C_data, y_tilde, bx);
   input.add_GTx_to_y(G_data, z_tilde, bx);
 
-  std::copy(bx, bx + x_dim, rx);
+  std::copy_n(bx, x_dim, rx);
 
-  std::fill(by, by + y_dim, 0.0);
-  std::fill(ry, ry + y_dim, 0.0);
+  std::fill_n(by, y_dim, 0.0);
+  std::fill_n(ry, y_dim, 0.0);
+  std::fill_n(rz, s_dim, 0.0);
 
   if (settings.enable_elastics) {
     for (int i = 0; i < s_dim; ++i) {
       rs[i] = z_tilde[i] - mu / s[i];
       re[i] = rho * e[i] + z_tilde[i];
-      rz[i] = 0.0;
       bz[i] = -re[i] / rho - w[i] * rs[i];
     }
   } else {
     for (int i = 0; i < s_dim; ++i) {
       rs[i] = z_tilde[i] - mu / s[i];
-      rz[i] = 0.0;
       bz[i] = -w[i] * rs[i];
     }
   }
@@ -562,11 +548,11 @@ auto compute_search_direction(const Input &input, const Settings &settings,
 
   {
     auto ptr = v;
-    std::copy(ptr, ptr + x_dim, dx);
+    std::copy_n(ptr, x_dim, dx);
     ptr += x_dim;
-    std::copy(ptr, ptr + y_dim, dy);
+    std::copy_n(ptr, y_dim, dy);
     ptr += y_dim;
-    std::copy(ptr, ptr + s_dim, dz);
+    std::copy_n(ptr, s_dim, dz);
     ptr += s_dim;
   }
 
@@ -610,7 +596,7 @@ auto compute_search_direction(const Input &input, const Settings &settings,
       res_x[i] = -bx[i];
     }
 
-    std::fill(res_y, res_y + y_dim, 0.0);
+    std::fill_n(res_y, y_dim, 0.0);
 
     for (int i = 0; i < s_dim; ++i) {
       res_z[i] = -bz[i];
@@ -645,10 +631,10 @@ auto compute_search_direction(const Input &input, const Settings &settings,
     double *tmp_x = workspace.next_vars.x;
     double *tmp_y = workspace.next_vars.y;
     double *tmp_s = workspace.next_vars.s;
-    std::fill(tmp_x, tmp_x + x_dim, 0.0);
+    std::fill_n(tmp_x, x_dim, 0.0);
     input.add_upper_symmetric_Hx_to_y(H_data, dx, tmp_x);
     const double dxTHdx = dot(tmp_x, dx, x_dim);
-    std::fill(tmp_y, tmp_y + y_dim, 0.0);
+    std::fill_n(tmp_y, y_dim, 0.0);
     input.add_Cx_to_y(C_data, dx, tmp_y);
     const double Cdx2 = squared_norm(tmp_y, y_dim);
     double Winvds = 0.0;
@@ -660,9 +646,7 @@ auto compute_search_direction(const Input &input, const Settings &settings,
         tmp_s[i] = ds[i] + de[i];
       }
     } else {
-      for (int i = 0; i < s_dim; ++i) {
-        tmp_s[i] = ds[i];
-      }
+      std::copy_n(ds, s_dim, tmp_s);
     }
     input.add_Gx_to_y(G_data, dx, tmp_s);
     const double Gdepdspde2 = squared_norm(tmp_s, s_dim);
@@ -806,9 +790,7 @@ auto compute_nonaugmented_kkt_error(const Input &input, Workspace &workspace)
 
   double *r = workspace.csd_workspace.residual;
 
-  for (int i = 0; i < x_dim; ++i) {
-    r[i] = grad_f[i];
-  }
+  std::copy_n(grad_f, x_dim, r);
 
   input.add_CTx_to_y(C_data, y, r);
   input.add_GTx_to_y(G_data, z, r);
@@ -904,9 +886,8 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
     add(workspace.miscellaneous_workspace.g_plus_s, workspace.vars.e, s_dim,
         workspace.miscellaneous_workspace.g_plus_s_plus_e);
   } else {
-    std::copy(workspace.miscellaneous_workspace.g_plus_s,
-              workspace.miscellaneous_workspace.g_plus_s + s_dim,
-              workspace.miscellaneous_workspace.g_plus_s_plus_e);
+    std::copy_n(workspace.miscellaneous_workspace.g_plus_s, s_dim,
+                workspace.miscellaneous_workspace.g_plus_s_plus_e);
   }
 
   double eta = settings.initial_penalty_parameter;
