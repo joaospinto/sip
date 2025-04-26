@@ -189,7 +189,7 @@ struct Input {
   //       as lambdas and wrapping them with std::cref.
 
   // NOTE: the LDLT factor/solve callbacks should solve Kv = b, where:
-  // 1. A = [ K + r1 I_x      C.T        G.T   ]
+  // 1. K = [ H + r1 I_x      C.T        G.T   ]
   //        [     C        -r2 * I_y      0    ]
   //        [     G            0       -r3 I_z ]
   // 2. (H + r1 I_x) is symmetric and positive definite;
