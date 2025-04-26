@@ -101,15 +101,13 @@ void print_derivative_check_log_header() {
              "est_slope", "theo_slope");
 }
 
-void update_next_vars(const Input &input, const Settings &settings,
-                      const double tau, Workspace &workspace,
-                      const double alpha, const bool update_x,
-                      const bool update_s, const bool update_y,
-                      const bool update_z, const bool update_e) {
+void update_next_primal_vars(const Input &input, const Settings &settings,
+                             const double tau, Workspace &workspace,
+                             const double alpha, const bool update_x,
+                             const bool update_s, const bool update_e) {
   const int x_dim =
       workspace.model_callback_output->upper_hessian_lagrangian.rows;
   const int s_dim = get_s_dim(workspace.model_callback_output->jacobian_g);
-  const int y_dim = get_y_dim(workspace.model_callback_output->jacobian_c);
 
   if (update_x) {
     for (int i = 0; i < x_dim; ++i) {
@@ -119,6 +117,16 @@ void update_next_vars(const Input &input, const Settings &settings,
   } else {
     std::copy_n(workspace.vars.x, x_dim, workspace.next_vars.x);
   }
+
+  ModelCallbackInput mci{
+      .x = workspace.next_vars.x,
+      .y = workspace.vars.y,
+      .z = workspace.vars.z,
+      .new_x = true,
+      .new_y = false,
+      .new_z = false,
+  };
+  input.model_callback(mci, &workspace.model_callback_output);
 
   if (update_s) {
     for (int i = 0; i < s_dim; ++i) {
@@ -130,20 +138,8 @@ void update_next_vars(const Input &input, const Settings &settings,
     std::copy_n(workspace.vars.s, s_dim, workspace.next_vars.s);
   }
 
-  if (update_y) {
-    for (int i = 0; i < y_dim; ++i) {
-      workspace.next_vars.y[i] = workspace.csd_workspace.y_tilde[i] +
-                                 alpha * workspace.delta_vars.y[i];
-    }
-  }
-
-  if (update_z) {
-    for (int i = 0; i < s_dim; ++i) {
-      workspace.next_vars.z[i] = std::max(workspace.csd_workspace.z_tilde[i] +
-                                              alpha * workspace.delta_vars.z[i],
-                                          (1.0 - tau) * workspace.vars.z[i]);
-    }
-  }
+  add(workspace.model_callback_output->g, workspace.next_vars.s, s_dim,
+      workspace.miscellaneous_workspace.g_plus_s);
 
   if (settings.enable_elastics) {
     if (update_e) {
@@ -154,28 +150,39 @@ void update_next_vars(const Input &input, const Settings &settings,
     } else {
       std::copy_n(workspace.vars.e, s_dim, workspace.next_vars.e);
     }
-  }
-  ModelCallbackInput mci{
-      .x = workspace.next_vars.x,
-      .y = workspace.next_vars.y,
-      .z = workspace.next_vars.z,
-      .new_x = true,
-      .new_y = true,
-      .new_z = true,
-  };
-  input.model_callback(mci, &workspace.model_callback_output);
-
-  add(workspace.model_callback_output->g, workspace.next_vars.s, s_dim,
-      workspace.miscellaneous_workspace.g_plus_s);
-
-  if (settings.enable_elastics) {
     add(workspace.miscellaneous_workspace.g_plus_s, workspace.next_vars.e,
         s_dim, workspace.miscellaneous_workspace.g_plus_s_plus_e);
   } else {
     std::copy_n(workspace.miscellaneous_workspace.g_plus_s, s_dim,
                 workspace.miscellaneous_workspace.g_plus_s_plus_e);
   }
-};
+}
+
+void update_next_dual_vars(const Input &input, const double tau,
+                           Workspace &workspace, const double alpha) {
+  const int s_dim = get_s_dim(workspace.model_callback_output->jacobian_g);
+  const int y_dim = get_y_dim(workspace.model_callback_output->jacobian_c);
+  for (int i = 0; i < y_dim; ++i) {
+    workspace.next_vars.y[i] =
+        workspace.csd_workspace.y_tilde[i] + alpha * workspace.delta_vars.y[i];
+  }
+
+  for (int i = 0; i < s_dim; ++i) {
+    workspace.next_vars.z[i] = std::max(workspace.csd_workspace.z_tilde[i] +
+                                            alpha * workspace.delta_vars.z[i],
+                                        (1.0 - tau) * workspace.vars.z[i]);
+  }
+
+  ModelCallbackInput mci{
+      .x = workspace.next_vars.x,
+      .y = workspace.next_vars.y,
+      .z = workspace.next_vars.z,
+      .new_x = false,
+      .new_y = true,
+      .new_z = true,
+  };
+  input.model_callback(mci, &workspace.model_callback_output);
+}
 
 auto check_derivatives(const Input &input, const Settings &settings,
                        const double tau, Workspace &workspace) -> void {
@@ -192,8 +199,8 @@ auto check_derivatives(const Input &input, const Settings &settings,
       const auto compute_empirical_equality_constraint_slope_errors = [&]() {
         const auto get_perturbed_value =
             [&](const double beta) -> std::vector<double> {
-          update_next_vars(input, settings, tau, workspace, beta, true, false,
-                           false, false, false);
+          update_next_primal_vars(input, settings, tau, workspace, beta, true,
+                                  false, false);
           std::vector<double> out(y_dim);
           std::copy_n(workspace.model_callback_output->c, y_dim, out.data());
           return out;
@@ -246,8 +253,8 @@ auto check_derivatives(const Input &input, const Settings &settings,
       const auto compute_empirical_inequality_constraint_slope_errors = [&]() {
         const auto get_perturbed_value =
             [&](const double beta) -> std::vector<double> {
-          update_next_vars(input, settings, tau, workspace, beta, true, false,
-                           false, false, false);
+          update_next_primal_vars(input, settings, tau, workspace, beta, true,
+                                  false, false);
           std::vector<double> out(s_dim);
           std::copy_n(workspace.model_callback_output->g, s_dim, out.data());
           return out;
@@ -299,8 +306,8 @@ auto check_derivatives(const Input &input, const Settings &settings,
     {
       const auto compute_empirical_cost_slope_error = [&]() {
         const auto get_perturbed_value = [&](const double beta) -> double {
-          update_next_vars(input, settings, tau, workspace, beta, true, false,
-                           false, false, false);
+          update_next_primal_vars(input, settings, tau, workspace, beta, true,
+                                  false, false);
           return workspace.model_callback_output->f;
         };
 
@@ -349,8 +356,8 @@ auto check_derivatives(const Input &input, const Settings &settings,
     }
     std::swap(delta_vars_tmp, workspace.delta_vars);
   }
-  update_next_vars(input, settings, tau, workspace, 0.0, false, false, false,
-                   false, false);
+  update_next_primal_vars(input, settings, tau, workspace, 0.0, false, false,
+                          false);
 }
 
 auto get_observed_merit_slope(const Input &input, const Settings &settings,
@@ -363,10 +370,8 @@ auto get_observed_merit_slope(const Input &input, const Settings &settings,
   const auto compute_empirical_merit_slope =
       [&](const bool update_x, const bool update_s, const bool update_e) {
         const auto get_perturbed_merit = [&](const double beta) -> double {
-          constexpr bool update_y = false;
-          constexpr bool update_z = false;
-          update_next_vars(input, settings, tau, workspace, beta, update_x,
-                           update_s, update_y, update_z, update_e);
+          update_next_primal_vars(input, settings, tau, workspace, beta,
+                                  update_x, update_s, update_e);
           const double ctc =
               squared_norm(workspace.model_callback_output->c, y_dim);
           const double gsetgse = squared_norm(
@@ -393,8 +398,8 @@ auto get_observed_merit_slope(const Input &input, const Settings &settings,
   const double os_e = compute_empirical_merit_slope(false, false, true);
   const double os = compute_empirical_merit_slope(true, true, true);
 
-  update_next_vars(input, settings, tau, workspace, 0.0, false, false, false,
-                   false, false);
+  update_next_primal_vars(input, settings, tau, workspace, 0.0, false, false,
+                          false);
 
   return std::make_tuple(os_x, os_s, os_e, os);
 }
@@ -701,8 +706,8 @@ auto do_line_search(const Input &input, const Settings &settings,
   }
 
   do {
-    update_next_vars(input, settings, tau, workspace, alpha, true, true, true,
-                     true, true);
+    update_next_primal_vars(input, settings, tau, workspace, alpha, true, true,
+                            true);
     const double next_ctc =
         squared_norm(workspace.model_callback_output->c, y_dim);
     const double next_gsetgse =
@@ -751,6 +756,8 @@ auto do_line_search(const Input &input, const Settings &settings,
   if (alpha <= settings.line_search_min_step_size) {
     alpha /= settings.line_search_factor;
   }
+
+  update_next_dual_vars(input, tau, workspace, alpha);
 
   return std::make_tuple(ls_succeeded, alpha, m0, constraint_violation_ratio);
 }
