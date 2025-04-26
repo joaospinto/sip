@@ -17,4 +17,4 @@ git_override(
 )
 
 # Fmt library (as an alternative to std::format)
-bazel_dep(name = "fmt", version = "11.0.2")
+bazel_dep(name = "fmt", version = "11.1.4")
