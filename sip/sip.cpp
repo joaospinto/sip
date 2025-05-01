@@ -255,7 +255,7 @@ void update_next_dual_vars(const Input &input, const Settings &settings,
     };
     input.model_callback(mci, &workspace.model_callback_output);
   }
-};
+}
 
 auto check_derivatives(const Input &input, const Settings &settings,
                        const double tau, Workspace &workspace) -> void {
