@@ -601,7 +601,7 @@ auto compute_search_direction(const Input &input, const Settings &settings,
 
   input.ldlt_solve(LT_data, D_diag, b, v);
 
-  for (int i = 0; i < settings.num_iterative_refinement_steps; ++i) {
+  for (int j = 0; j < settings.num_iterative_refinement_steps; ++j) {
     // We do an iterative refinement step:
     // res = Kv - b
     // Ku = res => Ku = Kv - b => K(v - u) = b
