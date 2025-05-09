@@ -27,11 +27,11 @@ struct Settings {
   // The number of iterative refinement steps.
   int num_iterative_refinement_steps = 1;
   // The maximum allowed violation of the KKT system.
-  double max_kkt_violation = 1e-6;
+  double max_kkt_violation = 1e-8;
   // The maximum allowed constraint violation to declare suboptimality.
   double max_suboptimal_constraint_violation = 1e-2;
   // The maximum allowed merit function slope.
-  double max_merit_slope = 1e-12;
+  double max_merit_slope = 1e-16;
   // The initial x-regularizatino to be applied on the LHS.
   double initial_regularization = 1e-3;
   // The multiplicative decay of the x-regularization coefficient.
@@ -43,7 +43,7 @@ struct Settings {
   // A parameter of the merit function and descent direction computation.
   double initial_mu = 1e-3;
   // Determines how much mu decreases per iteration.
-  double mu_update_factor = 0.9;
+  double mu_update_factor = 0.5;
   // The minimum barrier coefficient.
   double mu_min = 1e-16;
   // The initial penalty parameter of the Augmented Lagrangian.
