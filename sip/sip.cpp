@@ -958,8 +958,7 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
         compute_search_direction(input, settings, eta, mu, tau,
                                  sq_constraint_violation_norm, workspace);
 
-    const bool merit_slope_too_small =
-        std::fabs(merit_slope) < settings.max_merit_slope;
+    const bool merit_slope_too_small = merit_slope > -settings.max_merit_slope;
 
     const bool succeeded =
         (kkt_error < settings.max_kkt_violation ||

@@ -266,14 +266,15 @@ $$
 This formulation has the advantage of being more numerically stable, due to having fewer dependencies on $\eta$.
 It also allows us to directly access the non-augmented Newton-KKT residual, making termination checking simpler.
 However, we still need to compute
-$D(\mathcal{A}(x, s, e; \lambda, \nu, \mu, \eta); (\Delta x, \Delta s, \Delta e)) \mid_{(\xi, \sigma, \epsilon)}$.
+$D(\mathcal{A}(x, s, e; \lambda, \nu, \mu, \eta); (\Delta x, \Delta s, \Delta e)) \mid_{(\xi, \sigma, \epsilon)}$,
+where $D( \cdot ; \cdot )$ represents the directional derivative operator.
 This can be done efficiently (i.e. without incurring extra matrix-vector products) by noting that
 
 $$
 \begin{align*}
 & D(\mathcal{A}(x, s, e; \lambda, \nu, \mu, \eta); (\Delta x, \Delta s, \Delta e)) \mid_{(\xi, \sigma, \epsilon)}
 = \begin{bmatrix}
-\Delta x & \Delta s & \Delta e
+\Delta x^T & \Delta s^T & \Delta e^T
 \end{bmatrix}
 \begin{bmatrix}
 \nabla_x \mathcal{A}(\xi, \sigma, \epsilon, \lambda, \nu, \mu) \\
@@ -281,7 +282,7 @@ $$
 \nabla_e \mathcal{A}(\xi, \sigma, \epsilon, \lambda, \nu, \mu)
 \end{bmatrix} \\
 = & \begin{bmatrix}
-\Delta x & \Delta s & \Delta e
+\Delta x^T & \Delta s^T & \Delta e^T
 \end{bmatrix}
 \left(
 \begin{bmatrix}
@@ -297,7 +298,7 @@ g(\xi) + \sigma + \epsilon
 \end{bmatrix}
 \right) \\
 = & \begin{bmatrix}
-\Delta x & \Delta s & \Delta e
+\Delta x^T & \Delta s^T & \Delta e^T
 \end{bmatrix}
 \left(
 \begin{bmatrix}
@@ -315,7 +316,7 @@ g(\xi) + \sigma + \epsilon
 \eta c(\xi)^T J(c)(\xi) \Delta x +
 \eta (g(\xi) + \sigma + \epsilon)^T J(g)(\xi) \Delta x \\
 = & \begin{bmatrix}
-\Delta x & \Delta s & \Delta e
+\Delta x^T & \Delta s^T & \Delta e^T
 \end{bmatrix}
 \left(
 \begin{bmatrix}
@@ -334,7 +335,7 @@ g(\xi) + \sigma + \epsilon
 \eta \left( g(\xi) + \sigma + \epsilon \right)^T \left( \frac{1}{\eta} \Delta z -
 (g(\xi) + \sigma + \epsilon) - \Delta s - \Delta e \right) \\
 = & \begin{bmatrix}
-\Delta x & \Delta s & \Delta e
+\Delta x^T & \Delta s^T & \Delta e^T
 \end{bmatrix}
 \begin{bmatrix}
 \nabla_x \mathcal{L}(\xi, \sigma, \epsilon, \lambda, \nu, \mu) \\
@@ -352,10 +353,10 @@ $$
 Using $D( \cdot ; \cdot )$ to represent the directional derivative operator, note that
 
 $$
-\begin{align*} 
+\begin{align*}
 D(\mathcal{A}(x, s, e; \lambda, \nu, \mu, \eta); (\Delta x, \Delta s, \Delta e)) \mid_{(\xi, \sigma, \epsilon)} &=
 \begin{bmatrix}
-\Delta x & \Delta s & \Delta e
+\Delta x^T & \Delta s^T & \Delta e^T
 \end{bmatrix}
 \begin{bmatrix}
 \nabla_x \mathcal{A}(\xi, \sigma, \epsilon, \lambda, \nu, \mu) \\
@@ -363,7 +364,7 @@ D(\mathcal{A}(x, s, e; \lambda, \nu, \mu, \eta); (\Delta x, \Delta s, \Delta e))
 \nabla_e \mathcal{A}(\xi, \sigma, \epsilon, \lambda, \nu, \mu)
 \end{bmatrix} \\
 &= \begin{bmatrix}
-   \Delta x & \Delta s & \Delta e & 0 & 0
+   \Delta x^T & \Delta s^T & \Delta e^T & 0 & 0
    \end{bmatrix}
 \begin{bmatrix}
 \nabla_x \mathcal{A}(\xi, \sigma, \epsilon, \lambda, \nu, \mu) \\
@@ -373,7 +374,7 @@ D(\mathcal{A}(x, s, e; \lambda, \nu, \mu, \eta); (\Delta x, \Delta s, \Delta e))
 0
 \end{bmatrix} \\
 &= - \begin{bmatrix}
-     \Delta x & \Delta s & \Delta e & 0 & 0
+     \Delta x^T & \Delta s^T & \Delta e^T & 0 & 0
      \end{bmatrix}
 \begin{bmatrix}
 \nabla^2_{xx} \mathcal{L}(\xi, \sigma, \tilde{\lambda}, \tilde{\nu}, \mu, \eta) & 0 & 0 & J(c)(\xi)^T & J(g)(\xi)^T \\
@@ -390,8 +391,8 @@ J(g)(\xi) & I & I & 0 & -\frac{1}{\eta} I
 \Delta z
 \end{bmatrix} \\
 &= - \begin{bmatrix}
-     \Delta x & \Delta s & \Delta e
-     \end{bmatrix} 
+     \Delta x^T & \Delta s^T & \Delta e^T
+     \end{bmatrix}
 \begin{bmatrix}
 \nabla^2_{xx} \mathcal{L}(\xi, \sigma, \tilde{\lambda}, \tilde{\nu}, \tilde{\mu}, \eta) & 0 & 0 \\
 0 & \Sigma^{-1} \Pi \\
@@ -403,7 +404,7 @@ J(g)(\xi) & I & I & 0 & -\frac{1}{\eta} I
 \Delta e
 \end{bmatrix} -
 \begin{bmatrix}
-\Delta x & \Delta s & \Delta e
+\Delta x^T & \Delta s^T & \Delta e^T
 \end{bmatrix}
 \begin{bmatrix}
 J(c)(\xi)^T & J(g)(\xi)^T \\
@@ -415,8 +416,8 @@ J(c)(\xi)^T & J(g)(\xi)^T \\
 \Delta z
 \end{bmatrix} \\
 &= - \begin{bmatrix}
-     \Delta x & \Delta s & \Delta e
-     \end{bmatrix} 
+     \Delta x^T & \Delta s^T & \Delta e^T
+     \end{bmatrix}
 \begin{bmatrix}
 \nabla^2_{xx} \mathcal{L}(\xi, \sigma, \tilde{\lambda}, \tilde{\nu}, \tilde{\mu}, \eta) & 0 & 0 \\
 0 & \Sigma^{-1} \Pi \\
@@ -436,8 +437,8 @@ J(g)(\xi) \Delta x + \Delta s + \Delta e
 \eta (J(g)(\xi) \Delta x + \Delta s + \Delta e)
 \end{bmatrix} \\
 &= - \begin{bmatrix}
-     \Delta x & \Delta s & \Delta e
-     \end{bmatrix} 
+     \Delta x^T & \Delta s^T & \Delta e^T
+     \end{bmatrix}
 \begin{bmatrix}
 \nabla^2_{xx} \mathcal{L}(\xi, \sigma, \tilde{\lambda}, \tilde{\nu}, \tilde{\mu}, \eta) & 0 & 0 \\
 0 & \Sigma^{-1} \Pi \\
@@ -497,7 +498,7 @@ $$
 
 ### Solving the linear system
 
-In this section, we show that 
+In this section, we show that
 
 $$ \begin{bmatrix}
    \nabla^2_{xx} \mathcal{L} & 0 & 0 & J(c)^T & J(g)^T \\
@@ -513,17 +514,17 @@ with any symmetric positive definite approximation.
 To prove this, letting
 
 $$
-\begin{align*} 
+\begin{align*}
 W &= \Pi^{-1} \Sigma \\
 V &= (W + (\frac{1}{\eta} + \frac{1}{\rho}) I)^{-1} \\
 U &= (\nabla^2_{xx} \mathcal{L} + \eta J(c)^T J(c) + \eta J(g)^T V J(g))^{-1} ,
-\end{align*} 
+\end{align*}
 $$
 
 note that
 
 $$
-\begin{align*} 
+\begin{align*}
 & \begin{bmatrix}
   \nabla^2_{xx} \mathcal{L} & 0 & 0 & J(c)^T & J(g)^T \\
   0 & \Sigma^{-1} \Pi & 0 & 0 & I \\
@@ -599,7 +600,7 @@ $$
 \Leftrightarrow
 & \Delta x =
    -U (r_x + \eta J(c)^T r_y + J(g)^T V (r_z - \frac{1}{\rho} r_e - W r_s))
-\end{align*} 
+\end{align*}
 $$
 
 where we eliminated $\Delta s, \Delta y, \Delta z$ respectively via
@@ -610,7 +611,7 @@ $$
 \Delta s &= -\Pi^{-1} \Sigma (\Delta z + r_s), \\
 \Delta y &= \eta (J(c) \Delta x + r_y), \\
 \Delta z &= V (J(g) \Delta x + r_z - \frac{1}{\rho} r_e - W r_s) .
-\end{align*} 
+\end{align*}
 $$
 
 Depending on the sparsity pattern of the matrices involved,
