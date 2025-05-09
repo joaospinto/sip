@@ -27,7 +27,7 @@ struct Settings {
   // The number of iterative refinement steps.
   int num_iterative_refinement_steps = 0;
   // The maximum allowed violation of the KKT system.
-  double max_aug_kkt_violation = 1e-6;
+  double max_kkt_violation = 1e-6;
   // The maximum allowed merit function slope.
   double max_merit_slope = 1e-8;
   // A parameter of the fraction-to-the-boundary rule.
@@ -297,10 +297,6 @@ struct MiscellaneousWorkspace {
 struct ComputeSearchDirectionWorkspace {
   // Stores S^{-1} Z
   double *w;
-  // Stores y + eta * c(x).
-  double *y_tilde;
-  // Stores z + eta * (g(x) + s + e).
-  double *z_tilde;
   // Stores the data of the L^T matrix in the L D L^T decomposition.
   double *LT_data;
   // Stores the data of the D matrix in the L D L^T decomposition.
@@ -315,18 +311,17 @@ struct ComputeSearchDirectionWorkspace {
   double *residual;
 
   // To dynamically allocate the required memory.
-  void reserve(int s_dim, int y_dim, int kkt_dim, int full_dim, int L_nnz);
+  void reserve(int s_dim, int kkt_dim, int full_dim, int L_nnz);
   void free();
 
   // For using pre-allocated (possibly statically allocated) memory.
-  auto mem_assign(int s_dim, int y_dim, int kkt_dim, int full_dim, int L_nnz,
+  auto mem_assign(int s_dim, int kkt_dim, int full_dim, int L_nnz,
                   unsigned char *mem_ptr) -> int;
 
   // For knowing how much memory to pre-allocate.
-  static constexpr auto num_bytes(int s_dim, int y_dim, int kkt_dim,
-                                  int full_dim, int L_nnz) -> int {
-    return (2 * s_dim + y_dim + L_nnz + 4 * kkt_dim + full_dim) *
-           sizeof(double);
+  static constexpr auto num_bytes(int s_dim, int kkt_dim, int full_dim,
+                                  int L_nnz) -> int {
+    return (s_dim + L_nnz + 4 * kkt_dim + full_dim) * sizeof(double);
   }
 };
 
@@ -368,8 +363,8 @@ struct Workspace {
     const int full_dim = kkt_dim + s_dim + s_dim;
     return 4 * VariablesWorkspace::num_bytes(x_dim, s_dim, y_dim) +
            MiscellaneousWorkspace::num_bytes(s_dim) +
-           ComputeSearchDirectionWorkspace::num_bytes(s_dim, y_dim, kkt_dim,
-                                                      full_dim, L_nnz);
+           ComputeSearchDirectionWorkspace::num_bytes(s_dim, kkt_dim, full_dim,
+                                                      L_nnz);
   }
 };
 

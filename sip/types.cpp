@@ -161,11 +161,9 @@ auto MiscellaneousWorkspace::mem_assign(int s_dim, unsigned char *mem_ptr)
   return cum_size;
 }
 
-void ComputeSearchDirectionWorkspace::reserve(int s_dim, int y_dim, int kkt_dim,
+void ComputeSearchDirectionWorkspace::reserve(int s_dim, int kkt_dim,
                                               int full_dim, int L_nnz) {
   w = new double[s_dim];
-  y_tilde = new double[y_dim];
-  z_tilde = new double[s_dim];
   LT_data = new double[L_nnz];
   D_diag = new double[kkt_dim];
   rhs_block_3x3 = new double[kkt_dim];
@@ -176,8 +174,6 @@ void ComputeSearchDirectionWorkspace::reserve(int s_dim, int y_dim, int kkt_dim,
 
 void ComputeSearchDirectionWorkspace::free() {
   delete[] w;
-  delete[] y_tilde;
-  delete[] z_tilde;
   delete[] LT_data;
   delete[] D_diag;
   delete[] rhs_block_3x3;
@@ -186,18 +182,13 @@ void ComputeSearchDirectionWorkspace::free() {
   delete[] residual;
 }
 
-auto ComputeSearchDirectionWorkspace::mem_assign(int s_dim, int y_dim,
-                                                 int kkt_dim, int full_dim,
-                                                 int L_nnz,
+auto ComputeSearchDirectionWorkspace::mem_assign(int s_dim, int kkt_dim,
+                                                 int full_dim, int L_nnz,
                                                  unsigned char *mem_ptr)
     -> int {
   int cum_size = 0;
 
   w = reinterpret_cast<decltype(w)>(mem_ptr + cum_size);
-  cum_size += s_dim * sizeof(double);
-  y_tilde = reinterpret_cast<decltype(y_tilde)>(mem_ptr + cum_size);
-  cum_size += y_dim * sizeof(double);
-  z_tilde = reinterpret_cast<decltype(z_tilde)>(mem_ptr + cum_size);
   cum_size += s_dim * sizeof(double);
   LT_data = reinterpret_cast<decltype(LT_data)>(mem_ptr + cum_size);
   cum_size += L_nnz * sizeof(double);
@@ -225,7 +216,7 @@ void Workspace::reserve(int x_dim, int s_dim, int y_dim, int L_nnz) {
   miscellaneous_workspace.reserve(s_dim);
   const int kkt_dim = x_dim + s_dim + y_dim;
   const int full_dim = kkt_dim + s_dim + s_dim;
-  csd_workspace.reserve(s_dim, y_dim, kkt_dim, full_dim, L_nnz);
+  csd_workspace.reserve(s_dim, kkt_dim, full_dim, L_nnz);
 }
 
 void Workspace::free() {
@@ -248,7 +239,7 @@ auto Workspace::mem_assign(int x_dim, int s_dim, int y_dim, int L_nnz,
   cum_size += miscellaneous_workspace.mem_assign(s_dim, mem_ptr + cum_size);
   const int kkt_dim = x_dim + s_dim + y_dim;
   const int full_dim = kkt_dim + s_dim + s_dim;
-  cum_size += csd_workspace.mem_assign(s_dim, y_dim, kkt_dim, full_dim, L_nnz,
+  cum_size += csd_workspace.mem_assign(s_dim, kkt_dim, full_dim, L_nnz,
                                        mem_ptr + cum_size);
 
   return cum_size;
