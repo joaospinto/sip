@@ -500,7 +500,7 @@ auto augmented_barrier_lagrangian_slope(
 
 auto compute_search_direction(const Input &input, const Settings &settings,
                               const double eta, const double mu,
-                              const double tau,
+                              const double psi, const double tau,
                               const double sq_constraint_violation_norm,
                               Workspace &workspace)
     -> std::tuple<const double *, const double *, const double *,
@@ -565,7 +565,7 @@ auto compute_search_direction(const Input &input, const Settings &settings,
     w[i] = s[i] / z[i];
   }
 
-  constexpr double r1 = 0.0;
+  const double r1 = psi;
   const double eta_inv = 1.0 / eta;
   const double r3p = settings.enable_elastics ? eta_inv + 1.0 / rho : eta_inv;
 
@@ -717,6 +717,9 @@ auto compute_search_direction(const Input &input, const Settings &settings,
     double *tmp_s = workspace.next_vars.s;
     std::fill_n(tmp_x, x_dim, 0.0);
     input.add_upper_symmetric_Hx_to_y(H_data, dx, tmp_x);
+    for (int i = 0; i < x_dim; ++i) {
+      tmp_x[i] += psi * dx[i];
+    }
     const double dxTHdx = dot(tmp_x, dx, x_dim);
     std::fill_n(tmp_y, y_dim, 0.0);
     input.add_Cx_to_y(C_data, dx, tmp_y);
@@ -940,6 +943,7 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
 
   double eta = settings.initial_penalty_parameter;
   double mu = settings.initial_mu;
+  double psi = settings.initial_regularization;
   const double tau = settings.tau;
 
   int total_ls_iterations = 0;
@@ -955,7 +959,7 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
 
     const auto [dx, ds, dy, dz, de, merit_slope, alpha_s_max, kkt_error,
                 max_constraint_violation, lin_sys_error] =
-        compute_search_direction(input, settings, eta, mu, tau,
+        compute_search_direction(input, settings, eta, mu, psi, tau,
                                  sq_constraint_violation_norm, workspace);
 
     const bool merit_slope_too_small = merit_slope > -settings.max_merit_slope;
@@ -1052,6 +1056,7 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
     }
 
     mu = std::max(mu * settings.mu_update_factor, settings.mu_min);
+    psi *= settings.regularization_decay_factor;
 
     if (constraint_violation_ratio >
         settings.min_acceptable_constraint_violation_ratio) {

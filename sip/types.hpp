@@ -32,6 +32,10 @@ struct Settings {
   double max_suboptimal_constraint_violation = 1e-2;
   // The maximum allowed merit function slope.
   double max_merit_slope = 1e-12;
+  // The initial x-regularizatino to be applied on the LHS.
+  double initial_regularization = 1e-3;
+  // The multiplicative decay of the x-regularization coefficient.
+  double regularization_decay_factor = 0.5;
   // A parameter of the fraction-to-the-boundary rule.
   double tau = 0.995;
   // Determines whether we start with alpha=alpha_s_max or alpha=1.
