@@ -961,13 +961,9 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
     const bool merit_slope_too_small = merit_slope > -settings.max_merit_slope;
 
     const bool succeeded =
-        (kkt_error < settings.max_kkt_violation ||
-         (merit_slope_too_small &&
-          max_constraint_violation < settings.max_kkt_violation));
-
-    const bool locally_infeasible =
-        merit_slope_too_small &&
-        max_constraint_violation > settings.max_kkt_violation;
+        kkt_error < settings.max_kkt_violation ||
+        (merit_slope_too_small &&
+         max_constraint_violation < settings.max_kkt_violation);
 
     const bool hit_ls_iteration_limit =
         total_ls_iterations >= settings.max_ls_iterations;
@@ -988,10 +984,14 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
                  eta, tau, kkt_error);
     }
 
-    if (succeeded || locally_infeasible) {
+    if (succeeded || merit_slope_too_small) {
+      const bool suboptimal = max_constraint_violation <
+                              settings.max_suboptimal_constraint_violation;
+
       return Output{
-          .exit_status =
-              succeeded ? Status::SOLVED : Status::LOCALLY_INFEASIBLE,
+          .exit_status = succeeded ? Status::SOLVED
+                                   : (suboptimal ? Status::SUBOPTIMAL
+                                                 : Status::LOCALLY_INFEASIBLE),
           .num_iterations = iteration,
           .max_primal_violation =
               inf_norm(workspace.model_callback_output->c, y_dim),

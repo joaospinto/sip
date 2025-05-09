@@ -7,12 +7,13 @@ namespace sip {
 
 enum class Status {
   SOLVED = 0,
-  LOCALLY_INFEASIBLE = 1,
-  ITERATION_LIMIT = 2,
-  LINE_SEARCH_ITERATION_LIMIT = 3,
-  LINE_SEARCH_FAILURE = 4,
-  TIMEOUT = 5,
-  FAILED_CHECK = 6,
+  SUBOPTIMAL = 1,
+  LOCALLY_INFEASIBLE = 2,
+  ITERATION_LIMIT = 3,
+  LINE_SEARCH_ITERATION_LIMIT = 4,
+  LINE_SEARCH_FAILURE = 5,
+  TIMEOUT = 6,
+  FAILED_CHECK = 7,
 };
 
 // For nicer googletest outputs.
@@ -24,9 +25,11 @@ struct Settings {
   // The maximum cumulative number of line search iterations.
   int max_ls_iterations = 500;
   // The number of iterative refinement steps.
-  int num_iterative_refinement_steps = 0;
+  int num_iterative_refinement_steps = 1;
   // The maximum allowed violation of the KKT system.
   double max_kkt_violation = 1e-6;
+  // The maximum allowed constraint violation to declare suboptimality.
+  double max_suboptimal_constraint_violation = 1e-2;
   // The maximum allowed merit function slope.
   double max_merit_slope = 1e-12;
   // A parameter of the fraction-to-the-boundary rule.
@@ -46,7 +49,7 @@ struct Settings {
   // By what factor to increase eta.
   double penalty_parameter_increase_factor = 10.0;
   // By what factor to decrease eta.
-  double penalty_parameter_decrease_factor = 0.5;
+  double penalty_parameter_decrease_factor = 1.0;
   // The maximum allowed penalty parameter in the AL merit function.
   double max_penalty_parameter = 1e9;
   // Determines when we accept a line search step, by the merit decrease and
