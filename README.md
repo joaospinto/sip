@@ -23,10 +23,11 @@ Some examples with code can be found in the
 No dynamic memory allocation is done inside of the solver, as long as logging is off.
 
 
-## Basic approach
+## Core Algorithm
 
-SIP implements a combination of the Primal Infeasible Interior Point and
-Augmented Lagrangian methods.
+SIP implements the Augmented Barrier-Lagrangian method, which can be seen as
+a combination of the Primal Infeasible Interior Point and
+the Augmented Lagrangian methods (as shown below).
 
 We represent the barrier parameter by $\mu$ and the Augmented Lagrangian
 penalty parameter by $\eta$.
@@ -179,134 +180,6 @@ $$
 = \nabla^2_{xx} \mathcal{L}(\xi, \sigma, \tilde{\lambda}, \tilde{\nu}, \mu, \eta) +
 \eta (J(c)(\xi)^T J(c)(\xi) + J(g)(\xi)^T J(g)(\xi)).
 $$
-
-Using $D( \cdot ; \cdot )$ to represent the directional derivative operator, note that
-
-$$
-\begin{align*} 
-D(\mathcal{A}(x, s, e; \lambda, \nu, \mu, \eta); (\Delta x, \Delta s, \Delta e)) \mid_{(\xi, \sigma, \epsilon)} &=
-\begin{bmatrix}
-\Delta x & \Delta s & \Delta e
-\end{bmatrix}
-\begin{bmatrix}
-\nabla_x \mathcal{A}(\xi, \sigma, \epsilon, \lambda, \nu, \mu) \\
-\nabla_s \mathcal{A}(\xi, \sigma, \epsilon, \lambda, \nu, \mu) \\
-\nabla_e \mathcal{A}(\xi, \sigma, \epsilon, \lambda, \nu, \mu)
-\end{bmatrix} \\
-&= \begin{bmatrix}
-   \Delta x & \Delta s & \Delta e & 0 & 0
-   \end{bmatrix}
-\begin{bmatrix}
-\nabla_x \mathcal{A}(\xi, \sigma, \epsilon, \lambda, \nu, \mu) \\
-\nabla_s \mathcal{A}(\xi, \sigma, \epsilon, \lambda, \nu, \mu) \\
-\nabla_e \mathcal{A}(\xi, \sigma, \epsilon, \lambda, \nu, \mu) \\
-0 \\
-0
-\end{bmatrix} \\
-&= - \begin{bmatrix}
-     \Delta x & \Delta s & \Delta e & 0 & 0
-     \end{bmatrix}
-\begin{bmatrix}
-\nabla^2_{xx} \mathcal{L}(\xi, \sigma, \tilde{\lambda}, \tilde{\nu}, \mu, \eta) & 0 & 0 & J(c)(\xi)^T & J(g)(\xi)^T \\
-0 & \Sigma^{-1} \Pi & 0 & 0 & I \\
-0 & 0 & \rho I & 0 & I \\
-J(c)(\xi) & 0 & 0 & -\frac{1}{\eta} I & 0 \\
-J(g)(\xi) & I & I & 0 & -\frac{1}{\eta} I
-\end{bmatrix}
-\begin{bmatrix}
-\Delta x \\
-\Delta s \\
-\Delta e \\
-\Delta y \\
-\Delta z
-\end{bmatrix} \\
-&= - \begin{bmatrix}
-     \Delta x & \Delta s & \Delta e
-     \end{bmatrix} 
-\begin{bmatrix}
-\nabla^2_{xx} \mathcal{L}(\xi, \sigma, \tilde{\lambda}, \tilde{\nu}, \tilde{\mu}, \eta) & 0 & 0 \\
-0 & \Sigma^{-1} \Pi \\
-0 & 0 & \rho I
-\end{bmatrix}
-\begin{bmatrix}
-\Delta x \\
-\Delta s \\
-\Delta e
-\end{bmatrix} -
-\begin{bmatrix}
-\Delta x & \Delta s & \Delta e
-\end{bmatrix}
-\begin{bmatrix}
-J(c)(\xi)^T & J(g)(\xi)^T \\
-0 & I \\
-0 & I
-\end{bmatrix}
-\begin{bmatrix}
-\Delta y \\
-\Delta z
-\end{bmatrix} \\
-&= - \begin{bmatrix}
-     \Delta x & \Delta s & \Delta e
-     \end{bmatrix} 
-\begin{bmatrix}
-\nabla^2_{xx} \mathcal{L}(\xi, \sigma, \tilde{\lambda}, \tilde{\nu}, \tilde{\mu}, \eta) & 0 & 0 \\
-0 & \Sigma^{-1} \Pi \\
-0 & 0 & \rho I
-\end{bmatrix}
-\begin{bmatrix}
-\Delta x \\
-\Delta s \\
-\Delta e
-\end{bmatrix} -
-\begin{bmatrix}
-J(c)(\xi) \Delta x \\
-J(g)(\xi) \Delta x + \Delta s + \Delta e
-\end{bmatrix}^T
-\begin{bmatrix}
-\eta (J(c)(\xi) \Delta x) \\
-\eta (J(g)(\xi) \Delta x + \Delta s + \Delta e)
-\end{bmatrix} \\
-&= - \begin{bmatrix}
-     \Delta x & \Delta s & \Delta e
-     \end{bmatrix} 
-\begin{bmatrix}
-\nabla^2_{xx} \mathcal{L}(\xi, \sigma, \tilde{\lambda}, \tilde{\nu}, \tilde{\mu}, \eta) & 0 & 0 \\
-0 & \Sigma^{-1} \Pi \\
-0 & 0 & \rho I
-\end{bmatrix}
-\begin{bmatrix}
-\Delta x \\
-\Delta s \\
-\Delta e
-\end{bmatrix} -
-\eta (\lVert J(c)(\xi) \Delta x \rVert^2 + \lVert J(g)(\xi) \Delta x + \Delta s + \Delta e \rVert^2) < 0,
-\end{align*}
-$$
-
-assuming that $\nabla^2_{xx} \mathcal{L}(\xi, \sigma, \tilde{\lambda}, \tilde{\nu}, \mu, \eta)$
-is replaced with any symmetric positive definite approximation, as $\sigma, \nu, \rho > 0$,
-unless $(\Delta x, \Delta s, \Delta e) = (0, 0, 0)$, in which case we have converged.
-
-This means that $(\Delta x, \Delta s, \Delta e)$ is always a descent direction
-of $\mathcal{A}(x, s, e; \lambda, \nu, \mu, \eta)$.
-Thus, the Augmented Barrier-Lagrangian $\mathcal{A}(x, s, e; \lambda, \nu, \mu, \eta)$
-can be used as the merit function for a line search over the primal variables $(x, s, e)$.
-
-Once a primal line search step size $\alpha$ is found, the candidate solution
-is updated via
-
-$$
-\begin{align*}
-\xi &\leftarrow \xi + \alpha \Delta x \\
-\sigma &\leftarrow \max(\sigma + \alpha \Delta s, (1 - \tau) \sigma) \\
-\epsilon &\leftarrow \epsilon + \alpha \Delta e \\
-\lambda &\leftarrow \tilde{\lambda} + \alpha \Delta y \\
-\nu &\leftarrow \max(\tilde{\nu} + \alpha \Delta z, (1 - \tau) \nu) ,
-\end{align*}
-$$
-
-where $\tau$ is the fraction-to-the-boundary parameter, which is applied to
-prevent $\sigma, \nu$ from approaching $0$ too quickly.
 
 ### Linear system reformulation
 
@@ -471,6 +344,154 @@ g(\xi) + \sigma + \epsilon
 c(\xi)^T \Delta y +
 (g(\xi) + \sigma + \epsilon)^T \Delta z -
 \eta \left( \lVert c(\xi) \rVert^2 + \lVert g(\xi) + \sigma + \epsilon \rVert^2 \right) .
+\end{align*}
+$$
+
+### Merit function and line search
+
+Using $D( \cdot ; \cdot )$ to represent the directional derivative operator, note that
+
+$$
+\begin{align*} 
+D(\mathcal{A}(x, s, e; \lambda, \nu, \mu, \eta); (\Delta x, \Delta s, \Delta e)) \mid_{(\xi, \sigma, \epsilon)} &=
+\begin{bmatrix}
+\Delta x & \Delta s & \Delta e
+\end{bmatrix}
+\begin{bmatrix}
+\nabla_x \mathcal{A}(\xi, \sigma, \epsilon, \lambda, \nu, \mu) \\
+\nabla_s \mathcal{A}(\xi, \sigma, \epsilon, \lambda, \nu, \mu) \\
+\nabla_e \mathcal{A}(\xi, \sigma, \epsilon, \lambda, \nu, \mu)
+\end{bmatrix} \\
+&= \begin{bmatrix}
+   \Delta x & \Delta s & \Delta e & 0 & 0
+   \end{bmatrix}
+\begin{bmatrix}
+\nabla_x \mathcal{A}(\xi, \sigma, \epsilon, \lambda, \nu, \mu) \\
+\nabla_s \mathcal{A}(\xi, \sigma, \epsilon, \lambda, \nu, \mu) \\
+\nabla_e \mathcal{A}(\xi, \sigma, \epsilon, \lambda, \nu, \mu) \\
+0 \\
+0
+\end{bmatrix} \\
+&= - \begin{bmatrix}
+     \Delta x & \Delta s & \Delta e & 0 & 0
+     \end{bmatrix}
+\begin{bmatrix}
+\nabla^2_{xx} \mathcal{L}(\xi, \sigma, \tilde{\lambda}, \tilde{\nu}, \mu, \eta) & 0 & 0 & J(c)(\xi)^T & J(g)(\xi)^T \\
+0 & \Sigma^{-1} \Pi & 0 & 0 & I \\
+0 & 0 & \rho I & 0 & I \\
+J(c)(\xi) & 0 & 0 & -\frac{1}{\eta} I & 0 \\
+J(g)(\xi) & I & I & 0 & -\frac{1}{\eta} I
+\end{bmatrix}
+\begin{bmatrix}
+\Delta x \\
+\Delta s \\
+\Delta e \\
+\Delta y \\
+\Delta z
+\end{bmatrix} \\
+&= - \begin{bmatrix}
+     \Delta x & \Delta s & \Delta e
+     \end{bmatrix} 
+\begin{bmatrix}
+\nabla^2_{xx} \mathcal{L}(\xi, \sigma, \tilde{\lambda}, \tilde{\nu}, \tilde{\mu}, \eta) & 0 & 0 \\
+0 & \Sigma^{-1} \Pi \\
+0 & 0 & \rho I
+\end{bmatrix}
+\begin{bmatrix}
+\Delta x \\
+\Delta s \\
+\Delta e
+\end{bmatrix} -
+\begin{bmatrix}
+\Delta x & \Delta s & \Delta e
+\end{bmatrix}
+\begin{bmatrix}
+J(c)(\xi)^T & J(g)(\xi)^T \\
+0 & I \\
+0 & I
+\end{bmatrix}
+\begin{bmatrix}
+\Delta y \\
+\Delta z
+\end{bmatrix} \\
+&= - \begin{bmatrix}
+     \Delta x & \Delta s & \Delta e
+     \end{bmatrix} 
+\begin{bmatrix}
+\nabla^2_{xx} \mathcal{L}(\xi, \sigma, \tilde{\lambda}, \tilde{\nu}, \tilde{\mu}, \eta) & 0 & 0 \\
+0 & \Sigma^{-1} \Pi \\
+0 & 0 & \rho I
+\end{bmatrix}
+\begin{bmatrix}
+\Delta x \\
+\Delta s \\
+\Delta e
+\end{bmatrix} -
+\begin{bmatrix}
+J(c)(\xi) \Delta x \\
+J(g)(\xi) \Delta x + \Delta s + \Delta e
+\end{bmatrix}^T
+\begin{bmatrix}
+\eta (J(c)(\xi) \Delta x) \\
+\eta (J(g)(\xi) \Delta x + \Delta s + \Delta e)
+\end{bmatrix} \\
+&= - \begin{bmatrix}
+     \Delta x & \Delta s & \Delta e
+     \end{bmatrix} 
+\begin{bmatrix}
+\nabla^2_{xx} \mathcal{L}(\xi, \sigma, \tilde{\lambda}, \tilde{\nu}, \tilde{\mu}, \eta) & 0 & 0 \\
+0 & \Sigma^{-1} \Pi \\
+0 & 0 & \rho I
+\end{bmatrix}
+\begin{bmatrix}
+\Delta x \\
+\Delta s \\
+\Delta e
+\end{bmatrix} -
+\eta (\lVert J(c)(\xi) \Delta x \rVert^2 + \lVert J(g)(\xi) \Delta x + \Delta s + \Delta e \rVert^2) < 0,
+\end{align*}
+$$
+
+assuming that $\nabla^2_{xx} \mathcal{L}(\xi, \sigma, \tilde{\lambda}, \tilde{\nu}, \mu, \eta)$
+is replaced with any symmetric positive definite approximation, as $\sigma, \nu, \rho > 0$,
+unless $(\Delta x, \Delta s, \Delta e) = (0, 0, 0)$, in which case we have converged.
+
+This means that $(\Delta x, \Delta s, \Delta e)$ is always a descent direction
+of $\mathcal{A}(x, s, e; \lambda, \nu, \mu, \eta)$.
+Thus, the Augmented Barrier-Lagrangian $\mathcal{A}(x, s, e; \lambda, \nu, \mu, \eta)$
+can be used as the merit function for a line search over the primal variables $(x, s, e)$.
+
+Once a primal line search step size $\alpha$ is found (by checking the Armijo condition
+while backtracking from $\alpha = 1$), the primal candidate solution is updated via
+
+$$
+\begin{align*}
+\xi &\leftarrow \xi + \alpha \Delta x \\
+\sigma &\leftarrow \max(\sigma + \alpha \Delta s, (1 - \tau) \sigma) \\
+\epsilon &\leftarrow \epsilon + \alpha \Delta e \\
+\end{align*}
+$$
+
+where $\tau$ is the fraction-to-the-boundary parameter, which is applied to
+prevent $\sigma, \nu$ from approaching $0$ too quickly.
+
+### Dual variable updates
+
+The dual variable updates are scaled by $\beta_y, \beta_z$ to ensure that the merit function
+decrease provided by the primal variable updates is not regressed beyond a constant
+multiplicative factor.
+
+Note that the only terms of $\\mathcal{A}(\xi, \sigma, \epsilon, \lambda, \nu)$ that depend
+on $\lambda, \nu$  are $\lambda^T c(\xi)$ and $\nu^T (g(\xi) + \sigma + \epsilon)$.
+
+In particular, when these inner products are negative, $\beta_y = \beta_z = 1$.
+
+A fraction-to-the-boundary rule is applied to prevent $\nu$ from approaching $0$ too quickly.
+
+$$
+\begin{align*}
+\lambda &\leftarrow \lambda + \beta_y \Delta y \prime \\
+\nu &\leftarrow \max(\nu + \beta_z \Delta z \prime, (1 - \tau) \nu) ,
 \end{align*}
 $$
 
