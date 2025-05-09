@@ -22,8 +22,6 @@ struct Settings {
   int max_iterations = 100;
   // The maximum cumulative number of line search iterations.
   int max_ls_iterations = 500;
-  // The minimum number of iterations before we can declare convergence.
-  int min_iterations_for_convergence = 0;
   // The number of iterative refinement steps.
   int num_iterative_refinement_steps = 0;
   // The maximum allowed violation of the KKT system.

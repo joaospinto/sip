@@ -956,7 +956,6 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
                                  sq_constraint_violation_norm, workspace);
 
     const bool succeeded =
-        iteration >= settings.min_iterations_for_convergence &&
         (kkt_error < settings.max_kkt_violation ||
          std::fabs(merit_slope) < settings.max_merit_slope);
 
