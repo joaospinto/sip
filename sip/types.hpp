@@ -7,11 +7,12 @@ namespace sip {
 
 enum class Status {
   SOLVED = 0,
-  ITERATION_LIMIT = 1,
-  LINE_SEARCH_ITERATION_LIMIT = 2,
-  LINE_SEARCH_FAILURE = 3,
-  TIMEOUT = 4,
-  FAILED_CHECK = 5,
+  LOCALLY_INFEASIBLE = 1,
+  ITERATION_LIMIT = 2,
+  LINE_SEARCH_ITERATION_LIMIT = 3,
+  LINE_SEARCH_FAILURE = 4,
+  TIMEOUT = 5,
+  FAILED_CHECK = 6,
 };
 
 // For nicer googletest outputs.
@@ -27,7 +28,7 @@ struct Settings {
   // The maximum allowed violation of the KKT system.
   double max_kkt_violation = 1e-6;
   // The maximum allowed merit function slope.
-  double max_merit_slope = 1e-8;
+  double max_merit_slope = 1e-12;
   // A parameter of the fraction-to-the-boundary rule.
   double tau = 0.995;
   // Determines whether we start with alpha=alpha_s_max or alpha=1.

@@ -12,6 +12,9 @@ auto operator<<(std::ostream &os, Status const &status) -> std::ostream & {
   case Status::SOLVED:
     os << "SOLVED";
     break;
+  case Status::LOCALLY_INFEASIBLE:
+    os << "LOCALLY_INFEASIBLE";
+    break;
   case Status::ITERATION_LIMIT:
     os << "ITERATION_LIMIT";
     break;

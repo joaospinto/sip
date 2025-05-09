@@ -505,7 +505,7 @@ auto compute_search_direction(const Input &input, const Settings &settings,
                               Workspace &workspace)
     -> std::tuple<const double *, const double *, const double *,
                   const double *, const double *, double, double, double,
-                  double> {
+                  double, double> {
   const double rho = settings.enable_elastics
                          ? settings.elastic_var_cost_coeff
                          : std::numeric_limits<double>::signaling_NaN();
@@ -516,7 +516,8 @@ auto compute_search_direction(const Input &input, const Settings &settings,
   const int y_dim = get_y_dim(mco.jacobian_c);
   const int dim_3x3 = x_dim + s_dim + y_dim;
 
-  double kkt_error;
+  double max_constraint_violation = 0.0;
+  double kkt_error = 0.0;
   double lin_sys_error = std::numeric_limits<double>::signaling_NaN();
 
   const double *s = workspace.vars.s;
@@ -648,19 +649,21 @@ auto compute_search_direction(const Input &input, const Settings &settings,
       augmented_barrier_lagrangian_slope(settings, workspace, dx, ds, de, dy,
                                          dz, eta, sq_constraint_violation_norm);
 
-  kkt_error = 0.0;
+  for (int i = 0; i < y_dim; ++i) {
+    max_constraint_violation = std::max(kkt_error, std::fabs(c[i]));
+  }
+
+  for (int i = 0; i < s_dim; ++i) {
+    max_constraint_violation = std::max(
+        max_constraint_violation,
+        std::fabs(workspace.miscellaneous_workspace.g_plus_s_plus_e[i]));
+  }
 
   for (int i = 0; i < x_dim; ++i) {
     kkt_error = std::max(kkt_error, std::fabs(rx[i]));
   }
-  for (int i = 0; i < y_dim; ++i) {
-    kkt_error = std::max(kkt_error, std::fabs(c[i]));
-  }
-  for (int i = 0; i < s_dim; ++i) {
-    kkt_error = std::max(
-        kkt_error,
-        std::fabs(workspace.miscellaneous_workspace.g_plus_s_plus_e[i]));
-  }
+
+  kkt_error = std::max(kkt_error, max_constraint_violation);
 
   const auto alpha_s_max =
       get_alpha_s_max(s_dim, tau, workspace.vars.s, workspace.delta_vars.s);
@@ -756,7 +759,7 @@ auto compute_search_direction(const Input &input, const Settings &settings,
   }
 
   return std::make_tuple(dx, ds, dy, dz, de, ms, alpha_s_max, kkt_error,
-                         lin_sys_error);
+                         max_constraint_violation, lin_sys_error);
 }
 
 auto do_line_search(const Input &input, const Settings &settings,
@@ -951,13 +954,21 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
     const double sq_constraint_violation_norm = ctc + gsetgse;
 
     const auto [dx, ds, dy, dz, de, merit_slope, alpha_s_max, kkt_error,
-                lin_sys_error] =
+                max_constraint_violation, lin_sys_error] =
         compute_search_direction(input, settings, eta, mu, tau,
                                  sq_constraint_violation_norm, workspace);
 
+    const bool merit_slope_too_small =
+        std::fabs(merit_slope) < settings.max_merit_slope;
+
     const bool succeeded =
         (kkt_error < settings.max_kkt_violation ||
-         std::fabs(merit_slope) < settings.max_merit_slope);
+         (merit_slope_too_small &&
+          max_constraint_violation < settings.max_kkt_violation));
+
+    const bool locally_infeasible =
+        merit_slope_too_small &&
+        max_constraint_violation > settings.max_kkt_violation;
 
     const bool hit_ls_iteration_limit =
         total_ls_iterations >= settings.max_ls_iterations;
@@ -978,9 +989,10 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
                  eta, tau, kkt_error);
     }
 
-    if (succeeded) {
+    if (succeeded || locally_infeasible) {
       return Output{
-          .exit_status = Status::SOLVED,
+          .exit_status =
+              succeeded ? Status::SOLVED : Status::LOCALLY_INFEASIBLE,
           .num_iterations = iteration,
           .max_primal_violation =
               inf_norm(workspace.model_callback_output->c, y_dim),
