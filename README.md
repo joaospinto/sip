@@ -308,6 +308,172 @@ $$
 where $\tau$ is the fraction-to-the-boundary parameter, which is applied to
 prevent $\sigma, \nu$ from approaching $0$ too quickly.
 
+### Linear system reformulation
+
+Letting $\hat{\lambda} = \tilde{\lambda} + \Delta y, \hat{\nu} = \tilde{\nu} + \Delta z$,
+we define $\Delta y \prime = \hat{\lambda} - \lambda$ and
+$\Delta z \prime = \hat{\nu} - \nu$. Then
+
+$$
+\begin{align*}
+\Delta y \prime &= \hat{\lambda} - \lambda
+= (\hat{\lambda} - \tilde{\lambda}) + (\tilde{\lambda} - \lambda)
+= \Delta y + \eta c(\xi) \\
+\Delta z \prime &= \hat{\nu} - \nu
+= (\hat{\nu} - \tilde{\nu}) + (\tilde{\nu} - \nu)
+= \Delta z + \eta (g(\xi) + \sigma + \epsilon) .
+\end{align*}
+$$
+
+We can now reformulate the linear system above in terms of $(\Delta y \prime, \Delta z \prime)$
+instead of $(\Delta y, \Delta z)$:
+
+$$
+\begin{align*}
+& \begin{bmatrix}
+  \nabla^2_{xx} \mathcal{L}(\xi, \sigma, \tilde{\lambda}, \tilde{\nu}, \mu, \eta) & 0 & 0 & J(c)(\xi)^T & J(g)(\xi)^T \\
+  0 & \Sigma^{-1} \Pi & 0 & 0 & I \\
+  0 & 0 & \rho I & 0 & I \\
+  J(c)(\xi) & 0 & 0 & -\frac{1}{\eta} I & 0 \\
+  J(g)(\xi) & I & I & 0 & -\frac{1}{\eta} I
+  \end{bmatrix}
+\begin{bmatrix}
+\Delta x \\
+\Delta s \\
+\Delta e \\
+\Delta y \\
+\Delta z
+\end{bmatrix}
+= - \begin{bmatrix}
+    \nabla_x \mathcal{f}(\xi) + J(c)(\xi)^T \tilde{\lambda} + J(g)(\xi)^T \tilde{\nu} \\
+    \tilde{\nu} - \mu \Sigma^{-1} \mathbb{1} \\
+    \rho e + \tilde{\nu} \\
+    0 \\
+    0
+    \end{bmatrix} \Leftrightarrow \\
+& \begin{bmatrix}
+  \nabla^2_{xx} \mathcal{L}(\xi, \sigma, \tilde{\lambda}, \tilde{\nu}, \mu, \eta) & 0 & 0 & J(c)(\xi)^T & J(g)(\xi)^T \\
+  0 & \Sigma^{-1} \Pi & 0 & 0 & I \\
+  0 & 0 & \rho I & 0 & I \\
+  J(c)(\xi) & 0 & 0 & -\frac{1}{\eta} I & 0 \\
+  J(g)(\xi) & I & I & 0 & -\frac{1}{\eta} I
+  \end{bmatrix}
+\begin{bmatrix}
+\Delta x \\
+\Delta s \\
+\Delta e \\
+\Delta y \prime \\
+\Delta z \prime
+\end{bmatrix}
+= - \begin{bmatrix}
+    \nabla_x \mathcal{f}(\xi) + J(c)(\xi)^T \lambda + J(g)(\xi)^T \nu \\
+    \nu - \mu \Sigma^{-1} \mathbb{1} \\
+    \rho e + \nu \\
+    c(\xi) \\
+    g(\xi) + \sigma + \epsilon
+    \end{bmatrix} \Leftrightarrow \\
+& \begin{bmatrix}
+  \nabla^2_{xx} \mathcal{L}(\xi, \sigma, \tilde{\lambda}, \tilde{\nu}, \mu, \eta) & 0 & 0 & J(c)(\xi)^T & J(g)(\xi)^T \\
+  0 & \Sigma^{-1} \Pi & 0 & 0 & I \\
+  0 & 0 & \rho I & 0 & I \\
+  J(c)(\xi) & 0 & 0 & -\frac{1}{\eta} I & 0 \\
+  J(g)(\xi) & I & I & 0 & -\frac{1}{\eta} I
+  \end{bmatrix}
+\begin{bmatrix}
+\Delta x \\
+\Delta s \\
+\Delta e \\
+\Delta y \prime \\
+\Delta z \prime
+\end{bmatrix}
+= - \nabla \mathcal{L}(\xi, \sigma, \epsilon, \lambda, \nu)
+\end{align*}
+$$
+
+This formulation has the advantage of being more numerically stable, due to having fewer dependencies on $\eta$.
+It also allows us to directly access the non-augmented Newton-KKT residual, making termination checking simpler.
+However, we still need to compute
+$D(\mathcal{A}(x, s, e; \lambda, \nu, \mu, \eta); (\Delta x, \Delta s, \Delta e)) \mid_{(\xi, \sigma, \epsilon)}$.
+This can be done efficiently (i.e. without incurring extra matrix-vector products) by noting that
+
+$$
+\begin{align*}
+& D(\mathcal{A}(x, s, e; \lambda, \nu, \mu, \eta); (\Delta x, \Delta s, \Delta e)) \mid_{(\xi, \sigma, \epsilon)}
+= \begin{bmatrix}
+\Delta x & \Delta s & \Delta e
+\end{bmatrix}
+\begin{bmatrix}
+\nabla_x \mathcal{A}(\xi, \sigma, \epsilon, \lambda, \nu, \mu) \\
+\nabla_s \mathcal{A}(\xi, \sigma, \epsilon, \lambda, \nu, \mu) \\
+\nabla_e \mathcal{A}(\xi, \sigma, \epsilon, \lambda, \nu, \mu)
+\end{bmatrix} \\
+= & \begin{bmatrix}
+\Delta x & \Delta s & \Delta e
+\end{bmatrix}
+\left(
+\begin{bmatrix}
+\nabla_x \mathcal{L}(\xi, \sigma, \epsilon, \lambda, \nu, \mu) \\
+\nabla_s \mathcal{L}(\xi, \sigma, \epsilon, \lambda, \nu, \mu) \\
+\nabla_e \mathcal{L}(\xi, \sigma, \epsilon, \lambda, \nu, \mu)
+\end{bmatrix} +
+\eta
+\begin{bmatrix}
+J(c)(\xi)^T c(\xi) + J(g)(\xi) (g(\xi) + \sigma + \epsilon) \\
+g(\xi) + \sigma + \epsilon \\
+g(\xi) + \sigma + \epsilon
+\end{bmatrix}
+\right) \\
+= & \begin{bmatrix}
+\Delta x & \Delta s & \Delta e
+\end{bmatrix}
+\left(
+\begin{bmatrix}
+\nabla_x \mathcal{L}(\xi, \sigma, \epsilon, \lambda, \nu, \mu) \\
+\nabla_s \mathcal{L}(\xi, \sigma, \epsilon, \lambda, \nu, \mu) \\
+\nabla_e \mathcal{L}(\xi, \sigma, \epsilon, \lambda, \nu, \mu)
+\end{bmatrix} +
+\eta
+\begin{bmatrix}
+0 \\
+g(\xi) + \sigma + \epsilon \\
+g(\xi) + \sigma + \epsilon
+\end{bmatrix}
+\right) +
+\eta c(\xi)^T J(c)(\xi) \Delta x +
+\eta (g(\xi) + \sigma + \epsilon)^T J(g)(\xi) \Delta x \\
+= & \begin{bmatrix}
+\Delta x & \Delta s & \Delta e
+\end{bmatrix}
+\left(
+\begin{bmatrix}
+\nabla_x \mathcal{L}(\xi, \sigma, \epsilon, \lambda, \nu, \mu) \\
+\nabla_s \mathcal{L}(\xi, \sigma, \epsilon, \lambda, \nu, \mu) \\
+\nabla_e \mathcal{L}(\xi, \sigma, \epsilon, \lambda, \nu, \mu)
+\end{bmatrix} +
+\eta
+\begin{bmatrix}
+0 \\
+g(\xi) + \sigma + \epsilon \\
+g(\xi) + \sigma + \epsilon
+\end{bmatrix}
+\right) +
+\eta c(\xi)^T \left( \frac{1}{\eta} \Delta y  - c(\xi) \right) +
+\eta \left( g(\xi) + \sigma + \epsilon \right)^T \left( \frac{1}{\eta} \Delta z -
+(g(\xi) + \sigma + \epsilon) - \Delta s - \Delta e \right) \\
+= & \begin{bmatrix}
+\Delta x & \Delta s & \Delta e
+\end{bmatrix}
+\begin{bmatrix}
+\nabla_x \mathcal{L}(\xi, \sigma, \epsilon, \lambda, \nu, \mu) \\
+\nabla_s \mathcal{L}(\xi, \sigma, \epsilon, \lambda, \nu, \mu) \\
+\nabla_e \mathcal{L}(\xi, \sigma, \epsilon, \lambda, \nu, \mu)
+\end{bmatrix} +
+c(\xi)^T \Delta y +
+(g(\xi) + \sigma + \epsilon)^T \Delta z -
+\eta \left( \lVert c(\xi) \rVert^2 + \lVert g(\xi) + \sigma + \epsilon \rVert^2 \right) .
+\end{align*}
+$$
+
 ### Solving the linear system
 
 In this section, we show that 
