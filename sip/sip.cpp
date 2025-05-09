@@ -159,7 +159,7 @@ void update_next_primal_vars(const Input &input, const Settings &settings,
 
 void update_next_dual_vars(const Input &input, const Settings &settings,
                            const double tau, Workspace &workspace,
-                           const double merit_delta, const double alpha) {
+                           const double merit_delta) {
   const int s_dim = get_s_dim(workspace.model_callback_output->jacobian_g);
   const int y_dim = get_y_dim(workspace.model_callback_output->jacobian_c);
 
@@ -168,8 +168,7 @@ void update_next_dual_vars(const Input &input, const Settings &settings,
                settings.min_allowed_merit_increase);
 
   for (int i = 0; i < y_dim; ++i) {
-    workspace.next_vars.y[i] =
-        workspace.vars.y[i] + alpha * workspace.delta_vars.y[i];
+    workspace.next_vars.y[i] = workspace.vars.y[i] + workspace.delta_vars.y[i];
   }
 
   const double original_y_merit =
@@ -180,7 +179,7 @@ void update_next_dual_vars(const Input &input, const Settings &settings,
 
   for (int i = 0; i < s_dim; ++i) {
     workspace.next_vars.z[i] =
-        std::max(workspace.vars.z[i] + alpha * workspace.delta_vars.z[i],
+        std::max(workspace.vars.z[i] + workspace.delta_vars.z[i],
                  (1.0 - tau) * workspace.vars.z[i]);
   }
 
@@ -837,7 +836,7 @@ auto do_line_search(const Input &input, const Settings &settings,
     alpha /= settings.line_search_factor;
   }
 
-  update_next_dual_vars(input, settings, tau, workspace, merit_delta, alpha);
+  update_next_dual_vars(input, settings, tau, workspace, merit_delta);
 
   return std::make_tuple(ls_succeeded, alpha, m0, constraint_violation_ratio);
 }
