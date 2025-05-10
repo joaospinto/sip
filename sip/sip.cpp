@@ -478,16 +478,16 @@ auto get_observed_merit_slope(const Input &input, const Settings &settings,
 auto augmented_barrier_lagrangian_slope(
     const Settings &settings, const Workspace &workspace, const double *dx,
     const double *ds, const double *de, const double *dy, const double *dz,
-    const double eta, const double sq_constraint_violation_norm)
+    const double eta, const double rho, const double psi,
+    const double sq_constraint_violation_norm)
     -> std::tuple<double, double, double, double> {
   const auto &mco = *workspace.model_callback_output;
   const int x_dim = mco.upper_hessian_lagrangian.rows;
   const int s_dim = get_s_dim(mco.jacobian_g);
   const int y_dim = get_y_dim(mco.jacobian_c);
   const double *gpspe = workspace.miscellaneous_workspace.g_plus_s_plus_e;
-  const double abl_slope = dot(workspace.nrhs.x, dx, x_dim) +
-                           dot(mco.c, dy, y_dim) + dot(gpspe, dz, s_dim) -
-                           eta * sq_constraint_violation_norm;
+  double abl_slope = dot(workspace.nrhs.x, dx, x_dim) + dot(mco.c, dy, y_dim) +
+                     dot(gpspe, dz, s_dim) - eta * sq_constraint_violation_norm;
   const double s_slope =
       dot(workspace.nrhs.s, ds, s_dim) + eta * dot(gpspe, ds, s_dim);
   const double e_slope =
@@ -495,6 +495,16 @@ auto augmented_barrier_lagrangian_slope(
           ? dot(workspace.nrhs.e, de, s_dim) + eta * dot(gpspe, de, s_dim)
           : 0.0;
   const double x_slope = abl_slope - s_slope - e_slope;
+
+  double bound = -psi * squared_norm(dx, x_dim);
+  if (settings.enable_elastics) {
+    bound -= rho * squared_norm(de, s_dim);
+  }
+  for (int i = 0; i < s_dim; ++i) {
+    bound -= ds[i] * ds[i] / workspace.csd_workspace.w[i];
+  }
+
+  abl_slope = std::min(abl_slope, bound);
   return std::make_tuple(x_slope, s_slope, e_slope, abl_slope);
 }
 
@@ -645,9 +655,9 @@ auto compute_search_direction(const Input &input, const Settings &settings,
     }
   }
 
-  const auto [ms_x, ms_s, ms_e, ms] =
-      augmented_barrier_lagrangian_slope(settings, workspace, dx, ds, de, dy,
-                                         dz, eta, sq_constraint_violation_norm);
+  const auto [ms_x, ms_s, ms_e, ms] = augmented_barrier_lagrangian_slope(
+      settings, workspace, dx, ds, de, dy, dz, eta, rho, psi,
+      sq_constraint_violation_norm);
 
   for (int i = 0; i < y_dim; ++i) {
     max_constraint_violation = std::max(kkt_error, std::fabs(c[i]));
