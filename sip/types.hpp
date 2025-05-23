@@ -194,7 +194,7 @@ struct Input {
   //       when passing in the callbacks below, possibly by declaring them
   //       as lambdas and wrapping them with std::cref.
 
-  // NOTE: the LDLT factor/solve callbacks should solve Kv = b, where:
+  // NOTE: the factor/solve callbacks should solve Kv = b, where:
   // 1. K = [ H + r1 I_x      C.T        G.T   ]
   //        [     C        -r2 * I_y      0    ]
   //        [     G            0       -r3 I_z ]
@@ -203,12 +203,12 @@ struct Input {
   // 4. C_data and G_data are expected to represent C and G in CSC order.
   // 5. r1, r2, r3 are non-negative regularization parameters;
 
-  using LDLTFactorCallback = std::function<void(
+  using FactorCallback = std::function<void(
       const double *H_data, const double *C_data, const double *G_data,
       const double *w, const double r1, const double r2, const double r3,
       double *LT_data, double *D_diag)>;
 
-  using LDLTSolveCallback = std::function<void(
+  using SolveCallback = std::function<void(
       const double *LT_data, const double *D_diag, const double *b, double *v)>;
 
   using Block3x3KKTProductCallback = std::function<void(
@@ -226,9 +226,9 @@ struct Input {
   using TimeoutCallback = std::function<bool(void)>;
 
   // Callback for factoring the reduced-block-3x3 Newton-KKT system.
-  LDLTFactorCallback ldlt_factor;
+  FactorCallback factor;
   // Callback for solving the reduced-block-3x3 Newton-KKT system.
-  LDLTSolveCallback ldlt_solve;
+  SolveCallback solve;
   // Callback for y += Kx, where K is the block-3x3 Newton-KKT system's LHS.
   Block3x3KKTProductCallback add_Kx_to_y;
   // Callback for adding H^T x to y.
