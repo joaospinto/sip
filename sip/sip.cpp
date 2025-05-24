@@ -556,8 +556,6 @@ auto compute_search_direction(const Input &input, const Settings &settings,
   double *re = workspace.nrhs.e;
 
   double *w = workspace.csd_workspace.w;
-  double *LT_data = workspace.csd_workspace.LT_data;
-  double *D_diag = workspace.csd_workspace.D_diag;
   double *b = workspace.csd_workspace.rhs_block_3x3;
   double *residual = workspace.csd_workspace.residual;
   double *v = workspace.csd_workspace.sol_block_3x3;
@@ -579,7 +577,7 @@ auto compute_search_direction(const Input &input, const Settings &settings,
   const double eta_inv = 1.0 / eta;
   const double r3p = settings.enable_elastics ? eta_inv + 1.0 / rho : eta_inv;
 
-  input.factor(H_data, C_data, G_data, w, r1, eta_inv, r3p, LT_data, D_diag);
+  input.factor(H_data, C_data, G_data, w, r1, eta_inv, r3p);
 
   std::copy_n(grad_f, x_dim, rx);
 
@@ -609,7 +607,7 @@ auto compute_search_direction(const Input &input, const Settings &settings,
     b[i] = -b[i];
   }
 
-  input.solve(LT_data, D_diag, b, v);
+  input.solve(b, v);
 
   for (int j = 0; j < settings.num_iterative_refinement_steps; ++j) {
     // We do an iterative refinement step:
@@ -627,7 +625,7 @@ auto compute_search_direction(const Input &input, const Settings &settings,
     input.add_Kx_to_y(H_data, C_data, G_data, w, r1, eta_inv, r3p, vx, vy, vz,
                       res_x, res_y, res_z);
 
-    input.solve(LT_data, D_diag, residual, u);
+    input.solve(residual, u);
 
     for (int i = 0; i < dim_3x3; ++i) {
       v[i] -= u[i];

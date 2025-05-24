@@ -205,11 +205,9 @@ struct Input {
 
   using FactorCallback = std::function<void(
       const double *H_data, const double *C_data, const double *G_data,
-      const double *w, const double r1, const double r2, const double r3,
-      double *LT_data, double *D_diag)>;
+      const double *w, const double r1, const double r2, const double r3)>;
 
-  using SolveCallback = std::function<void(
-      const double *LT_data, const double *D_diag, const double *b, double *v)>;
+  using SolveCallback = std::function<void(const double *b, double *v)>;
 
   using Block3x3KKTProductCallback = std::function<void(
       const double *H_data, const double *C_data, const double *G_data,
@@ -303,10 +301,6 @@ struct MiscellaneousWorkspace {
 struct ComputeSearchDirectionWorkspace {
   // Stores S^{-1} Z
   double *w;
-  // Stores the data of the L^T matrix in the L D L^T decomposition.
-  double *LT_data;
-  // Stores the data of the D matrix in the L D L^T decomposition.
-  double *D_diag;
   // The RHS of the reduced block-3x3 Newton-KKT system.
   double *rhs_block_3x3;
   // The solution of the reduced block-3x3 Newton-KKT system.
@@ -317,17 +311,16 @@ struct ComputeSearchDirectionWorkspace {
   double *residual;
 
   // To dynamically allocate the required memory.
-  void reserve(int s_dim, int kkt_dim, int full_dim, int L_nnz);
+  void reserve(int s_dim, int kkt_dim, int full_dim);
   void free();
 
   // For using pre-allocated (possibly statically allocated) memory.
-  auto mem_assign(int s_dim, int kkt_dim, int full_dim, int L_nnz,
-                  unsigned char *mem_ptr) -> int;
+  auto mem_assign(int s_dim, int kkt_dim, int full_dim, unsigned char *mem_ptr)
+      -> int;
 
   // For knowing how much memory to pre-allocate.
-  static constexpr auto num_bytes(int s_dim, int kkt_dim, int full_dim,
-                                  int L_nnz) -> int {
-    return (s_dim + L_nnz + 4 * kkt_dim + full_dim) * sizeof(double);
+  static constexpr auto num_bytes(int s_dim, int kkt_dim, int full_dim) -> int {
+    return (s_dim + 3 * kkt_dim + full_dim) * sizeof(double);
   }
 };
 
@@ -355,22 +348,20 @@ struct Workspace {
   ComputeSearchDirectionWorkspace csd_workspace;
 
   // To dynamically allocate the required memory.
-  void reserve(int x_dim, int s_dim, int y_dim, int L_nnz);
+  void reserve(int x_dim, int s_dim, int y_dim);
   void free();
 
   // For using pre-allocated (possibly statically allocated) memory.
-  auto mem_assign(int x_dim, int s_dim, int y_dim, int L_nnz,
-                  unsigned char *mem_ptr) -> int;
+  auto mem_assign(int x_dim, int s_dim, int y_dim, unsigned char *mem_ptr)
+      -> int;
 
   // For knowing how much memory to pre-allocate.
-  static constexpr auto num_bytes(int x_dim, int s_dim, int y_dim, int L_nnz)
-      -> int {
+  static constexpr auto num_bytes(int x_dim, int s_dim, int y_dim) -> int {
     const int kkt_dim = x_dim + s_dim + y_dim;
     const int full_dim = kkt_dim + s_dim + s_dim;
     return 4 * VariablesWorkspace::num_bytes(x_dim, s_dim, y_dim) +
            MiscellaneousWorkspace::num_bytes(s_dim) +
-           ComputeSearchDirectionWorkspace::num_bytes(s_dim, kkt_dim, full_dim,
-                                                      L_nnz);
+           ComputeSearchDirectionWorkspace::num_bytes(s_dim, kkt_dim, full_dim);
   }
 };
 
