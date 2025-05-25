@@ -227,6 +227,7 @@ struct Input {
   FactorCallback factor;
   // Callback for solving the reduced-block-3x3 Newton-KKT system.
   SolveCallback solve;
+  // TODO(joao): THE DATA FOR H, C, G SHOULD NOT BE STORED BY SIP! FIX!
   // Callback for y += Kx, where K is the block-3x3 Newton-KKT system's LHS.
   Block3x3KKTProductCallback add_Kx_to_y;
   // Callback for adding H^T x to y.
