@@ -1,13 +1,6 @@
 #pragma once
 
-#include <ostream>
-
-#include "sip/types.hpp"
-
 namespace sip {
-
-// Useful for debugging.
-auto operator<<(std::ostream &os, const SparseMatrix &M) -> std::ostream &;
 
 auto add(const double *x, const double *y, const int dim, double *z) -> void;
 

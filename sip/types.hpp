@@ -90,33 +90,6 @@ struct Settings {
   bool assert_checks_pass = false;
 };
 
-struct SparseMatrix {
-  // The number of rows of the matrix.
-  int rows;
-  // The number of cols of the matrix.
-  int cols;
-  // The row indices of each entry.
-  int *ind;
-  // The column start indices of each column.
-  int *indptr;
-  // The potentially non-zero entries.
-  double *data;
-  // Whether the matrix is transposed.
-  bool is_transposed;
-
-  // To dynamically allocate the required memory.
-  auto reserve(int dim, int nnz) -> void;
-  auto free() -> void;
-
-  // For using pre-allocated (possibly statically allocated) memory.
-  auto mem_assign(int dim, int nnz, unsigned char *mem_ptr) -> int;
-
-  // For knowing how much memory to pre-allocate.
-  static constexpr auto num_bytes(int dim, int nnz) -> int {
-    return (nnz + dim + 1) * sizeof(int) + nnz * sizeof(double);
-  }
-};
-
 struct ModelCallbackInput {
   // The primal variables.
   double *x;
@@ -132,96 +105,46 @@ struct ModelCallbackInput {
   bool new_z;
 };
 
-struct ModelCallbackOutput {
-  // NOTE: all sparse matrices should be represented in CSC format.
-
-  // The objective and its first derivative.
-  double f;
-  double *gradient_f;
-
-  // The Hessian of the Lagrangian.
-  // NOTE:
-  // 1. Only the upper triangle should be filled in upper_hessian_lagrangian.
-  // 2. upper_hessian_lagrangian should be a positive definite approximation.
-  // 3. An positive definite approximation of the Hessian of f is often used.
-  SparseMatrix upper_hessian_lagrangian;
-
-  // The equality constraints and their first derivative.
-  double *c;
-  SparseMatrix jacobian_c;
-
-  // The inequality constraints and their first derivative.
-  double *g;
-  SparseMatrix jacobian_g;
-
-  // To dynamically allocate the required memory.
-  void reserve(int x_dim, int s_dim, int y_dim,
-               int upper_hessian_lagrangian_nnz, int jacobian_c_nnz,
-               int jacobian_g_nnz, bool is_jacobian_c_transposed,
-               bool is_jacobian_g_transposed);
-  void free();
-
-  // For using pre-allocated (possibly statically allocated) memory.
-  auto mem_assign(int x_dim, int s_dim, int y_dim,
-                  int upper_hessian_lagrangian_nnz, int jacobian_c_nnz,
-                  int jacobian_g_nnz, bool is_jacobian_c_transposed,
-                  bool is_jacobian_g_transposed, unsigned char *mem_ptr) -> int;
-
-  // For knowing how much memory to pre-allocate.
-  static constexpr auto num_bytes(int x_dim, int s_dim, int y_dim,
-                                  int upper_hessian_lagrangian_nnz,
-                                  int jacobian_c_nnz, int jacobian_g_nnz,
-                                  bool is_jacobian_c_transposed,
-                                  bool is_jacobian_g_transposed) -> int {
-    int out = (x_dim + s_dim + y_dim) * sizeof(double) +
-              SparseMatrix::num_bytes(x_dim, upper_hessian_lagrangian_nnz);
-    if (is_jacobian_c_transposed) {
-      out += SparseMatrix::num_bytes(y_dim, jacobian_c_nnz);
-    } else {
-      out += SparseMatrix::num_bytes(x_dim, jacobian_c_nnz);
-    }
-    if (is_jacobian_g_transposed) {
-      out += SparseMatrix::num_bytes(s_dim, jacobian_g_nnz);
-    } else {
-      out += SparseMatrix::num_bytes(x_dim, jacobian_g_nnz);
-    }
-    return out;
-  }
-};
-
 struct Input {
-  // NOTE: the user should ensure that no dynamic memory allocation happens
-  //       when passing in the callbacks below, possibly by declaring them
-  //       as lambdas and wrapping them with std::cref.
+  // NOTE: the user may ensure that no dynamic memory allocation happens
+  //       when passing in the callbacks below, for example, by declaring
+  //       them as lambdas and wrapping them with std::cref.
 
   // NOTE: the factor/solve callbacks should solve Kv = b, where:
   // 1. K = [ H + r1 I_x      C.T        G.T   ]
   //        [     C        -r2 * I_y      0    ]
   //        [     G            0       -r3 I_z ]
   // 2. (H + r1 I_x) is symmetric and positive definite;
-  // 3. H_data is expected to represent np.triu(H) in CSC order.
-  // 4. C_data and G_data are expected to represent C and G in CSC order.
-  // 5. r1, r2, r3 are non-negative regularization parameters;
+  // 3. r1, r2, r3 are non-negative regularization parameters.
+  //
+  // NOTE: the user is responsible for storing H, C, G on their side.
 
-  using FactorCallback = std::function<void(
-      const double *H_data, const double *C_data, const double *G_data,
-      const double *w, const double r1, const double r2, const double r3)>;
+  using FactorCallback = std::function<void(const double *w, const double r1,
+                                            const double r2, const double r3)>;
 
   using SolveCallback = std::function<void(const double *b, double *v)>;
 
   using Block3x3KKTProductCallback = std::function<void(
-      const double *H_data, const double *C_data, const double *G_data,
       const double *w, const double r1, const double r2, const double r3,
       const double *x_x, const double *x_y, const double *x_z, double *y_x,
       double *y_y, double *y_z)>;
 
   using MatrixVectorMultiplicationCallback =
-      std::function<void(const double *M_data, const double *x, double *y)>;
+      std::function<void(const double *x, double *y)>;
 
-  using ModelCallback =
-      std::function<void(const ModelCallbackInput &, ModelCallbackOutput **)>;
+  using ScalarGetter = std::function<double(void)>;
+
+  using VectorGetter = std::function<const double *(void)>;
+
+  using ModelCallback = std::function<void(const ModelCallbackInput &)>;
 
   using TimeoutCallback = std::function<bool(void)>;
+
+  struct Dimensions {
+    int x_dim;
+    int s_dim;
+    int y_dim;
+  };
 
   // Callback for factoring the reduced-block-3x3 Newton-KKT system.
   FactorCallback factor;
@@ -229,20 +152,30 @@ struct Input {
   SolveCallback solve;
   // Callback for y += Kx, where K is the block-3x3 Newton-KKT system's LHS.
   Block3x3KKTProductCallback add_Kx_to_y;
-  // Callback for adding H^T x to y.
-  MatrixVectorMultiplicationCallback add_upper_symmetric_Hx_to_y;
-  // Callback for adding C x to y.
+  // Callback for adding H x to y, where H is the Hessian of the Lagrangian.
+  MatrixVectorMultiplicationCallback add_Hx_to_y;
+  // Callback for adding C x to y, where C = J(c).
   MatrixVectorMultiplicationCallback add_Cx_to_y;
-  // Callback for adding C^T x to y.
+  // Callback for adding C^T x to y, where C = J(c).
   MatrixVectorMultiplicationCallback add_CTx_to_y;
-  // Callback for adding G x to y.
+  // Callback for adding G x to y, where G = J(g).
   MatrixVectorMultiplicationCallback add_Gx_to_y;
-  // Callback for adding G^T x to y.
+  // Callback for adding G^T x to y, where G = J(g).
   MatrixVectorMultiplicationCallback add_GTx_to_y;
-  // Callback for filling the ModelCallbackOutput object.
+  // Callback for getting the objective f(x).
+  ScalarGetter get_f;
+  // Callback for getting the gradient of the objective f(x).
+  VectorGetter get_grad_f;
+  // Callback for getting the equality constraint vector c(x).
+  VectorGetter get_c;
+  // Callback for getting the inequality constraint vector g(x).
+  VectorGetter get_g;
+  // Callback for evaluating the user model.
   ModelCallback model_callback;
   // Callback for (optionally) declaring a timeout. Return true for timeout.
   TimeoutCallback timeout_callback;
+  // The problem dimensions.
+  Dimensions dimensions;
 };
 
 struct Output {
@@ -339,9 +272,6 @@ struct Workspace {
   VariablesWorkspace next_vars;
   // The negative Newton-KKT RHS storage (for both primal and dual variables).
   VariablesWorkspace nrhs;
-  // The model callback workspace.
-  // NOTE: the ModelCallbackOutput object is owned by the user.
-  ModelCallbackOutput *model_callback_output;
   // Stores miscellaneous items.
   MiscellaneousWorkspace miscellaneous_workspace;
   // Stores the workspace used in compute_search_direction.

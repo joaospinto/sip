@@ -16,35 +16,28 @@ namespace sip {
 
 namespace {
 
-auto get_s_dim(const SparseMatrix &jacobian_g) -> int {
-  return jacobian_g.is_transposed ? jacobian_g.cols : jacobian_g.rows;
-}
-
-auto get_y_dim(const SparseMatrix &jacobian_c) -> int {
-  return jacobian_c.is_transposed ? jacobian_c.cols : jacobian_c.rows;
-}
-
-auto merit_function(const Settings &settings, const Workspace &workspace,
-                    const double *s, const double *y, const double *z,
-                    const double *e, const double mu, const double eta,
+auto merit_function(const Input &input, const Settings &settings,
+                    const Workspace &workspace, const double *s,
+                    const double *y, const double *z, const double *e,
+                    const double mu, const double eta,
                     const double sq_constraint_violation_norm)
     -> std::tuple<double, double, double, double, double, double, double> {
-  const auto &mco = *workspace.model_callback_output;
-  const int s_dim = get_s_dim(mco.jacobian_g);
-  const int y_dim = get_y_dim(mco.jacobian_c);
+  const int s_dim = input.dimensions.s_dim;
+  const int y_dim = input.dimensions.y_dim;
   const double s_term = -mu * sum_of_logs(s, s_dim);
-  const double c_term = dot(mco.c, y, y_dim);
+  const double c_term = dot(input.get_c(), y, y_dim);
   const double g_term =
       dot(workspace.miscellaneous_workspace.g_plus_s_plus_e, z, s_dim);
   const double e_term =
       settings.enable_elastics
           ? 0.5 * settings.elastic_var_cost_coeff * squared_norm(e, s_dim)
           : 0.0;
-  const double barrier_lagrangian = mco.f + s_term + c_term + g_term + e_term;
+  const double barrier_lagrangian =
+      input.get_f() + s_term + c_term + g_term + e_term;
   const double aug_term = 0.5 * eta * sq_constraint_violation_norm;
   const double merit = barrier_lagrangian + aug_term;
-  return std::make_tuple(mco.f, s_term, c_term, g_term, e_term, aug_term,
-                         merit);
+  return std::make_tuple(input.get_f(), s_term, c_term, g_term, e_term,
+                         aug_term, merit);
 }
 
 auto get_alpha_s_max(const int s_dim, const double tau, const double *s,
@@ -104,9 +97,8 @@ void update_next_primal_vars(const Input &input, const Settings &settings,
                              const double tau, Workspace &workspace,
                              const double alpha, const bool update_x,
                              const bool update_s, const bool update_e) {
-  const int x_dim =
-      workspace.model_callback_output->upper_hessian_lagrangian.rows;
-  const int s_dim = get_s_dim(workspace.model_callback_output->jacobian_g);
+  const int x_dim = input.dimensions.x_dim;
+  const int s_dim = input.dimensions.s_dim;
 
   if (update_x) {
     for (int i = 0; i < x_dim; ++i) {
@@ -125,7 +117,7 @@ void update_next_primal_vars(const Input &input, const Settings &settings,
       .new_y = false,
       .new_z = false,
   };
-  input.model_callback(mci, &workspace.model_callback_output);
+  input.model_callback(mci);
 
   if (update_s) {
     for (int i = 0; i < s_dim; ++i) {
@@ -137,7 +129,7 @@ void update_next_primal_vars(const Input &input, const Settings &settings,
     std::copy_n(workspace.vars.s, s_dim, workspace.next_vars.s);
   }
 
-  add(workspace.model_callback_output->g, workspace.next_vars.s, s_dim,
+  add(input.get_g(), workspace.next_vars.s, s_dim,
       workspace.miscellaneous_workspace.g_plus_s);
 
   if (settings.enable_elastics) {
@@ -160,8 +152,8 @@ void update_next_primal_vars(const Input &input, const Settings &settings,
 void update_next_dual_vars(const Input &input, const Settings &settings,
                            const double tau, Workspace &workspace,
                            const double merit_delta) {
-  const int s_dim = get_s_dim(workspace.model_callback_output->jacobian_g);
-  const int y_dim = get_y_dim(workspace.model_callback_output->jacobian_c);
+  const int s_dim = input.dimensions.s_dim;
+  const int y_dim = input.dimensions.y_dim;
 
   double allowed_merit_increase =
       std::max(-settings.dual_armijo_factor * merit_delta,
@@ -171,10 +163,8 @@ void update_next_dual_vars(const Input &input, const Settings &settings,
     workspace.next_vars.y[i] = workspace.vars.y[i] + workspace.delta_vars.y[i];
   }
 
-  const double original_y_merit =
-      dot(workspace.vars.y, workspace.model_callback_output->c, y_dim);
-  const double new_y_merit =
-      dot(workspace.next_vars.y, workspace.model_callback_output->c, y_dim);
+  const double original_y_merit = dot(workspace.vars.y, input.get_c(), y_dim);
+  const double new_y_merit = dot(workspace.next_vars.y, input.get_c(), y_dim);
   const double dm_y = new_y_merit - original_y_merit;
 
   for (int i = 0; i < s_dim; ++i) {
@@ -251,17 +241,16 @@ void update_next_dual_vars(const Input &input, const Settings &settings,
         .new_y = true,
         .new_z = true,
     };
-    input.model_callback(mci, &workspace.model_callback_output);
+    input.model_callback(mci);
   }
 }
 
 auto check_derivatives(const Input &input, const Settings &settings,
                        const double tau, Workspace &workspace) -> void {
 
-  const int x_dim =
-      workspace.model_callback_output->upper_hessian_lagrangian.rows;
-  const int s_dim = get_s_dim(workspace.model_callback_output->jacobian_g);
-  const int y_dim = get_y_dim(workspace.model_callback_output->jacobian_c);
+  const int x_dim = input.dimensions.x_dim;
+  const int s_dim = input.dimensions.s_dim;
+  const int y_dim = input.dimensions.y_dim;
 
   bool has_printed_header = false;
 
@@ -273,7 +262,7 @@ auto check_derivatives(const Input &input, const Settings &settings,
           update_next_primal_vars(input, settings, tau, workspace, beta, true,
                                   false, false);
           std::vector<double> out(y_dim);
-          std::copy_n(workspace.model_callback_output->c, y_dim, out.data());
+          std::copy_n(input.get_c(), y_dim, out.data());
           return out;
         };
 
@@ -284,8 +273,7 @@ auto check_derivatives(const Input &input, const Settings &settings,
 
         std::vector<double> theoretical_slopes(y_dim);
         std::fill(theoretical_slopes.begin(), theoretical_slopes.end(), 0.0);
-        input.add_Cx_to_y(workspace.model_callback_output->jacobian_c.data,
-                          workspace.delta_vars.x, theoretical_slopes.data());
+        input.add_Cx_to_y(workspace.delta_vars.x, theoretical_slopes.data());
 
         std::vector<std::tuple<double, double, double, double>> errors(y_dim);
         for (int i = 0; i < y_dim; ++i) {
@@ -327,7 +315,7 @@ auto check_derivatives(const Input &input, const Settings &settings,
           update_next_primal_vars(input, settings, tau, workspace, beta, true,
                                   false, false);
           std::vector<double> out(s_dim);
-          std::copy_n(workspace.model_callback_output->g, s_dim, out.data());
+          std::copy_n(input.get_g(), s_dim, out.data());
           return out;
         };
 
@@ -338,8 +326,7 @@ auto check_derivatives(const Input &input, const Settings &settings,
 
         std::vector<double> theoretical_slopes(s_dim);
         std::fill(theoretical_slopes.begin(), theoretical_slopes.end(), 0.0);
-        input.add_Gx_to_y(workspace.model_callback_output->jacobian_g.data,
-                          workspace.delta_vars.x, theoretical_slopes.data());
+        input.add_Gx_to_y(workspace.delta_vars.x, theoretical_slopes.data());
 
         std::vector<std::tuple<double, double, double, double>> errors(s_dim);
         for (int i = 0; i < s_dim; ++i) {
@@ -379,7 +366,7 @@ auto check_derivatives(const Input &input, const Settings &settings,
         const auto get_perturbed_value = [&](const double beta) -> double {
           update_next_primal_vars(input, settings, tau, workspace, beta, true,
                                   false, false);
-          return workspace.model_callback_output->f;
+          return input.get_f();
         };
 
         const double h = std::sqrt(std::numeric_limits<double>::epsilon());
@@ -387,8 +374,7 @@ auto check_derivatives(const Input &input, const Settings &settings,
         const double mM = get_perturbed_value(-h);
         const double estimated_slope = (mP - mM) / (2 * h);
         const double theoretical_slope =
-            dot(workspace.model_callback_output->gradient_f,
-                workspace.delta_vars.x, x_dim);
+            dot(input.get_grad_f(), workspace.delta_vars.x, x_dim);
         const double absolute_error =
             std::fabs(estimated_slope - theoretical_slope);
         const double relative_error =
@@ -435,21 +421,20 @@ auto get_observed_merit_slope(const Input &input, const Settings &settings,
                               const double eta, const double mu,
                               const double tau, Workspace &workspace)
     -> std::tuple<double, double, double, double> {
-  const int s_dim = get_s_dim(workspace.model_callback_output->jacobian_g);
-  const int y_dim = get_y_dim(workspace.model_callback_output->jacobian_c);
+  const int s_dim = input.dimensions.s_dim;
+  const int y_dim = input.dimensions.y_dim;
 
   const auto compute_empirical_merit_slope =
       [&](const bool update_x, const bool update_s, const bool update_e) {
         const auto get_perturbed_merit = [&](const double beta) -> double {
           update_next_primal_vars(input, settings, tau, workspace, beta,
                                   update_x, update_s, update_e);
-          const double ctc =
-              squared_norm(workspace.model_callback_output->c, y_dim);
+          const double ctc = squared_norm(input.get_c(), y_dim);
           const double gsetgse = squared_norm(
               workspace.miscellaneous_workspace.g_plus_s_plus_e, s_dim);
           const double sq_constraint_violation_norm = ctc + gsetgse;
           const auto [_mP_f, _mP_s, _mP_c, _mP_g, _mP_e, _mP_aug, mP] =
-              merit_function(settings, workspace, workspace.next_vars.s,
+              merit_function(input, settings, workspace, workspace.next_vars.s,
                              workspace.vars.y, workspace.vars.z,
                              workspace.next_vars.e, mu, eta,
                              sq_constraint_violation_norm);
@@ -476,18 +461,18 @@ auto get_observed_merit_slope(const Input &input, const Settings &settings,
 }
 
 auto augmented_barrier_lagrangian_slope(
-    const Settings &settings, const Workspace &workspace, const double *dx,
-    const double *ds, const double *de, const double *dy, const double *dz,
-    const double eta, const double rho, const double psi,
+    const Input &input, const Settings &settings, const Workspace &workspace,
+    const double *dx, const double *ds, const double *de, const double *dy,
+    const double *dz, const double eta, const double rho, const double psi,
     const double sq_constraint_violation_norm)
     -> std::tuple<double, double, double, double> {
-  const auto &mco = *workspace.model_callback_output;
-  const int x_dim = mco.upper_hessian_lagrangian.rows;
-  const int s_dim = get_s_dim(mco.jacobian_g);
-  const int y_dim = get_y_dim(mco.jacobian_c);
+  const int x_dim = input.dimensions.x_dim;
+  const int s_dim = input.dimensions.s_dim;
+  const int y_dim = input.dimensions.y_dim;
   const double *gpspe = workspace.miscellaneous_workspace.g_plus_s_plus_e;
-  double abl_slope = dot(workspace.nrhs.x, dx, x_dim) + dot(mco.c, dy, y_dim) +
-                     dot(gpspe, dz, s_dim) - eta * sq_constraint_violation_norm;
+  double abl_slope = dot(workspace.nrhs.x, dx, x_dim) +
+                     dot(input.get_c(), dy, y_dim) + dot(gpspe, dz, s_dim) -
+                     eta * sq_constraint_violation_norm;
   const double s_slope =
       dot(workspace.nrhs.s, ds, s_dim) + eta * dot(gpspe, ds, s_dim);
   const double e_slope =
@@ -519,11 +504,9 @@ auto compute_search_direction(const Input &input, const Settings &settings,
   const double rho = settings.enable_elastics
                          ? settings.elastic_var_cost_coeff
                          : std::numeric_limits<double>::signaling_NaN();
-  const auto &mco = *workspace.model_callback_output;
-
-  const int x_dim = mco.upper_hessian_lagrangian.cols;
-  const int s_dim = get_s_dim(mco.jacobian_g);
-  const int y_dim = get_y_dim(mco.jacobian_c);
+  const int x_dim = input.dimensions.x_dim;
+  const int s_dim = input.dimensions.s_dim;
+  const int y_dim = input.dimensions.y_dim;
   const int dim_3x3 = x_dim + s_dim + y_dim;
 
   double max_constraint_violation = 0.0;
@@ -535,12 +518,9 @@ auto compute_search_direction(const Input &input, const Settings &settings,
   const double *z = workspace.vars.z;
   const double *e = workspace.vars.e;
 
-  const double *H_data = mco.upper_hessian_lagrangian.data;
-  const double *C_data = mco.jacobian_c.data;
-  const double *G_data = mco.jacobian_g.data;
-  const double *grad_f = mco.gradient_f;
+  const double *grad_f = input.get_grad_f();
 
-  const double *c = mco.c;
+  const double *c = input.get_c();
   const double *gpspe = workspace.miscellaneous_workspace.g_plus_s_plus_e;
 
   double *dx = workspace.delta_vars.x;
@@ -577,12 +557,12 @@ auto compute_search_direction(const Input &input, const Settings &settings,
   const double eta_inv = 1.0 / eta;
   const double r3p = settings.enable_elastics ? eta_inv + 1.0 / rho : eta_inv;
 
-  input.factor(H_data, C_data, G_data, w, r1, eta_inv, r3p);
+  input.factor(w, r1, eta_inv, r3p);
 
   std::copy_n(grad_f, x_dim, rx);
 
-  input.add_CTx_to_y(C_data, y, rx);
-  input.add_GTx_to_y(G_data, z, rx);
+  input.add_CTx_to_y(y, rx);
+  input.add_GTx_to_y(z, rx);
 
   std::copy_n(c, y_dim, ry);
   std::copy_n(gpspe, s_dim, rz);
@@ -622,8 +602,7 @@ auto compute_search_direction(const Input &input, const Settings &settings,
       residual[i] = -b[i];
     }
 
-    input.add_Kx_to_y(H_data, C_data, G_data, w, r1, eta_inv, r3p, vx, vy, vz,
-                      res_x, res_y, res_z);
+    input.add_Kx_to_y(w, r1, eta_inv, r3p, vx, vy, vz, res_x, res_y, res_z);
 
     input.solve(residual, u);
 
@@ -653,7 +632,7 @@ auto compute_search_direction(const Input &input, const Settings &settings,
   }
 
   const auto [ms_x, ms_s, ms_e, ms] = augmented_barrier_lagrangian_slope(
-      settings, workspace, dx, ds, de, dy, dz, eta, rho, psi,
+      input, settings, workspace, dx, ds, de, dy, dz, eta, rho, psi,
       sq_constraint_violation_norm);
 
   for (int i = 0; i < y_dim; ++i) {
@@ -693,8 +672,7 @@ auto compute_search_direction(const Input &input, const Settings &settings,
       res_z[i] = -bz[i];
     }
 
-    input.add_Kx_to_y(H_data, C_data, G_data, w, r1, eta_inv, r3p, dx, dy, dz,
-                      res_x, res_y, res_z);
+    input.add_Kx_to_y(w, r1, eta_inv, r3p, dx, dy, dz, res_x, res_y, res_z);
 
     for (int i = 0; i < s_dim; ++i) {
       res_s[i] = ds[i] / w[i] + dz[i] + rs[i];
@@ -723,13 +701,13 @@ auto compute_search_direction(const Input &input, const Settings &settings,
     double *tmp_y = workspace.next_vars.y;
     double *tmp_s = workspace.next_vars.s;
     std::fill_n(tmp_x, x_dim, 0.0);
-    input.add_upper_symmetric_Hx_to_y(H_data, dx, tmp_x);
+    input.add_Hx_to_y(dx, tmp_x);
     for (int i = 0; i < x_dim; ++i) {
       tmp_x[i] += psi * dx[i];
     }
     const double dxTHdx = dot(tmp_x, dx, x_dim);
     std::fill_n(tmp_y, y_dim, 0.0);
-    input.add_Cx_to_y(C_data, dx, tmp_y);
+    input.add_Cx_to_y(dx, tmp_y);
     const double Cdx2 = squared_norm(tmp_y, y_dim);
     double Winvds = 0.0;
     for (int i = 0; i < s_dim; ++i) {
@@ -742,7 +720,7 @@ auto compute_search_direction(const Input &input, const Settings &settings,
     } else {
       std::copy_n(ds, s_dim, tmp_s);
     }
-    input.add_Gx_to_y(G_data, dx, tmp_s);
+    input.add_Gx_to_y(dx, tmp_s);
     const double Gdepdspde2 = squared_norm(tmp_s, s_dim);
     double ms_v2 = -dxTHdx - Winvds - eta * (Cdx2 + Gdepdspde2);
     if (settings.enable_elastics) {
@@ -778,12 +756,13 @@ auto do_line_search(const Input &input, const Settings &settings,
                     const double merit_slope, const double alpha_s_max,
                     int &total_ls_iterations, Workspace &workspace)
     -> std::tuple<double, double, double, double> {
-  const int s_dim = get_s_dim(workspace.model_callback_output->jacobian_g);
-  const int y_dim = get_y_dim(workspace.model_callback_output->jacobian_c);
+  const int s_dim = input.dimensions.s_dim;
+  const int y_dim = input.dimensions.y_dim;
 
-  const auto [m0_f, m0_s, m0_c, m0_g, m0_e, m0_aug, m0] = merit_function(
-      settings, workspace, workspace.vars.s, workspace.vars.y, workspace.vars.z,
-      workspace.vars.e, mu, eta, sq_constraint_violation_norm);
+  const auto [m0_f, m0_s, m0_c, m0_g, m0_e, m0_aug, m0] =
+      merit_function(input, settings, workspace, workspace.vars.s,
+                     workspace.vars.y, workspace.vars.z, workspace.vars.e, mu,
+                     eta, sq_constraint_violation_norm);
 
   bool ls_succeeded = false;
   double alpha = settings.start_ls_with_alpha_s_max ? alpha_s_max : 1.0;
@@ -798,8 +777,7 @@ auto do_line_search(const Input &input, const Settings &settings,
   do {
     update_next_primal_vars(input, settings, tau, workspace, alpha, true, true,
                             true);
-    const double next_ctc =
-        squared_norm(workspace.model_callback_output->c, y_dim);
+    const double next_ctc = squared_norm(input.get_c(), y_dim);
     const double next_gsetgse =
         squared_norm(workspace.miscellaneous_workspace.g_plus_s_plus_e, s_dim);
     const double next_sq_constraint_violation_norm = next_ctc + next_gsetgse;
@@ -807,7 +785,7 @@ auto do_line_search(const Input &input, const Settings &settings,
     // NOTE: the line search is only over the primal variables, so we cannot
     // use next_vars.y and next_vars.z.
     const auto [m_f, m_s, m_c, m_g, m_e, m_aug, m] = merit_function(
-        settings, workspace, workspace.next_vars.s, workspace.vars.y,
+        input, settings, workspace, workspace.next_vars.s, workspace.vars.y,
         workspace.vars.z, workspace.next_vars.e, mu, eta,
         next_sq_constraint_violation_norm);
 
@@ -887,7 +865,7 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
         .new_z = true,
     };
 
-    input.model_callback(mci, &workspace.model_callback_output);
+    input.model_callback(mci);
   }
 
   if (!check_settings(settings)) {
@@ -903,10 +881,9 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
     }
   }
 
-  const int x_dim =
-      workspace.model_callback_output->upper_hessian_lagrangian.cols;
-  const int s_dim = get_s_dim(workspace.model_callback_output->jacobian_g);
-  const int y_dim = get_y_dim(workspace.model_callback_output->jacobian_c);
+  const int x_dim = input.dimensions.x_dim;
+  const int s_dim = input.dimensions.s_dim;
+  const int y_dim = input.dimensions.y_dim;
 
   for (int i = 0; i < s_dim; ++i) {
     if (workspace.vars.s[i] <= 0.0) {
@@ -937,7 +914,7 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
     }
   }
 
-  add(workspace.model_callback_output->g, workspace.vars.s, s_dim,
+  add(input.get_g(), workspace.vars.s, s_dim,
       workspace.miscellaneous_workspace.g_plus_s);
 
   if (settings.enable_elastics) {
@@ -956,9 +933,9 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
   int total_ls_iterations = 0;
 
   for (int iteration = 0; iteration < settings.max_iterations; ++iteration) {
-    const double f0 = workspace.model_callback_output->f;
+    const double f0 = input.get_f();
 
-    const double ctc = squared_norm(workspace.model_callback_output->c, y_dim);
+    const double ctc = squared_norm(input.get_c(), y_dim);
     const double gsetgse =
         squared_norm(workspace.miscellaneous_workspace.g_plus_s_plus_e, s_dim);
 
@@ -989,10 +966,10 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
                  // clang-format off
                        "{:^+10} {:^10} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^10} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g}\n",
                  // clang-format on
-                 iteration, "", workspace.model_callback_output->f,
-                 std::sqrt(ctc), std::sqrt(gsetgse), "", norm(dx, x_dim),
-                 norm(ds, s_dim), norm(dy, y_dim), norm(dz, s_dim), de_norm, mu,
-                 eta, tau, kkt_error);
+                 iteration, "", input.get_f(), std::sqrt(ctc),
+                 std::sqrt(gsetgse), "", norm(dx, x_dim), norm(ds, s_dim),
+                 norm(dy, y_dim), norm(dz, s_dim), de_norm, mu, eta, tau,
+                 kkt_error);
     }
 
     if (succeeded || merit_slope_too_small) {
@@ -1004,8 +981,7 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
                                    : (suboptimal ? Status::SUBOPTIMAL
                                                  : Status::LOCALLY_INFEASIBLE),
           .num_iterations = iteration,
-          .max_primal_violation =
-              inf_norm(workspace.model_callback_output->c, y_dim),
+          .max_primal_violation = inf_norm(input.get_c(), y_dim),
           .max_dual_violation = inf_norm(workspace.nrhs.x, x_dim),
       };
     }
@@ -1014,8 +990,7 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
       return Output{
           .exit_status = Status::LINE_SEARCH_ITERATION_LIMIT,
           .num_iterations = iteration,
-          .max_primal_violation =
-              inf_norm(workspace.model_callback_output->c, y_dim),
+          .max_primal_violation = inf_norm(input.get_c(), y_dim),
           .max_dual_violation = inf_norm(workspace.nrhs.x, x_dim),
       };
     }
@@ -1044,8 +1019,7 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
       return Output{
           .exit_status = Status::LINE_SEARCH_FAILURE,
           .num_iterations = iteration,
-          .max_primal_violation =
-              inf_norm(workspace.model_callback_output->c, y_dim),
+          .max_primal_violation = inf_norm(input.get_c(), y_dim),
           .max_dual_violation = inf_norm(workspace.nrhs.x, x_dim),
       };
     }
@@ -1056,8 +1030,7 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
       return Output{
           .exit_status = Status::TIMEOUT,
           .num_iterations = iteration,
-          .max_primal_violation =
-              inf_norm(workspace.model_callback_output->c, y_dim),
+          .max_primal_violation = inf_norm(input.get_c(), y_dim),
           .max_dual_violation = inf_norm(workspace.nrhs.x, x_dim),
       };
     }
@@ -1078,8 +1051,7 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
   return Output{
       .exit_status = Status::ITERATION_LIMIT,
       .num_iterations = settings.max_iterations,
-      .max_primal_violation =
-          inf_norm(workspace.model_callback_output->c, y_dim),
+      .max_primal_violation = inf_norm(input.get_c(), y_dim),
       .max_dual_violation = inf_norm(workspace.nrhs.x, x_dim),
   };
 }
