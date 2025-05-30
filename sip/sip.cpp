@@ -636,7 +636,8 @@ auto compute_search_direction(const Input &input, const Settings &settings,
       sq_constraint_violation_norm);
 
   for (int i = 0; i < y_dim; ++i) {
-    max_constraint_violation = std::max(kkt_error, std::fabs(c[i]));
+    max_constraint_violation =
+        std::max(max_constraint_violation, std::fabs(c[i]));
   }
 
   for (int i = 0; i < s_dim; ++i) {
