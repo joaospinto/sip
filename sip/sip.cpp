@@ -149,100 +149,31 @@ void update_next_primal_vars(const Input &input, const Settings &settings,
   }
 }
 
-void update_next_dual_vars(const Input &input, const Settings &settings,
-                           const double tau, Workspace &workspace,
-                           const double merit_delta) {
+void update_next_dual_vars(const Input &input, const double tau,
+                           Workspace &workspace, const double alpha) {
   const int s_dim = input.dimensions.s_dim;
   const int y_dim = input.dimensions.y_dim;
 
-  double allowed_merit_increase =
-      std::max(-settings.dual_armijo_factor * merit_delta,
-               settings.min_allowed_merit_increase);
-
   for (int i = 0; i < y_dim; ++i) {
-    workspace.next_vars.y[i] = workspace.vars.y[i] + workspace.delta_vars.y[i];
+    workspace.next_vars.y[i] =
+        workspace.vars.y[i] + alpha * workspace.delta_vars.y[i];
   }
-
-  const double original_y_merit = dot(workspace.vars.y, input.get_c(), y_dim);
-  const double new_y_merit = dot(workspace.next_vars.y, input.get_c(), y_dim);
-  const double dm_y = new_y_merit - original_y_merit;
 
   for (int i = 0; i < s_dim; ++i) {
     workspace.next_vars.z[i] =
-        std::max(workspace.vars.z[i] + workspace.delta_vars.z[i],
+        std::max(workspace.vars.z[i] + alpha * workspace.delta_vars.z[i],
                  (1.0 - tau) * workspace.vars.z[i]);
   }
 
-  const double original_z_merit =
-      dot(workspace.vars.z, workspace.miscellaneous_workspace.g_plus_s_plus_e,
-          s_dim);
-  const double new_z_merit =
-      dot(workspace.next_vars.z,
-          workspace.miscellaneous_workspace.g_plus_s_plus_e, s_dim);
-  const double dm_z = new_z_merit - original_z_merit;
-
-  double beta_y = 0.0;
-  double beta_z = 0.0;
-
-  if (dm_y <= 0.0) {
-    allowed_merit_increase -= dm_y;
-    beta_y = 1.0;
-  }
-
-  if (dm_z <= 0.0) {
-    allowed_merit_increase -= dm_z;
-    beta_z = 1.0;
-  }
-
-  if (dm_y > 0.0 && dm_z > 0.0) {
-    if (dm_y + dm_z < allowed_merit_increase) {
-      beta_y = 1.0;
-      beta_z = 1.0;
-    } else {
-      beta_y = 0.5 * allowed_merit_increase / dm_y;
-      beta_z = 0.5 * allowed_merit_increase / dm_z;
-      if (beta_y > 1.0 && beta_z > 1.0) {
-        beta_y = 1.0;
-        beta_z = 1.0;
-      } else if (beta_y > 1.0) {
-        beta_y = 1.0;
-        allowed_merit_increase -= dm_y;
-        beta_z = std::min(allowed_merit_increase / dm_z, 1.0);
-      } else if (beta_z > 0.0) {
-        beta_z = 1.0;
-        allowed_merit_increase -= dm_z;
-        beta_y = std::min(allowed_merit_increase / dm_y, 1.0);
-      }
-    }
-  } else if (dm_y > 0.0 && dm_z <= 0.0) {
-    beta_y = std::min(allowed_merit_increase / dm_y, 1.0);
-  } else if (dm_z > 0.0 && dm_y <= 0.0) {
-    beta_z = std::min(allowed_merit_increase / dm_z, 1.0);
-  }
-
-  for (int i = 0; i < y_dim; ++i) {
-    workspace.next_vars.y[i] =
-        workspace.vars.y[i] +
-        beta_y * (workspace.next_vars.y[i] - workspace.vars.y[i]);
-  }
-
-  for (int i = 0; i < s_dim; ++i) {
-    workspace.next_vars.z[i] =
-        workspace.vars.z[i] +
-        beta_z * (workspace.next_vars.z[i] - workspace.vars.z[i]);
-  }
-
-  if (beta_y > 0.0 || beta_z > 0.0) {
-    ModelCallbackInput mci{
-        .x = workspace.next_vars.x,
-        .y = workspace.next_vars.y,
-        .z = workspace.next_vars.z,
-        .new_x = false,
-        .new_y = true,
-        .new_z = true,
-    };
-    input.model_callback(mci);
-  }
+  ModelCallbackInput mci{
+      .x = workspace.next_vars.x,
+      .y = workspace.next_vars.y,
+      .z = workspace.next_vars.z,
+      .new_x = false,
+      .new_y = true,
+      .new_z = true,
+  };
+  input.model_callback(mci);
 }
 
 auto check_derivatives(const Input &input, const Settings &settings,
@@ -828,7 +759,7 @@ auto do_line_search(const Input &input, const Settings &settings,
     alpha /= settings.line_search_factor;
   }
 
-  update_next_dual_vars(input, settings, tau, workspace, merit_delta);
+  update_next_dual_vars(input, tau, workspace, alpha);
 
   return std::make_tuple(ls_succeeded, alpha, m0, constraint_violation_ratio);
 }

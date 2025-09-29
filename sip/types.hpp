@@ -67,8 +67,6 @@ struct Settings {
   double min_merit_slope_to_skip_line_search = -1e-3;
   // How much of the primal merit decrease to allow losing on the dual update.
   double dual_armijo_factor = 0.5;
-  // The minimum allowed increase of the merit function in the dual update.
-  double min_allowed_merit_increase = 1e-3;
   // Whether to enable the usage of elastic variables.
   bool enable_elastics = false;
   // Determines how elastic variables are penalized in the cost function.
