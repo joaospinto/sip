@@ -150,7 +150,10 @@ void update_next_primal_vars(const Input &input, const Settings &settings,
 }
 
 void update_next_dual_vars(const Input &input, const double tau,
-                           Workspace &workspace, const double alpha) {
+                           Workspace &workspace, double alpha) {
+  // TODO(joao): remove this.
+  alpha = 1.0;
+
   const int s_dim = input.dimensions.s_dim;
   const int y_dim = input.dimensions.y_dim;
 

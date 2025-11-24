@@ -1,13 +1,29 @@
-build --cxxopt=-std=c++23
-build --cxxopt=-Wall
-build --cxxopt=-Wextra
-build --cxxopt=-Wpedantic
-build --cxxopt=-Werror
+build:linux --cxxopt=-std=c++20
+build:linux --cxxopt=-Wall
+build:linux --cxxopt=-Wextra
+build:linux --cxxopt=-Wpedantic
+build:linux --cxxopt=-Werror
+build:linux --cxxopt=-O3
 
-build --client_env=CC=clang
+build:macos --cxxopt=-std=c++20
+build:macos --cxxopt=-Wall
+build:macos --cxxopt=-Wextra
+build:macos --cxxopt=-Wpedantic
+build:macos --cxxopt=-Werror
+build:macos --cxxopt=-O3
+
+build:windows --cxxopt=/std:c++20
+build:windows --cxxopt=/W4
+build:windows --cxxopt=/O2
+build:windows --cxxopt=/utf-8
 
 build -c opt
 build --cxxopt=-O3
+
+common --enable_platform_specific_config
+
+# Set minimum supported MacOS version to 11.0.
+build:macos --macos_minimum_os=11.0
 
 build:debug -c dbg
 build:debug --cxxopt=-gfull
