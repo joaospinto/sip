@@ -65,8 +65,6 @@ struct Settings {
   double line_search_min_step_size = 1e-6;
   // When the merit slope becomes larger than this, no line search is done.
   double min_merit_slope_to_skip_line_search = -1e-3;
-  // How much of the primal merit decrease to allow losing on the dual update.
-  double dual_armijo_factor = 0.5;
   // Whether to enable the usage of elastic variables.
   bool enable_elastics = false;
   // Determines how elastic variables are penalized in the cost function.
