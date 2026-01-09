@@ -178,6 +178,7 @@ struct Output {
   // The exit status of the optimization process.
   Status exit_status;
   int num_iterations;
+  int num_ls_iterations;
   double max_primal_violation;
   double max_dual_violation;
 };

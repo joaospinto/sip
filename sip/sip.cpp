@@ -807,6 +807,7 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
       return Output{
           .exit_status = Status::FAILED_CHECK,
           .num_iterations = 0,
+          .num_ls_iterations = 0,
           .max_primal_violation = std::numeric_limits<double>::signaling_NaN(),
           .max_dual_violation = -std::numeric_limits<double>::signaling_NaN(),
       };
@@ -825,6 +826,7 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
         return Output{
             .exit_status = Status::FAILED_CHECK,
             .num_iterations = 0,
+            .num_ls_iterations = 0,
             .max_primal_violation =
                 std::numeric_limits<double>::signaling_NaN(),
             .max_dual_violation = -std::numeric_limits<double>::signaling_NaN(),
@@ -838,6 +840,7 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
         return Output{
             .exit_status = Status::FAILED_CHECK,
             .num_iterations = 0,
+            .num_ls_iterations = 0,
             .max_primal_violation =
                 std::numeric_limits<double>::signaling_NaN(),
             .max_dual_violation = -std::numeric_limits<double>::signaling_NaN(),
@@ -913,6 +916,7 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
                                    : (suboptimal ? Status::SUBOPTIMAL
                                                  : Status::LOCALLY_INFEASIBLE),
           .num_iterations = iteration,
+          .num_ls_iterations = total_ls_iterations,
           .max_primal_violation = inf_norm(input.get_c(), y_dim),
           .max_dual_violation = inf_norm(workspace.nrhs.x, x_dim),
       };
@@ -922,6 +926,7 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
       return Output{
           .exit_status = Status::LINE_SEARCH_ITERATION_LIMIT,
           .num_iterations = iteration,
+          .num_ls_iterations = total_ls_iterations,
           .max_primal_violation = inf_norm(input.get_c(), y_dim),
           .max_dual_violation = inf_norm(workspace.nrhs.x, x_dim),
       };
@@ -951,6 +956,7 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
       return Output{
           .exit_status = Status::LINE_SEARCH_FAILURE,
           .num_iterations = iteration,
+          .num_ls_iterations = total_ls_iterations,
           .max_primal_violation = inf_norm(input.get_c(), y_dim),
           .max_dual_violation = inf_norm(workspace.nrhs.x, x_dim),
       };
@@ -962,6 +968,7 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
       return Output{
           .exit_status = Status::TIMEOUT,
           .num_iterations = iteration,
+          .num_ls_iterations = total_ls_iterations,
           .max_primal_violation = inf_norm(input.get_c(), y_dim),
           .max_dual_violation = inf_norm(workspace.nrhs.x, x_dim),
       };
@@ -983,6 +990,7 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
   return Output{
       .exit_status = Status::ITERATION_LIMIT,
       .num_iterations = settings.max_iterations,
+      .num_ls_iterations = total_ls_iterations,
       .max_primal_violation = inf_norm(input.get_c(), y_dim),
       .max_dual_violation = inf_norm(workspace.nrhs.x, x_dim),
   };
