@@ -12,13 +12,9 @@ $$\min\limits_{x} f(x) + \frac{\rho}{2} \lVert e \rVert^2 \qquad \mbox{s.t.}
 The functions $f, c, g$ are required to be continuously differentiable.
 
 The user is required to provide a linear system solver for the Newton-KKT systems.
-This can be done, for example via
-[SLACG](https://github.com/joaospinto/slacg)
-or
-[SIP_QDLDL](https://github.com/joaospinto/sip_qdldl).
+This can be done, for example via SLACG or SIP_QDLDL.
 
-Some examples with code can be found in the
-[SIP Examples](https://github.com/joaospinto/sip_examples) repository.
+Some examples with code can be found in the SIP Examples repository.
 
 No dynamic memory allocation is done inside of the solver, as long as logging is off.
 
