@@ -4,6 +4,7 @@ build:linux --cxxopt=-Wextra
 build:linux --cxxopt=-Wpedantic
 build:linux --cxxopt=-Werror
 build:linux --cxxopt=-O3
+build:linux --sandbox_add_mount_pair=/tmp
 
 build:macos --cxxopt=-std=c++20
 build:macos --cxxopt=-Wall
@@ -11,14 +12,15 @@ build:macos --cxxopt=-Wextra
 build:macos --cxxopt=-Wpedantic
 build:macos --cxxopt=-Werror
 build:macos --cxxopt=-O3
+build:macos --sandbox_add_mount_pair=/var/tmp
 
 build:windows --cxxopt=/std:c++20
 build:windows --cxxopt=/W4
 build:windows --cxxopt=/O2
 build:windows --cxxopt=/utf-8
+build:windows --sandbox_add_mount_pair=C:\Temp
 
 build -c opt
-build --cxxopt=-O3
 
 common --enable_platform_specific_config
 
