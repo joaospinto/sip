@@ -7,15 +7,6 @@
 
 module(name = "sip", version = "0.0.1")
 
-# Hedron's Compile Commands Extractor for Bazel
-# https://github.com/hedronvision/bazel-compile-commands-extractor
-bazel_dep(name = "hedron_compile_commands", dev_dependency = True)
-git_override(
-    module_name = "hedron_compile_commands",
-    remote = "https://github.com/hedronvision/bazel-compile-commands-extractor.git",
-    commit = "4f28899228fb3ad0126897876f147ca15026151e",
-)
-
 # Fmt library (as an alternative to std::format)
 bazel_dep(name = "fmt", version = "11.1.4")
 
@@ -31,4 +22,13 @@ use_repo(toolchains, "zig_sdk")
 register_toolchains(
     "@zig_sdk//toolchain/...",
     "@zig_sdk//libc_aware/toolchain/...",
+)
+
+# Hedron's Compile Commands Extractor for Bazel
+# https://github.com/hedronvision/bazel-compile-commands-extractor
+bazel_dep(name = "hedron_compile_commands", dev_dependency = True)
+git_override(
+    module_name = "hedron_compile_commands",
+    remote = "https://github.com/hedronvision/bazel-compile-commands-extractor.git",
+    commit = "4f28899228fb3ad0126897876f147ca15026151e",
 )

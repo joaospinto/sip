@@ -21,7 +21,6 @@ build:windows --cxxopt=/utf-8
 build:windows --sandbox_add_mount_pair=C:\Temp
 
 build -c opt
-build --cxxopt=-O3
 
 common --enable_platform_specific_config
 
