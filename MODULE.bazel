@@ -18,3 +18,17 @@ git_override(
 
 # Fmt library (as an alternative to std::format)
 bazel_dep(name = "fmt", version = "11.1.4")
+
+# rules_cc
+bazel_dep(name = "rules_cc", version = "0.2.17")
+
+# Hermetic C++ Toolchain (Zig CC)
+bazel_dep(name = "hermetic_cc_toolchain", version = "4.1.0")
+
+toolchains = use_extension("@hermetic_cc_toolchain//toolchain:ext.bzl", "toolchains")
+use_repo(toolchains, "zig_sdk")
+
+register_toolchains(
+    "@zig_sdk//toolchain/...",
+    "@zig_sdk//libc_aware/toolchain/...",
+)
