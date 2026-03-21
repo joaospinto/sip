@@ -481,7 +481,7 @@ auto compute_search_direction(const Input &input, const Settings &settings,
   double *vz = vy + y_dim;
 
   for (int i = 0; i < s_dim; ++i) {
-    w[i] = s[i] / z[i];
+    w[i] = std::clamp(s[i] / z[i], 1e-18, 1e18);
   }
 
   const double r1 = psi;
