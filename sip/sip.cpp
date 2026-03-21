@@ -571,10 +571,12 @@ auto compute_search_direction(const Input &input, const Settings &settings,
         std::max(max_constraint_violation, std::fabs(c[i]));
   }
 
+  double complementary_slackness = 0.0;
   for (int i = 0; i < s_dim; ++i) {
     max_constraint_violation = std::max(
         max_constraint_violation,
         std::fabs(workspace.miscellaneous_workspace.g_plus_s_plus_e[i]));
+    complementary_slackness = std::max(complementary_slackness, s[i] * z[i]);
   }
 
   for (int i = 0; i < x_dim; ++i) {
@@ -582,6 +584,7 @@ auto compute_search_direction(const Input &input, const Settings &settings,
   }
 
   kkt_error = std::max(kkt_error, max_constraint_violation);
+  kkt_error = std::max(kkt_error, complementary_slackness);
 
   const auto alpha_s_max =
       get_alpha_s_max(s_dim, tau, workspace.vars.s, workspace.delta_vars.s);
