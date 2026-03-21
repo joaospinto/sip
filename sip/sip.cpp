@@ -573,18 +573,29 @@ auto compute_search_direction(const Input &input, const Settings &settings,
 
   double complementary_slackness = 0.0;
   for (int i = 0; i < s_dim; ++i) {
-    max_constraint_violation = std::max(
-        max_constraint_violation,
-        std::fabs(workspace.miscellaneous_workspace.g_plus_s_plus_e[i]));
-    complementary_slackness = std::max(complementary_slackness, s[i] * z[i]);
+    const double abs_gpspe =
+        std::fabs(workspace.miscellaneous_workspace.g_plus_s_plus_e[i]);
+    max_constraint_violation =
+        std::isnan(abs_gpspe)
+            ? std::numeric_limits<double>::infinity()
+            : std::max(max_constraint_violation, abs_gpspe);
+    const double sz = s[i] * z[i];
+    complementary_slackness =
+        std::isnan(sz) ? std::numeric_limits<double>::infinity()
+                       : std::max(complementary_slackness, sz);
   }
 
   for (int i = 0; i < x_dim; ++i) {
-    kkt_error = std::max(kkt_error, std::fabs(rx[i]));
+    const double abs_rx = std::fabs(rx[i]);
+    kkt_error = std::isnan(abs_rx) ? std::numeric_limits<double>::infinity()
+                                   : std::max(kkt_error, abs_rx);
   }
 
   kkt_error = std::max(kkt_error, max_constraint_violation);
   kkt_error = std::max(kkt_error, complementary_slackness);
+  if (std::isnan(kkt_error)) {
+    kkt_error = std::numeric_limits<double>::infinity();
+  }
 
   const auto alpha_s_max =
       get_alpha_s_max(s_dim, tau, workspace.vars.s, workspace.delta_vars.s);
@@ -935,10 +946,23 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
       };
     }
 
-    const auto [ls_succeeded, alpha, m0, constraint_violation_ratio] =
-        do_line_search(input, settings, eta, mu, tau,
-                       sq_constraint_violation_norm, merit_slope, alpha_s_max,
-                       total_ls_iterations, workspace);
+    bool ls_succeeded;
+    double alpha, m0, constraint_violation_ratio;
+
+    if (settings.skip_line_search) {
+      alpha = alpha_s_max;
+      update_next_primal_vars(input, settings, tau, workspace, alpha, true,
+                              true, true);
+      update_next_dual_vars(input, tau, workspace, alpha);
+      ls_succeeded = true;
+      m0 = 0.0;
+      constraint_violation_ratio = 1.0;
+    } else {
+      std::tie(ls_succeeded, alpha, m0, constraint_violation_ratio) =
+          do_line_search(input, settings, eta, mu, tau,
+                         sq_constraint_violation_norm, merit_slope, alpha_s_max,
+                         total_ls_iterations, workspace);
+    }
 
     if (settings.print_logs) {
       if (iteration == 0 || settings.print_line_search_logs) {
@@ -986,6 +1010,9 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
         settings.min_acceptable_constraint_violation_ratio) {
       eta = std::min(eta * settings.penalty_parameter_increase_factor,
                      settings.max_penalty_parameter);
+      // Reset regularization when penalty increases, to stabilize the
+      // modified KKT system.
+      psi = std::max(psi, settings.initial_regularization);
     } else {
       eta = std::min(eta * settings.penalty_parameter_decrease_factor,
                      settings.max_penalty_parameter);

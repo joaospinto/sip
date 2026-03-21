@@ -71,6 +71,8 @@ struct Settings {
   bool enable_elastics = false;
   // Determines how elastic variables are penalized in the cost function.
   double elastic_var_cost_coeff = 0.0;
+  // When true, skips the line search and always takes alpha = alpha_s_max.
+  bool skip_line_search = false;
   // When true, halts the optimization process if a good step is not found.
   bool enable_line_search_failures = false;
   // Determines whether we should print the solver logs.
