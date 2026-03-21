@@ -46,6 +46,8 @@ struct Settings {
   double mu_update_factor = 0.5;
   // The minimum barrier coefficient.
   double mu_min = 1e-16;
+  // Only decrease mu when kkt_error <= kappa * mu.
+  double mu_update_kappa = 10.0;
   // The initial penalty parameter of the Augmented Lagrangian.
   double initial_penalty_parameter = 1e3;
   // Minimum acceptable constraint violation ratio for eta to not increase.

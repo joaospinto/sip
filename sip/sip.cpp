@@ -974,7 +974,9 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
       };
     }
 
-    mu = std::max(mu * settings.mu_update_factor, settings.mu_min);
+    if (kkt_error <= settings.mu_update_kappa * mu) {
+      mu = std::max(mu * settings.mu_update_factor, settings.mu_min);
+    }
     psi *= settings.regularization_decay_factor;
 
     if (constraint_violation_ratio >
