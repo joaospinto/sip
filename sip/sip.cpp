@@ -58,10 +58,11 @@ auto get_alpha_s_max(const int s_dim, const double tau, const double *s,
 void print_log_header() {
   fmt::print(fmt::emphasis::bold | fg(fmt::color::red),
              // clang-format off
-             "{:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10}\n",
+             "{:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10}\n",
              // clang-format on
              "iteration", "alpha", "f", "|c|", "|g+s+e|", "merit", "|dx|",
-             "|ds|", "|dy|", "|dz|", "|de|", "mu", "eta", "tau", "kkt_error");
+             "|ds|", "|dy|", "|dz|", "|de|", "mu", "eta", "tau", "psi", "n_reg",
+             "kkt_error");
 }
 
 void print_search_direction_log_header() {
@@ -91,6 +92,22 @@ void print_derivative_check_log_header() {
              // clang-format on
              "", "f/c/g", "out_index", "var_index", "rel_error", "abs_error",
              "est_slope", "theo_slope");
+}
+
+auto increased_regularization(const Settings &settings, const double psi)
+    -> double {
+  const auto &regularization = settings.regularization;
+  if (psi < regularization.first_positive) {
+    return regularization.first_positive;
+  }
+  return std::min(psi * regularization.increase_factor, regularization.maximum);
+}
+
+auto decreased_regularization(const Settings &settings, const double psi)
+    -> double {
+  const auto &regularization = settings.regularization;
+  const double decreased = psi * regularization.decrease_factor;
+  return decreased < regularization.first_positive ? 0.0 : decreased;
 }
 
 void update_next_primal_vars(const Input &input, const Settings &settings,
@@ -425,13 +442,13 @@ auto augmented_barrier_lagrangian_slope(
 }
 
 auto compute_search_direction(const Input &input, const Settings &settings,
-                              const double eta, const double mu,
-                              const double psi, const double tau,
+                              const double eta, const double mu, double &psi,
+                              const double tau,
                               const double sq_constraint_violation_norm,
                               Workspace &workspace)
-    -> std::tuple<const double *, const double *, const double *,
+    -> std::tuple<bool, const double *, const double *, const double *,
                   const double *, const double *, double, double, double,
-                  double, double> {
+                  double, double, int> {
   const double rho = settings.enable_elastics
                          ? settings.elastic_var_cost_coeff
                          : std::numeric_limits<double>::signaling_NaN();
@@ -484,11 +501,31 @@ auto compute_search_direction(const Input &input, const Settings &settings,
     w[i] = std::clamp(s[i] / z[i], 1e-18, 1e18);
   }
 
-  const double r1 = psi;
   const double eta_inv = 1.0 / eta;
   const double r3p = settings.enable_elastics ? eta_inv + 1.0 / rho : eta_inv;
 
-  input.factor(w, r1, eta_inv, r3p);
+  int num_regularization_increases = 0;
+  bool factorization_ok = false;
+  for (int attempt = 0; attempt < settings.regularization.max_attempts;
+       ++attempt) {
+    factorization_ok = input.factor(w, psi, eta_inv, r3p);
+    if (factorization_ok) {
+      break;
+    }
+    const double next_psi = increased_regularization(settings, psi);
+    if (next_psi <= psi || next_psi > settings.regularization.maximum) {
+      break;
+    }
+    psi = next_psi;
+    ++num_regularization_increases;
+  }
+
+  if (!factorization_ok) {
+    return std::make_tuple(false, dx, ds, dy, dz, de, 0.0, 0.0,
+                           std::numeric_limits<double>::infinity(),
+                           std::numeric_limits<double>::infinity(),
+                           lin_sys_error, num_regularization_increases);
+  }
 
   std::copy_n(grad_f, x_dim, rx);
 
@@ -533,7 +570,7 @@ auto compute_search_direction(const Input &input, const Settings &settings,
       residual[i] = -b[i];
     }
 
-    input.add_Kx_to_y(w, r1, eta_inv, r3p, vx, vy, vz, res_x, res_y, res_z);
+    input.add_Kx_to_y(w, psi, eta_inv, r3p, vx, vy, vz, res_x, res_y, res_z);
 
     input.solve(residual, u);
 
@@ -617,7 +654,7 @@ auto compute_search_direction(const Input &input, const Settings &settings,
       res_z[i] = -bz[i];
     }
 
-    input.add_Kx_to_y(w, r1, eta_inv, r3p, dx, dy, dz, res_x, res_y, res_z);
+    input.add_Kx_to_y(w, psi, eta_inv, r3p, dx, dy, dz, res_x, res_y, res_z);
 
     for (int i = 0; i < s_dim; ++i) {
       res_s[i] = ds[i] / w[i] + dz[i] + rs[i];
@@ -691,8 +728,9 @@ auto compute_search_direction(const Input &input, const Settings &settings,
       check_derivatives(input, settings, tau, workspace);
   }
 
-  return std::make_tuple(dx, ds, dy, dz, de, ms, alpha_s_max, kkt_error,
-                         max_constraint_violation, lin_sys_error);
+  return std::make_tuple(true, dx, ds, dy, dz, de, ms, alpha_s_max, kkt_error,
+                         max_constraint_violation, lin_sys_error,
+                         num_regularization_increases);
 }
 
 auto do_line_search(const Input &input, const Settings &settings,
@@ -779,6 +817,17 @@ auto do_line_search(const Input &input, const Settings &settings,
 
 auto check_settings(const Settings &settings) -> bool {
   if (settings.enable_elastics && settings.elastic_var_cost_coeff <= 0.0) {
+    return false;
+  }
+  const auto &regularization = settings.regularization;
+  if (regularization.initial < 0.0 ||
+      regularization.initial > regularization.maximum ||
+      regularization.first_positive <= 0.0 ||
+      regularization.maximum < regularization.first_positive ||
+      regularization.max_attempts <= 0 ||
+      regularization.increase_factor <= 1.0 ||
+      regularization.decrease_factor <= 0.0 ||
+      regularization.decrease_factor > 1.0) {
     return false;
   }
   if (settings.max_penalty_parameter < settings.initial_penalty_parameter) {
@@ -875,7 +924,7 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
 
   double eta = settings.initial_penalty_parameter;
   double mu = settings.initial_mu;
-  double psi = settings.initial_regularization;
+  double psi = settings.regularization.initial;
   const double tau = settings.tau;
 
   int total_ls_iterations = 0;
@@ -889,10 +938,21 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
 
     const double sq_constraint_violation_norm = ctc + gsetgse;
 
-    const auto [dx, ds, dy, dz, de, merit_slope, alpha_s_max, kkt_error,
-                max_constraint_violation, lin_sys_error] =
+    const auto [factorization_ok, dx, ds, dy, dz, de, merit_slope, alpha_s_max,
+                kkt_error, max_constraint_violation, lin_sys_error,
+                num_regularization_increases] =
         compute_search_direction(input, settings, eta, mu, psi, tau,
                                  sq_constraint_violation_norm, workspace);
+
+    if (!factorization_ok) {
+      return Output{
+          .exit_status = Status::FACTORIZATION_FAILURE,
+          .num_iterations = iteration,
+          .num_ls_iterations = total_ls_iterations,
+          .max_primal_violation = inf_norm(input.get_c(), y_dim),
+          .max_dual_violation = std::numeric_limits<double>::signaling_NaN(),
+      };
+    }
 
     const bool merit_slope_too_small = merit_slope > -settings.max_merit_slope;
 
@@ -910,14 +970,14 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
         print_log_header();
       }
       const double de_norm = settings.enable_elastics ? norm(de, s_dim) : -1.0;
-      fmt::print(fg(fmt::color::red),
-                 // clang-format off
-                       "{:^+10} {:^10} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^10} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g}\n",
-                 // clang-format on
-                 iteration, "", input.get_f(), std::sqrt(ctc),
-                 std::sqrt(gsetgse), "", norm(dx, x_dim), norm(ds, s_dim),
-                 norm(dy, y_dim), norm(dz, s_dim), de_norm, mu, eta, tau,
-                 kkt_error);
+      fmt::print(
+          fg(fmt::color::red),
+          // clang-format off
+                       "{:^+10} {:^10} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^10} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^10} {:^+10.4g}\n",
+          // clang-format on
+          iteration, "", input.get_f(), std::sqrt(ctc), std::sqrt(gsetgse), "",
+          norm(dx, x_dim), norm(ds, s_dim), norm(dy, y_dim), norm(dz, s_dim),
+          de_norm, mu, eta, tau, psi, num_regularization_increases, kkt_error);
     }
 
     if (succeeded || merit_slope_too_small) {
@@ -969,13 +1029,14 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
       }
 
       const double de_norm = settings.enable_elastics ? norm(de, s_dim) : -1.0;
-      fmt::print(fg(fmt::color::red),
-                 // clang-format off
-                       "{:^+10} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g}  {:^+10.4g} {:^+10.4g}\n",
-                 // clang-format on
-                 iteration, alpha, f0, std::sqrt(ctc), std::sqrt(gsetgse), m0,
-                 norm(dx, x_dim), norm(ds, s_dim), norm(dy, y_dim),
-                 norm(dz, s_dim), de_norm, mu, eta, tau, kkt_error);
+      fmt::print(
+          fg(fmt::color::red),
+          // clang-format off
+                       "{:^+10} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g}  {:^+10.4g} {:^+10.4g} {:^10} {:^+10.4g}\n",
+          // clang-format on
+          iteration, alpha, f0, std::sqrt(ctc), std::sqrt(gsetgse), m0,
+          norm(dx, x_dim), norm(ds, s_dim), norm(dy, y_dim), norm(dz, s_dim),
+          de_norm, mu, eta, tau, psi, num_regularization_increases, kkt_error);
     }
 
     if (settings.enable_line_search_failures && !ls_succeeded) {
@@ -1003,7 +1064,7 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
     if (kkt_error <= settings.mu_update_kappa * mu) {
       mu = std::max(mu * settings.mu_update_factor, settings.mu_min);
     }
-    psi *= settings.regularization_decay_factor;
+    psi = decreased_regularization(settings, psi);
 
     if (constraint_violation_ratio >
         settings.min_acceptable_constraint_violation_ratio) {
@@ -1011,7 +1072,7 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
                      settings.max_penalty_parameter);
       // Reset regularization when penalty increases, to stabilize the
       // modified KKT system.
-      psi = std::max(psi, settings.initial_regularization);
+      psi = std::max(psi, settings.regularization.initial);
     } else {
       eta = std::min(eta * settings.penalty_parameter_decrease_factor,
                      settings.max_penalty_parameter);

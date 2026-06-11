@@ -14,10 +14,26 @@ enum class Status {
   LINE_SEARCH_FAILURE = 5,
   TIMEOUT = 6,
   FAILED_CHECK = 7,
+  FACTORIZATION_FAILURE = 8,
 };
 
 // For nicer googletest outputs.
 auto operator<<(std::ostream &os, Status const &status) -> std::ostream &;
+
+struct RegularizationSettings {
+  // The initial x-regularization to be applied on the LHS.
+  double initial = 0.0;
+  // The first positive regularization value to try when increasing from zero.
+  double first_positive = 1e-8;
+  // The largest x-regularization value to try.
+  double maximum = 1e8;
+  // The maximum number of factorization attempts per iteration.
+  int max_attempts = 16;
+  // The multiplicative increase of the x-regularization coefficient.
+  double increase_factor = 10.0;
+  // The multiplicative decrease of the x-regularization coefficient.
+  double decrease_factor = 0.5;
+};
 
 struct Settings {
   // The maximum number of iterations the solver can do.
@@ -32,10 +48,8 @@ struct Settings {
   double max_suboptimal_constraint_violation = 1e-2;
   // The maximum allowed merit function slope.
   double max_merit_slope = 1e-16;
-  // The initial x-regularizatino to be applied on the LHS.
-  double initial_regularization = 1e-3;
-  // The multiplicative decay of the x-regularization coefficient.
-  double regularization_decay_factor = 0.5;
+  // Settings for inertia-correction x-regularization.
+  RegularizationSettings regularization;
   // A parameter of the fraction-to-the-boundary rule.
   double tau = 0.995;
   // Determines whether we start with alpha=alpha_s_max or alpha=1.
@@ -114,12 +128,13 @@ struct Input {
   // 1. K = [ H + r1 I_x      C.T        G.T   ]
   //        [     C        -r2 * I_y      0    ]
   //        [     G            0       -r3 I_z ]
-  // 2. (H + r1 I_x) is symmetric and positive definite;
-  // 3. r1, r2, r3 are non-negative regularization parameters.
+  // 2. r1, r2, r3 are non-negative regularization parameters;
+  // 3. the callback should return whether the factorization succeeded and the
+  //    KKT matrix has the desired inertia.
   //
   // NOTE: the user is responsible for storing H, C, G on their side.
 
-  using FactorCallback = std::function<void(const double *w, const double r1,
+  using FactorCallback = std::function<bool(const double *w, const double r1,
                                             const double r2, const double r3)>;
 
   using SolveCallback = std::function<void(const double *b, double *v)>;

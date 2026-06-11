@@ -33,6 +33,9 @@ auto operator<<(std::ostream &os, Status const &status) -> std::ostream & {
   case Status::FAILED_CHECK:
     os << "FAILED_CHECK";
     break;
+  case Status::FACTORIZATION_FAILURE:
+    os << "FACTORIZATION_FAILURE";
+    break;
   }
   return os;
 }
