@@ -576,13 +576,12 @@ auto compute_search_direction(const Input &input, const Settings &settings,
     const double abs_gpspe =
         std::fabs(workspace.miscellaneous_workspace.g_plus_s_plus_e[i]);
     max_constraint_violation =
-        std::isnan(abs_gpspe)
-            ? std::numeric_limits<double>::infinity()
-            : std::max(max_constraint_violation, abs_gpspe);
+        std::isnan(abs_gpspe) ? std::numeric_limits<double>::infinity()
+                              : std::max(max_constraint_violation, abs_gpspe);
     const double sz = s[i] * z[i];
-    complementary_slackness =
-        std::isnan(sz) ? std::numeric_limits<double>::infinity()
-                       : std::max(complementary_slackness, sz);
+    complementary_slackness = std::isnan(sz)
+                                  ? std::numeric_limits<double>::infinity()
+                                  : std::max(complementary_slackness, sz);
   }
 
   for (int i = 0; i < x_dim; ++i) {
