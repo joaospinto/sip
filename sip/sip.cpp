@@ -526,7 +526,7 @@ auto compute_search_direction(const Input &input, const Settings &settings,
                               Workspace &workspace)
     -> std::tuple<bool, const double *, const double *, const double *,
                   const double *, const double *, double, double, double,
-                  double, double, int> {
+                  double, double, double, int> {
   const double rho = settings.enable_elastics
                          ? settings.elastic_var_cost_coeff
                          : std::numeric_limits<double>::signaling_NaN();
@@ -537,6 +537,7 @@ auto compute_search_direction(const Input &input, const Settings &settings,
 
   double max_constraint_violation = 0.0;
   double kkt_error = 0.0;
+  double duality_gap = 0.0;
   double lin_sys_error = std::numeric_limits<double>::signaling_NaN();
 
   const double *s = workspace.vars.s;
@@ -610,7 +611,7 @@ auto compute_search_direction(const Input &input, const Settings &settings,
   if (!factorization_ok) {
     return std::make_tuple(false, dx, ds, dy, dz, de, 0.0, 0.0,
                            std::numeric_limits<double>::infinity(),
-                           std::numeric_limits<double>::infinity(),
+                           std::numeric_limits<double>::infinity(), 0.0,
                            lin_sys_error, num_regularization_increases);
   }
 
@@ -618,6 +619,16 @@ auto compute_search_direction(const Input &input, const Settings &settings,
 
   input.add_CTx_to_y(y, rx);
   input.add_GTx_to_y(z, rx);
+
+  if (std::isfinite(settings.max_duality_gap)) {
+    const double *g = input.get_g();
+    duality_gap =
+        dot(workspace.vars.x, rx, x_dim) - dot(c, y, y_dim) - dot(g, z, s_dim);
+    duality_gap = std::fabs(duality_gap);
+    if (std::isnan(duality_gap)) {
+      duality_gap = std::numeric_limits<double>::infinity();
+    }
+  }
 
   std::copy_n(c, y_dim, ry);
   std::copy_n(gpspe, s_dim, rz);
@@ -815,7 +826,7 @@ auto compute_search_direction(const Input &input, const Settings &settings,
   }
 
   return std::make_tuple(true, dx, ds, dy, dz, de, ms, alpha_s_max, kkt_error,
-                         max_constraint_violation, lin_sys_error,
+                         max_constraint_violation, duality_gap, lin_sys_error,
                          num_regularization_increases);
 }
 
@@ -900,6 +911,9 @@ auto do_line_search(const Input &input, const Settings &settings,
 }
 
 auto check_settings(const Settings &settings) -> bool {
+  if (settings.max_duality_gap < 0.0) {
+    return false;
+  }
   if (settings.enable_elastics && settings.elastic_var_cost_coeff <= 0.0) {
     return false;
   }
@@ -1025,7 +1039,7 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
     const double sq_constraint_violation_norm = ctc + gsetgse;
 
     const auto [factorization_ok, dx, ds, dy, dz, de, merit_slope, alpha_s_max,
-                kkt_error, max_constraint_violation, lin_sys_error,
+                kkt_error, max_constraint_violation, duality_gap, lin_sys_error,
                 num_regularization_increases] =
         compute_search_direction(input, settings, mu, psi, tau, workspace);
 
@@ -1040,11 +1054,13 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
     }
 
     const bool merit_slope_too_small = merit_slope > -settings.max_merit_slope;
+    const bool duality_gap_ok = duality_gap <= settings.max_duality_gap;
 
     const bool succeeded =
-        kkt_error < settings.max_kkt_violation ||
-        (merit_slope_too_small &&
-         max_constraint_violation < settings.max_kkt_violation);
+        duality_gap_ok &&
+        (kkt_error < settings.max_kkt_violation ||
+         (merit_slope_too_small &&
+          max_constraint_violation < settings.max_kkt_violation));
 
     const bool hit_ls_iteration_limit =
         total_ls_iterations >= settings.max_ls_iterations;
@@ -1066,7 +1082,7 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
           de_norm, mu, eta, tau, psi, num_regularization_increases, kkt_error);
     }
 
-    if (succeeded || merit_slope_too_small) {
+    if (succeeded || (merit_slope_too_small && duality_gap_ok)) {
       const bool suboptimal = max_constraint_violation <
                               settings.max_suboptimal_constraint_violation;
 

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <functional>
+#include <limits>
 #include <ostream>
 
 namespace sip {
@@ -44,6 +45,8 @@ struct Settings {
   int num_iterative_refinement_steps = 1;
   // The maximum allowed violation of the KKT system.
   double max_kkt_violation = 1e-8;
+  // The maximum allowed QP-style duality gap. Disabled when infinite.
+  double max_duality_gap = std::numeric_limits<double>::infinity();
   // The maximum allowed constraint violation to declare suboptimality.
   double max_suboptimal_constraint_violation = 1e-2;
   // The maximum allowed merit function slope.
