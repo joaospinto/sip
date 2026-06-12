@@ -47,6 +47,32 @@ auto mean_penalty_parameter(const Workspace &workspace, const int s_dim,
   return dim == 0 ? 0.0 : sum / dim;
 }
 
+auto max_abs_or_inf(const double *x, const int dim) -> double {
+  double out = 0.0;
+  for (int i = 0; i < dim; ++i) {
+    const double abs_x = std::fabs(x[i]);
+    out = std::isnan(abs_x) ? std::numeric_limits<double>::infinity()
+                            : std::max(out, abs_x);
+  }
+  return out;
+}
+
+auto max_positive_or_inf(const double *x, const int dim) -> double {
+  double out = 0.0;
+  for (int i = 0; i < dim; ++i) {
+    out = std::isnan(x[i]) ? std::numeric_limits<double>::infinity()
+                           : std::max(out, x[i]);
+  }
+  return out;
+}
+
+auto max_primal_violation(const Input &input) -> double {
+  const int s_dim = input.dimensions.s_dim;
+  const int y_dim = input.dimensions.y_dim;
+  return std::max(max_abs_or_inf(input.get_c(), y_dim),
+                  max_positive_or_inf(input.get_g(), s_dim));
+}
+
 auto merit_function(const Input &input, const Settings &settings,
                     const Workspace &workspace, const double *s,
                     const double *y, const double *z, const double *e,
@@ -1043,7 +1069,7 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
           .exit_status = Status::FACTORIZATION_FAILURE,
           .num_iterations = iteration,
           .num_ls_iterations = total_ls_iterations,
-          .max_primal_violation = inf_norm(input.get_c(), y_dim),
+          .max_primal_violation = max_primal_violation(input),
           .max_dual_violation = std::numeric_limits<double>::signaling_NaN(),
       };
     }
@@ -1087,7 +1113,7 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
                                                  : Status::LOCALLY_INFEASIBLE),
           .num_iterations = iteration,
           .num_ls_iterations = total_ls_iterations,
-          .max_primal_violation = inf_norm(input.get_c(), y_dim),
+          .max_primal_violation = max_primal_violation(input),
           .max_dual_violation = inf_norm(workspace.nrhs.x, x_dim),
       };
     }
@@ -1097,7 +1123,7 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
           .exit_status = Status::LINE_SEARCH_ITERATION_LIMIT,
           .num_iterations = iteration,
           .num_ls_iterations = total_ls_iterations,
-          .max_primal_violation = inf_norm(input.get_c(), y_dim),
+          .max_primal_violation = max_primal_violation(input),
           .max_dual_violation = inf_norm(workspace.nrhs.x, x_dim),
       };
     }
@@ -1140,7 +1166,7 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
           .exit_status = Status::LINE_SEARCH_FAILURE,
           .num_iterations = iteration,
           .num_ls_iterations = total_ls_iterations,
-          .max_primal_violation = inf_norm(input.get_c(), y_dim),
+          .max_primal_violation = max_primal_violation(input),
           .max_dual_violation = inf_norm(workspace.nrhs.x, x_dim),
       };
     }
@@ -1152,7 +1178,7 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
           .exit_status = Status::TIMEOUT,
           .num_iterations = iteration,
           .num_ls_iterations = total_ls_iterations,
-          .max_primal_violation = inf_norm(input.get_c(), y_dim),
+          .max_primal_violation = max_primal_violation(input),
           .max_dual_violation = inf_norm(workspace.nrhs.x, x_dim),
       };
     }
@@ -1175,7 +1201,7 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
       .exit_status = Status::ITERATION_LIMIT,
       .num_iterations = settings.max_iterations,
       .num_ls_iterations = total_ls_iterations,
-      .max_primal_violation = inf_norm(input.get_c(), y_dim),
+      .max_primal_violation = max_primal_violation(input),
       .max_dual_violation = inf_norm(workspace.nrhs.x, x_dim),
   };
 }
