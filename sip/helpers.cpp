@@ -53,7 +53,7 @@ auto norm(const double *x, const int dim) -> double {
 auto inf_norm(const double *x, const int dim) -> double {
   double out = 0.0;
   for (int i = 0; i < dim; ++i) {
-    out = std::max(out, x[i]);
+    out = std::max(out, std::fabs(x[i]));
   }
   return out;
 }
