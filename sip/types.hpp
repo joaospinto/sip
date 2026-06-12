@@ -138,9 +138,8 @@ struct Input {
   //
   // NOTE: the user is responsible for storing H, C, G on their side.
 
-  using FactorCallback = std::function<bool(const double *w, const double r1,
-                                            const double *r2,
-                                            const double *r3)>;
+  using FactorCallback = std::function<bool(
+      const double *w, const double r1, const double *r2, const double *r3)>;
 
   using SolveCallback = std::function<void(const double *b, double *v)>;
 

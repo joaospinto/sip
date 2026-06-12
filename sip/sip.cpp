@@ -159,16 +159,14 @@ auto update_penalty_parameters(const Input &input, const Settings &settings,
         new_c[i] * new_c[i] / std::max(old_c[i] * old_c[i], 1e-12);
     if (improvement_ratio >
         settings.min_acceptable_constraint_violation_ratio) {
-      workspace.penalties.y[i] =
-          std::min(workspace.penalties.y[i] *
-                       settings.penalty_parameter_increase_factor,
-                   settings.max_penalty_parameter);
+      workspace.penalties.y[i] = std::min(
+          workspace.penalties.y[i] * settings.penalty_parameter_increase_factor,
+          settings.max_penalty_parameter);
       any_increased = true;
     } else {
-      workspace.penalties.y[i] =
-          std::min(workspace.penalties.y[i] *
-                       settings.penalty_parameter_decrease_factor,
-                   settings.max_penalty_parameter);
+      workspace.penalties.y[i] = std::min(
+          workspace.penalties.y[i] * settings.penalty_parameter_decrease_factor,
+          settings.max_penalty_parameter);
     }
   }
 
@@ -178,16 +176,14 @@ auto update_penalty_parameters(const Input &input, const Settings &settings,
         std::max(old_gpspe[i] * old_gpspe[i], 1e-12);
     if (improvement_ratio >
         settings.min_acceptable_constraint_violation_ratio) {
-      workspace.penalties.z[i] =
-          std::min(workspace.penalties.z[i] *
-                       settings.penalty_parameter_increase_factor,
-                   settings.max_penalty_parameter);
+      workspace.penalties.z[i] = std::min(
+          workspace.penalties.z[i] * settings.penalty_parameter_increase_factor,
+          settings.max_penalty_parameter);
       any_increased = true;
     } else {
-      workspace.penalties.z[i] =
-          std::min(workspace.penalties.z[i] *
-                       settings.penalty_parameter_decrease_factor,
-                   settings.max_penalty_parameter);
+      workspace.penalties.z[i] = std::min(
+          workspace.penalties.z[i] * settings.penalty_parameter_decrease_factor,
+          settings.max_penalty_parameter);
     }
   }
 
@@ -499,9 +495,8 @@ auto augmented_barrier_lagrangian_slope(
   double abl_slope = dot(workspace.nrhs.x, dx, x_dim) +
                      dot(input.get_c(), dy, y_dim) + dot(gpspe, dz, s_dim) -
                      weighted_constraint_violation;
-  const double s_slope =
-      dot(workspace.nrhs.s, ds, s_dim) +
-      weighted_dot(gpspe, workspace.penalties.z, ds, s_dim);
+  const double s_slope = dot(workspace.nrhs.s, ds, s_dim) +
+                         weighted_dot(gpspe, workspace.penalties.z, ds, s_dim);
   const double e_slope =
       settings.enable_elastics
           ? dot(workspace.nrhs.e, de, s_dim) +
@@ -1118,10 +1113,9 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
       ls_succeeded = true;
       m0 = 0.0;
     } else {
-      std::tie(ls_succeeded, alpha, m0, std::ignore) =
-          do_line_search(input, settings, mu, tau, sq_constraint_violation_norm,
-                         merit_slope, alpha_s_max, total_ls_iterations,
-                         workspace);
+      std::tie(ls_succeeded, alpha, m0, std::ignore) = do_line_search(
+          input, settings, mu, tau, sq_constraint_violation_norm, merit_slope,
+          alpha_s_max, total_ls_iterations, workspace);
     }
 
     if (settings.print_logs) {
