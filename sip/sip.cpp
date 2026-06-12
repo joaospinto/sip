@@ -856,7 +856,7 @@ auto do_line_search(const Input &input, const Settings &settings,
                     const double sq_constraint_violation_norm,
                     const double merit_slope, const double alpha_s_max,
                     int &total_ls_iterations, Workspace &workspace)
-    -> std::tuple<double, double, double, double> {
+    -> std::tuple<bool, double, double, double> {
   const int s_dim = input.dimensions.s_dim;
   const int y_dim = input.dimensions.y_dim;
 
@@ -866,6 +866,7 @@ auto do_line_search(const Input &input, const Settings &settings,
 
   bool ls_succeeded = false;
   double alpha = settings.start_ls_with_alpha_s_max ? alpha_s_max : 1.0;
+  double trial_alpha = alpha;
   double merit_delta = std::numeric_limits<double>::signaling_NaN();
   double constraint_violation_ratio =
       std::numeric_limits<double>::signaling_NaN();
@@ -875,6 +876,7 @@ auto do_line_search(const Input &input, const Settings &settings,
   }
 
   do {
+    trial_alpha = alpha;
     update_next_primal_vars(input, settings, tau, workspace, alpha, true, true,
                             true);
     const double next_ctc = squared_norm(input.get_c(), y_dim);
@@ -922,8 +924,8 @@ auto do_line_search(const Input &input, const Settings &settings,
   } while (alpha > settings.line_search_min_step_size &&
            total_ls_iterations < settings.max_ls_iterations);
 
-  if (alpha <= settings.line_search_min_step_size) {
-    alpha /= settings.line_search_factor;
+  if (!ls_succeeded) {
+    alpha = trial_alpha;
   }
 
   update_next_dual_vars(input, tau, workspace, alpha);
