@@ -932,24 +932,70 @@ auto do_line_search(const Input &input, const Settings &settings,
 }
 
 auto check_settings(const Settings &settings) -> bool {
-  if (settings.max_duality_gap < 0.0) {
+  const auto is_finite_nonnegative = [](const double value) {
+    return std::isfinite(value) && value >= 0.0;
+  };
+  const auto is_finite_positive = [](const double value) {
+    return std::isfinite(value) && value > 0.0;
+  };
+  const auto is_nonnegative_or_inf = [](const double value) {
+    return !std::isnan(value) && value >= 0.0;
+  };
+
+  if (settings.max_iterations < 0 || settings.max_ls_iterations < 0 ||
+      settings.num_iterative_refinement_steps < 0) {
     return false;
   }
-  if (settings.enable_elastics && settings.elastic_var_cost_coeff <= 0.0) {
+  if (!is_finite_nonnegative(settings.max_kkt_violation) ||
+      !is_nonnegative_or_inf(settings.max_duality_gap) ||
+      !is_finite_nonnegative(settings.max_suboptimal_constraint_violation) ||
+      !is_finite_nonnegative(settings.max_merit_slope)) {
+    return false;
+  }
+  if (!is_finite_positive(settings.tau) || settings.tau > 1.0) {
+    return false;
+  }
+  if (!is_finite_nonnegative(settings.initial_mu) ||
+      !is_finite_nonnegative(settings.mu_update_factor) ||
+      settings.mu_update_factor > 1.0 ||
+      !is_finite_nonnegative(settings.mu_min) ||
+      !is_finite_nonnegative(settings.mu_update_kappa)) {
+    return false;
+  }
+  if (!is_finite_positive(settings.initial_penalty_parameter) ||
+      !is_finite_nonnegative(
+          settings.min_acceptable_constraint_violation_ratio) ||
+      !is_finite_positive(settings.penalty_parameter_increase_factor) ||
+      settings.penalty_parameter_increase_factor < 1.0 ||
+      !is_finite_positive(settings.penalty_parameter_decrease_factor) ||
+      settings.penalty_parameter_decrease_factor > 1.0 ||
+      !is_finite_positive(settings.max_penalty_parameter) ||
+      settings.max_penalty_parameter < settings.initial_penalty_parameter) {
+    return false;
+  }
+  if (!is_finite_nonnegative(settings.armijo_factor) ||
+      settings.armijo_factor > 1.0 ||
+      !is_finite_positive(settings.line_search_factor) ||
+      settings.line_search_factor >= 1.0 ||
+      !is_finite_positive(settings.line_search_min_step_size) ||
+      !std::isfinite(settings.min_merit_slope_to_skip_line_search)) {
+    return false;
+  }
+  if (settings.enable_elastics &&
+      !is_finite_positive(settings.elastic_var_cost_coeff)) {
     return false;
   }
   const auto &regularization = settings.regularization;
-  if (regularization.initial < 0.0 ||
+  if (!is_finite_nonnegative(regularization.initial) ||
       regularization.initial > regularization.maximum ||
-      regularization.first_positive <= 0.0 ||
+      !is_finite_positive(regularization.first_positive) ||
+      !is_finite_positive(regularization.maximum) ||
       regularization.maximum < regularization.first_positive ||
       regularization.max_attempts <= 0 ||
+      !is_finite_positive(regularization.increase_factor) ||
       regularization.increase_factor <= 1.0 ||
-      regularization.decrease_factor <= 0.0 ||
+      !is_finite_positive(regularization.decrease_factor) ||
       regularization.decrease_factor > 1.0) {
-    return false;
-  }
-  if (settings.max_penalty_parameter < settings.initial_penalty_parameter) {
     return false;
   }
   if (settings.print_line_search_logs && !settings.print_logs) {
