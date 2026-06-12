@@ -16,25 +16,58 @@ namespace sip {
 
 namespace {
 
+auto weighted_squared_norm(const double *x, const double *w, const int dim)
+    -> double {
+  double out = 0.0;
+  for (int i = 0; i < dim; ++i) {
+    out += w[i] * x[i] * x[i];
+  }
+  return out;
+}
+
+auto weighted_dot(const double *x, const double *w, const double *y,
+                  const int dim) -> double {
+  double out = 0.0;
+  for (int i = 0; i < dim; ++i) {
+    out += w[i] * x[i] * y[i];
+  }
+  return out;
+}
+
+auto mean_penalty_parameter(const Workspace &workspace, const int s_dim,
+                            const int y_dim) -> double {
+  double sum = 0.0;
+  for (int i = 0; i < y_dim; ++i) {
+    sum += workspace.penalties.y[i];
+  }
+  for (int i = 0; i < s_dim; ++i) {
+    sum += workspace.penalties.z[i];
+  }
+  const int dim = s_dim + y_dim;
+  return dim == 0 ? 0.0 : sum / dim;
+}
+
 auto merit_function(const Input &input, const Settings &settings,
                     const Workspace &workspace, const double *s,
                     const double *y, const double *z, const double *e,
-                    const double mu, const double eta,
-                    const double sq_constraint_violation_norm)
+                    const double mu)
     -> std::tuple<double, double, double, double, double, double, double> {
   const int s_dim = input.dimensions.s_dim;
   const int y_dim = input.dimensions.y_dim;
+  const double *c = input.get_c();
+  const double *gpspe = workspace.miscellaneous_workspace.g_plus_s_plus_e;
   const double s_term = -mu * sum_of_logs(s, s_dim);
-  const double c_term = dot(input.get_c(), y, y_dim);
-  const double g_term =
-      dot(workspace.miscellaneous_workspace.g_plus_s_plus_e, z, s_dim);
+  const double c_term = dot(c, y, y_dim);
+  const double g_term = dot(gpspe, z, s_dim);
   const double e_term =
       settings.enable_elastics
           ? 0.5 * settings.elastic_var_cost_coeff * squared_norm(e, s_dim)
           : 0.0;
   const double barrier_lagrangian =
       input.get_f() + s_term + c_term + g_term + e_term;
-  const double aug_term = 0.5 * eta * sq_constraint_violation_norm;
+  const double aug_term =
+      0.5 * (weighted_squared_norm(c, workspace.penalties.y, y_dim) +
+             weighted_squared_norm(gpspe, workspace.penalties.z, s_dim));
   const double merit = barrier_lagrangian + aug_term;
   return std::make_tuple(input.get_f(), s_term, c_term, g_term, e_term,
                          aug_term, merit);
@@ -108,6 +141,57 @@ auto decreased_regularization(const Settings &settings, const double psi)
   const auto &regularization = settings.regularization;
   const double decreased = psi * regularization.decrease_factor;
   return decreased < regularization.first_positive ? 0.0 : decreased;
+}
+
+auto update_penalty_parameters(const Input &input, const Settings &settings,
+                               Workspace &workspace) -> bool {
+  const int s_dim = input.dimensions.s_dim;
+  const int y_dim = input.dimensions.y_dim;
+  bool any_increased = false;
+
+  const double *old_c = workspace.nrhs.y;
+  const double *old_gpspe = workspace.nrhs.z;
+  const double *new_c = input.get_c();
+  const double *new_gpspe = workspace.miscellaneous_workspace.g_plus_s_plus_e;
+
+  for (int i = 0; i < y_dim; ++i) {
+    const double improvement_ratio =
+        new_c[i] * new_c[i] / std::max(old_c[i] * old_c[i], 1e-12);
+    if (improvement_ratio >
+        settings.min_acceptable_constraint_violation_ratio) {
+      workspace.penalties.y[i] =
+          std::min(workspace.penalties.y[i] *
+                       settings.penalty_parameter_increase_factor,
+                   settings.max_penalty_parameter);
+      any_increased = true;
+    } else {
+      workspace.penalties.y[i] =
+          std::min(workspace.penalties.y[i] *
+                       settings.penalty_parameter_decrease_factor,
+                   settings.max_penalty_parameter);
+    }
+  }
+
+  for (int i = 0; i < s_dim; ++i) {
+    const double improvement_ratio =
+        new_gpspe[i] * new_gpspe[i] /
+        std::max(old_gpspe[i] * old_gpspe[i], 1e-12);
+    if (improvement_ratio >
+        settings.min_acceptable_constraint_violation_ratio) {
+      workspace.penalties.z[i] =
+          std::min(workspace.penalties.z[i] *
+                       settings.penalty_parameter_increase_factor,
+                   settings.max_penalty_parameter);
+      any_increased = true;
+    } else {
+      workspace.penalties.z[i] =
+          std::min(workspace.penalties.z[i] *
+                       settings.penalty_parameter_decrease_factor,
+                   settings.max_penalty_parameter);
+    }
+  }
+
+  return any_increased;
 }
 
 void update_next_primal_vars(const Input &input, const Settings &settings,
@@ -366,26 +450,18 @@ auto check_derivatives(const Input &input, const Settings &settings,
 }
 
 auto get_observed_merit_slope(const Input &input, const Settings &settings,
-                              const double eta, const double mu,
-                              const double tau, Workspace &workspace)
+                              const double mu, const double tau,
+                              Workspace &workspace)
     -> std::tuple<double, double, double, double> {
-  const int s_dim = input.dimensions.s_dim;
-  const int y_dim = input.dimensions.y_dim;
-
   const auto compute_empirical_merit_slope =
       [&](const bool update_x, const bool update_s, const bool update_e) {
         const auto get_perturbed_merit = [&](const double beta) -> double {
           update_next_primal_vars(input, settings, tau, workspace, beta,
                                   update_x, update_s, update_e);
-          const double ctc = squared_norm(input.get_c(), y_dim);
-          const double gsetgse = squared_norm(
-              workspace.miscellaneous_workspace.g_plus_s_plus_e, s_dim);
-          const double sq_constraint_violation_norm = ctc + gsetgse;
           const auto [_mP_f, _mP_s, _mP_c, _mP_g, _mP_e, _mP_aug, mP] =
               merit_function(input, settings, workspace, workspace.next_vars.s,
                              workspace.vars.y, workspace.vars.z,
-                             workspace.next_vars.e, mu, eta,
-                             sq_constraint_violation_norm);
+                             workspace.next_vars.e, mu);
           return mP;
         };
 
@@ -411,21 +487,25 @@ auto get_observed_merit_slope(const Input &input, const Settings &settings,
 auto augmented_barrier_lagrangian_slope(
     const Input &input, const Settings &settings, const Workspace &workspace,
     const double *dx, const double *ds, const double *de, const double *dy,
-    const double *dz, const double eta, const double rho, const double psi,
-    const double sq_constraint_violation_norm)
+    const double *dz, const double rho, const double psi)
     -> std::tuple<double, double, double, double> {
   const int x_dim = input.dimensions.x_dim;
   const int s_dim = input.dimensions.s_dim;
   const int y_dim = input.dimensions.y_dim;
   const double *gpspe = workspace.miscellaneous_workspace.g_plus_s_plus_e;
+  const double weighted_constraint_violation =
+      weighted_squared_norm(input.get_c(), workspace.penalties.y, y_dim) +
+      weighted_squared_norm(gpspe, workspace.penalties.z, s_dim);
   double abl_slope = dot(workspace.nrhs.x, dx, x_dim) +
                      dot(input.get_c(), dy, y_dim) + dot(gpspe, dz, s_dim) -
-                     eta * sq_constraint_violation_norm;
+                     weighted_constraint_violation;
   const double s_slope =
-      dot(workspace.nrhs.s, ds, s_dim) + eta * dot(gpspe, ds, s_dim);
+      dot(workspace.nrhs.s, ds, s_dim) +
+      weighted_dot(gpspe, workspace.penalties.z, ds, s_dim);
   const double e_slope =
       settings.enable_elastics
-          ? dot(workspace.nrhs.e, de, s_dim) + eta * dot(gpspe, de, s_dim)
+          ? dot(workspace.nrhs.e, de, s_dim) +
+                weighted_dot(gpspe, workspace.penalties.z, de, s_dim)
           : 0.0;
   const double x_slope = abl_slope - s_slope - e_slope;
 
@@ -442,9 +522,7 @@ auto augmented_barrier_lagrangian_slope(
 }
 
 auto compute_search_direction(const Input &input, const Settings &settings,
-                              const double eta, const double mu, double &psi,
-                              const double tau,
-                              const double sq_constraint_violation_norm,
+                              const double mu, double &psi, const double tau,
                               Workspace &workspace)
     -> std::tuple<bool, const double *, const double *, const double *,
                   const double *, const double *, double, double, double,
@@ -484,6 +562,8 @@ auto compute_search_direction(const Input &input, const Settings &settings,
   double *re = workspace.nrhs.e;
 
   double *w = workspace.csd_workspace.w;
+  double *r2 = workspace.csd_workspace.r2;
+  double *r3 = workspace.csd_workspace.r3;
   double *b = workspace.csd_workspace.rhs_block_3x3;
   double *residual = workspace.csd_workspace.residual;
   double *v = workspace.csd_workspace.sol_block_3x3;
@@ -501,14 +581,21 @@ auto compute_search_direction(const Input &input, const Settings &settings,
     w[i] = std::clamp(s[i] / z[i], 1e-18, 1e18);
   }
 
-  const double eta_inv = 1.0 / eta;
-  const double r3p = settings.enable_elastics ? eta_inv + 1.0 / rho : eta_inv;
+  for (int i = 0; i < y_dim; ++i) {
+    r2[i] = 1.0 / workspace.penalties.y[i];
+  }
+  for (int i = 0; i < s_dim; ++i) {
+    r3[i] = 1.0 / workspace.penalties.z[i];
+    if (settings.enable_elastics) {
+      r3[i] += 1.0 / rho;
+    }
+  }
 
   int num_regularization_increases = 0;
   bool factorization_ok = false;
   for (int attempt = 0; attempt < settings.regularization.max_attempts;
        ++attempt) {
-    factorization_ok = input.factor(w, psi, eta_inv, r3p);
+    factorization_ok = input.factor(w, psi, r2, r3);
     if (factorization_ok) {
       break;
     }
@@ -570,7 +657,7 @@ auto compute_search_direction(const Input &input, const Settings &settings,
       residual[i] = -b[i];
     }
 
-    input.add_Kx_to_y(w, psi, eta_inv, r3p, vx, vy, vz, res_x, res_y, res_z);
+    input.add_Kx_to_y(w, psi, r2, r3, vx, vy, vz, res_x, res_y, res_z);
 
     input.solve(residual, u);
 
@@ -600,8 +687,7 @@ auto compute_search_direction(const Input &input, const Settings &settings,
   }
 
   const auto [ms_x, ms_s, ms_e, ms] = augmented_barrier_lagrangian_slope(
-      input, settings, workspace, dx, ds, de, dy, dz, eta, rho, psi,
-      sq_constraint_violation_norm);
+      input, settings, workspace, dx, ds, de, dy, dz, rho, psi);
 
   for (int i = 0; i < y_dim; ++i) {
     max_constraint_violation =
@@ -654,7 +740,7 @@ auto compute_search_direction(const Input &input, const Settings &settings,
       res_z[i] = -bz[i];
     }
 
-    input.add_Kx_to_y(w, psi, eta_inv, r3p, dx, dy, dz, res_x, res_y, res_z);
+    input.add_Kx_to_y(w, psi, r2, r3, dx, dy, dz, res_x, res_y, res_z);
 
     for (int i = 0; i < s_dim; ++i) {
       res_s[i] = ds[i] / w[i] + dz[i] + rs[i];
@@ -690,7 +776,6 @@ auto compute_search_direction(const Input &input, const Settings &settings,
     const double dxTHdx = dot(tmp_x, dx, x_dim);
     std::fill_n(tmp_y, y_dim, 0.0);
     input.add_Cx_to_y(dx, tmp_y);
-    const double Cdx2 = squared_norm(tmp_y, y_dim);
     double Winvds = 0.0;
     for (int i = 0; i < s_dim; ++i) {
       Winvds += ds[i] * ds[i] / w[i];
@@ -703,14 +788,15 @@ auto compute_search_direction(const Input &input, const Settings &settings,
       std::copy_n(ds, s_dim, tmp_s);
     }
     input.add_Gx_to_y(dx, tmp_s);
-    const double Gdepdspde2 = squared_norm(tmp_s, s_dim);
-    double ms_v2 = -dxTHdx - Winvds - eta * (Cdx2 + Gdepdspde2);
+    double ms_v2 = -dxTHdx - Winvds -
+                   weighted_squared_norm(tmp_y, workspace.penalties.y, y_dim) -
+                   weighted_squared_norm(tmp_s, workspace.penalties.z, s_dim);
     if (settings.enable_elastics) {
       ms_v2 -= settings.elastic_var_cost_coeff * squared_norm(de, s_dim);
     }
 
     const auto [os_x, os_s, os_e, os] =
-        get_observed_merit_slope(input, settings, eta, mu, tau, workspace);
+        get_observed_merit_slope(input, settings, mu, tau, workspace);
 
     const double re_norm = settings.enable_elastics ? norm(re, s_dim) : -1.0;
     fmt::print(fg(fmt::color::green),
@@ -734,7 +820,7 @@ auto compute_search_direction(const Input &input, const Settings &settings,
 }
 
 auto do_line_search(const Input &input, const Settings &settings,
-                    const double eta, const double mu, const double tau,
+                    const double mu, const double tau,
                     const double sq_constraint_violation_norm,
                     const double merit_slope, const double alpha_s_max,
                     int &total_ls_iterations, Workspace &workspace)
@@ -744,8 +830,7 @@ auto do_line_search(const Input &input, const Settings &settings,
 
   const auto [m0_f, m0_s, m0_c, m0_g, m0_e, m0_aug, m0] =
       merit_function(input, settings, workspace, workspace.vars.s,
-                     workspace.vars.y, workspace.vars.z, workspace.vars.e, mu,
-                     eta, sq_constraint_violation_norm);
+                     workspace.vars.y, workspace.vars.z, workspace.vars.e, mu);
 
   bool ls_succeeded = false;
   double alpha = settings.start_ls_with_alpha_s_max ? alpha_s_max : 1.0;
@@ -769,8 +854,7 @@ auto do_line_search(const Input &input, const Settings &settings,
     // use next_vars.y and next_vars.z.
     const auto [m_f, m_s, m_c, m_g, m_e, m_aug, m] = merit_function(
         input, settings, workspace, workspace.next_vars.s, workspace.vars.y,
-        workspace.vars.z, workspace.next_vars.e, mu, eta,
-        next_sq_constraint_violation_norm);
+        workspace.vars.z, workspace.next_vars.e, mu);
 
     const double dm_f = m_f - m0_f;
     const double dm_s = m_s - m0_s;
@@ -922,7 +1006,9 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
                 workspace.miscellaneous_workspace.g_plus_s_plus_e);
   }
 
-  double eta = settings.initial_penalty_parameter;
+  std::fill_n(workspace.penalties.y, y_dim, settings.initial_penalty_parameter);
+  std::fill_n(workspace.penalties.z, s_dim, settings.initial_penalty_parameter);
+
   double mu = settings.initial_mu;
   double psi = settings.regularization.initial;
   const double tau = settings.tau;
@@ -941,8 +1027,7 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
     const auto [factorization_ok, dx, ds, dy, dz, de, merit_slope, alpha_s_max,
                 kkt_error, max_constraint_violation, lin_sys_error,
                 num_regularization_increases] =
-        compute_search_direction(input, settings, eta, mu, psi, tau,
-                                 sq_constraint_violation_norm, workspace);
+        compute_search_direction(input, settings, mu, psi, tau, workspace);
 
     if (!factorization_ok) {
       return Output{
@@ -970,6 +1055,7 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
         print_log_header();
       }
       const double de_norm = settings.enable_elastics ? norm(de, s_dim) : -1.0;
+      const double eta = mean_penalty_parameter(workspace, s_dim, y_dim);
       fmt::print(
           fg(fmt::color::red),
           // clang-format off
@@ -1006,7 +1092,7 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
     }
 
     bool ls_succeeded;
-    double alpha, m0, constraint_violation_ratio;
+    double alpha, m0;
 
     if (settings.skip_line_search) {
       alpha = alpha_s_max;
@@ -1015,12 +1101,11 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
       update_next_dual_vars(input, tau, workspace, alpha);
       ls_succeeded = true;
       m0 = 0.0;
-      constraint_violation_ratio = 1.0;
     } else {
-      std::tie(ls_succeeded, alpha, m0, constraint_violation_ratio) =
-          do_line_search(input, settings, eta, mu, tau,
-                         sq_constraint_violation_norm, merit_slope, alpha_s_max,
-                         total_ls_iterations, workspace);
+      std::tie(ls_succeeded, alpha, m0, std::ignore) =
+          do_line_search(input, settings, mu, tau, sq_constraint_violation_norm,
+                         merit_slope, alpha_s_max, total_ls_iterations,
+                         workspace);
     }
 
     if (settings.print_logs) {
@@ -1029,6 +1114,7 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
       }
 
       const double de_norm = settings.enable_elastics ? norm(de, s_dim) : -1.0;
+      const double eta = mean_penalty_parameter(workspace, s_dim, y_dim);
       fmt::print(
           fg(fmt::color::red),
           // clang-format off
@@ -1066,16 +1152,12 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
     }
     psi = decreased_regularization(settings, psi);
 
-    if (constraint_violation_ratio >
-        settings.min_acceptable_constraint_violation_ratio) {
-      eta = std::min(eta * settings.penalty_parameter_increase_factor,
-                     settings.max_penalty_parameter);
+    const bool any_penalty_increased =
+        update_penalty_parameters(input, settings, workspace);
+    if (any_penalty_increased) {
       // Reset regularization when penalty increases, to stabilize the
       // modified KKT system.
       psi = std::max(psi, settings.regularization.initial);
-    } else {
-      eta = std::min(eta * settings.penalty_parameter_decrease_factor,
-                     settings.max_penalty_parameter);
     }
   }
 

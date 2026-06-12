@@ -125,22 +125,24 @@ struct Input {
   //       them as lambdas and wrapping them with std::cref.
 
   // NOTE: the factor/solve callbacks should solve Kv = b, where:
-  // 1. K = [ H + r1 I_x      C.T        G.T   ]
-  //        [     C        -r2 * I_y      0    ]
-  //        [     G            0       -r3 I_z ]
+  // 1. K = [ H + r1 I_x       C.T          G.T    ]
+  //        [     C        -diag(r2)         0     ]
+  //        [     G             0       -diag(r3)  ]
   // 2. r1, r2, r3 are non-negative regularization parameters;
+  //    r2 has length y_dim and r3 has length s_dim;
   // 3. the callback should return whether the factorization succeeded and the
   //    KKT matrix has the desired inertia.
   //
   // NOTE: the user is responsible for storing H, C, G on their side.
 
   using FactorCallback = std::function<bool(const double *w, const double r1,
-                                            const double r2, const double r3)>;
+                                            const double *r2,
+                                            const double *r3)>;
 
   using SolveCallback = std::function<void(const double *b, double *v)>;
 
   using Block3x3KKTProductCallback = std::function<void(
-      const double *w, const double r1, const double r2, const double r3,
+      const double *w, const double r1, const double *r2, const double *r3,
       const double *x_x, const double *x_y, const double *x_z, double *y_x,
       double *y_y, double *y_z)>;
 
@@ -250,6 +252,10 @@ struct MiscellaneousWorkspace {
 struct ComputeSearchDirectionWorkspace {
   // Stores S^{-1} Z
   double *w;
+  // Stores the equality-constraint inverse penalty parameters.
+  double *r2;
+  // Stores the inequality-constraint inverse penalty parameters.
+  double *r3;
   // The RHS of the reduced block-3x3 Newton-KKT system.
   double *rhs_block_3x3;
   // The solution of the reduced block-3x3 Newton-KKT system.
@@ -260,16 +266,36 @@ struct ComputeSearchDirectionWorkspace {
   double *residual;
 
   // To dynamically allocate the required memory.
-  void reserve(int s_dim, int kkt_dim, int full_dim);
+  void reserve(int s_dim, int y_dim, int kkt_dim, int full_dim);
   void free();
 
   // For using pre-allocated (possibly statically allocated) memory.
-  auto mem_assign(int s_dim, int kkt_dim, int full_dim, unsigned char *mem_ptr)
-      -> int;
+  auto mem_assign(int s_dim, int y_dim, int kkt_dim, int full_dim,
+                  unsigned char *mem_ptr) -> int;
 
   // For knowing how much memory to pre-allocate.
-  static constexpr auto num_bytes(int s_dim, int kkt_dim, int full_dim) -> int {
-    return (s_dim + 3 * kkt_dim + full_dim) * sizeof(double);
+  static constexpr auto num_bytes(int s_dim, int y_dim, int kkt_dim,
+                                  int full_dim) -> int {
+    return (2 * s_dim + y_dim + 3 * kkt_dim + full_dim) * sizeof(double);
+  }
+};
+
+struct PenaltyParameterWorkspace {
+  // Equality-constraint penalty parameters.
+  double *y;
+  // Inequality-constraint penalty parameters.
+  double *z;
+
+  // To dynamically allocate the required memory.
+  void reserve(int s_dim, int y_dim);
+  void free();
+
+  // For using pre-allocated (possibly statically allocated) memory.
+  auto mem_assign(int s_dim, int y_dim, unsigned char *mem_ptr) -> int;
+
+  // For knowing how much memory to pre-allocate.
+  static constexpr auto num_bytes(int s_dim, int y_dim) -> int {
+    return (s_dim + y_dim) * sizeof(double);
   }
 };
 
@@ -292,6 +318,8 @@ struct Workspace {
   MiscellaneousWorkspace miscellaneous_workspace;
   // Stores the workspace used in compute_search_direction.
   ComputeSearchDirectionWorkspace csd_workspace;
+  // Stores equality and inequality penalty parameters.
+  PenaltyParameterWorkspace penalties;
 
   // To dynamically allocate the required memory.
   void reserve(int x_dim, int s_dim, int y_dim);
@@ -307,7 +335,9 @@ struct Workspace {
     const int full_dim = kkt_dim + s_dim + s_dim;
     return 4 * VariablesWorkspace::num_bytes(x_dim, s_dim, y_dim) +
            MiscellaneousWorkspace::num_bytes(s_dim) +
-           ComputeSearchDirectionWorkspace::num_bytes(s_dim, kkt_dim, full_dim);
+           ComputeSearchDirectionWorkspace::num_bytes(s_dim, y_dim, kkt_dim,
+                                                      full_dim) +
+           PenaltyParameterWorkspace::num_bytes(s_dim, y_dim);
   }
 };
 
