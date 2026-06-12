@@ -45,7 +45,6 @@ void VariablesWorkspace::reserve(int x_dim, int s_dim, int y_dim) {
   s = new double[s_dim];
   y = new double[y_dim];
   z = new double[s_dim];
-  e = new double[s_dim];
 }
 
 void VariablesWorkspace::free() {
@@ -53,7 +52,6 @@ void VariablesWorkspace::free() {
   delete[] s;
   delete[] y;
   delete[] z;
-  delete[] e;
 }
 
 auto VariablesWorkspace::mem_assign(int x_dim, int s_dim, int y_dim,
@@ -72,31 +70,20 @@ auto VariablesWorkspace::mem_assign(int x_dim, int s_dim, int y_dim,
   z = reinterpret_cast<decltype(z)>(mem_ptr + cum_size);
   cum_size += s_dim * sizeof(double);
 
-  e = reinterpret_cast<decltype(e)>(mem_ptr + cum_size);
-  cum_size += s_dim * sizeof(double);
-
   return cum_size;
 }
 
 void MiscellaneousWorkspace::reserve(int s_dim) {
   g_plus_s = new double[s_dim];
-  g_plus_s_plus_e = new double[s_dim];
 }
 
-void MiscellaneousWorkspace::free() {
-  delete[] g_plus_s;
-  delete[] g_plus_s_plus_e;
-}
+void MiscellaneousWorkspace::free() { delete[] g_plus_s; }
 
 auto MiscellaneousWorkspace::mem_assign(int s_dim, unsigned char *mem_ptr)
     -> int {
   int cum_size = 0;
 
   g_plus_s = reinterpret_cast<decltype(g_plus_s)>(mem_ptr + cum_size);
-  cum_size += s_dim * sizeof(double);
-
-  g_plus_s_plus_e =
-      reinterpret_cast<decltype(g_plus_s_plus_e)>(mem_ptr + cum_size);
   cum_size += s_dim * sizeof(double);
 
   return cum_size;
@@ -179,7 +166,7 @@ void Workspace::reserve(int x_dim, int s_dim, int y_dim) {
   nrhs.reserve(x_dim, s_dim, y_dim);
   miscellaneous_workspace.reserve(s_dim);
   const int kkt_dim = x_dim + s_dim + y_dim;
-  const int full_dim = kkt_dim + s_dim + s_dim;
+  const int full_dim = kkt_dim + s_dim;
   csd_workspace.reserve(s_dim, y_dim, kkt_dim, full_dim);
   penalties.reserve(s_dim, y_dim);
 }
@@ -204,7 +191,7 @@ auto Workspace::mem_assign(int x_dim, int s_dim, int y_dim,
   cum_size += nrhs.mem_assign(x_dim, s_dim, y_dim, mem_ptr + cum_size);
   cum_size += miscellaneous_workspace.mem_assign(s_dim, mem_ptr + cum_size);
   const int kkt_dim = x_dim + s_dim + y_dim;
-  const int full_dim = kkt_dim + s_dim + s_dim;
+  const int full_dim = kkt_dim + s_dim;
   cum_size += csd_workspace.mem_assign(s_dim, y_dim, kkt_dim, full_dim,
                                        mem_ptr + cum_size);
   cum_size += penalties.mem_assign(s_dim, y_dim, mem_ptr + cum_size);

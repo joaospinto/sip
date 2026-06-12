@@ -84,10 +84,6 @@ struct Settings {
   double line_search_min_step_size = 1e-6;
   // When the merit slope becomes larger than this, no line search is done.
   double min_merit_slope_to_skip_line_search = -1e-3;
-  // Whether to enable the usage of elastic variables.
-  bool enable_elastics = false;
-  // Determines how elastic variables are penalized in the cost function.
-  double elastic_var_cost_coeff = 0.0;
   // When true, skips the line search and always takes alpha = alpha_s_max.
   bool skip_line_search = false;
   // When true, halts the optimization process if a good step is not found.
@@ -215,8 +211,6 @@ struct VariablesWorkspace {
   double *y;
   // The dual variables associated with inequality constraints.
   double *z;
-  // The elastic variables.
-  double *e;
 
   // To dynamically allocate the required memory.
   void reserve(int x_dim, int s_dim, int y_dim);
@@ -228,15 +222,13 @@ struct VariablesWorkspace {
 
   // For knowing how much memory to pre-allocate.
   static constexpr auto num_bytes(int x_dim, int s_dim, int y_dim) -> int {
-    return (x_dim + y_dim + 3 * s_dim) * sizeof(double);
+    return (x_dim + y_dim + 2 * s_dim) * sizeof(double);
   }
 };
 
 struct MiscellaneousWorkspace {
   // Stores g(x) + s.
   double *g_plus_s;
-  // Stores g(x) + s (+ e, when applicable).
-  double *g_plus_s_plus_e;
 
   // To dynamically allocate the required memory.
   void reserve(int s_dim);
@@ -247,7 +239,7 @@ struct MiscellaneousWorkspace {
 
   // For knowing how much memory to pre-allocate.
   static constexpr auto num_bytes(int s_dim) -> int {
-    return 2 * s_dim * sizeof(double);
+    return s_dim * sizeof(double);
   }
 };
 
@@ -334,7 +326,7 @@ struct Workspace {
   // For knowing how much memory to pre-allocate.
   static constexpr auto num_bytes(int x_dim, int s_dim, int y_dim) -> int {
     const int kkt_dim = x_dim + s_dim + y_dim;
-    const int full_dim = kkt_dim + s_dim + s_dim;
+    const int full_dim = kkt_dim + s_dim;
     return 4 * VariablesWorkspace::num_bytes(x_dim, s_dim, y_dim) +
            MiscellaneousWorkspace::num_bytes(s_dim) +
            ComputeSearchDirectionWorkspace::num_bytes(s_dim, y_dim, kkt_dim,
