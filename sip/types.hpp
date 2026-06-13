@@ -43,8 +43,12 @@ struct Settings {
   int max_ls_iterations = 500;
   // The number of iterative refinement steps.
   int num_iterative_refinement_steps = 1;
-  // The maximum allowed violation of the KKT system.
-  double max_kkt_violation = 1e-8;
+  // The maximum allowed dual optimality residual.
+  double max_dual_residual = 1e-8;
+  // The maximum allowed constraint violation.
+  double max_constraint_violation = 1e-8;
+  // The maximum allowed complementarity gap max_i s_i z_i.
+  double max_complementarity_gap = 1e-8;
   // The maximum allowed QP-style duality gap. Disabled when infinite.
   double max_duality_gap = std::numeric_limits<double>::infinity();
   // Enable cost-change termination based on objective change and primal

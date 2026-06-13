@@ -162,11 +162,6 @@ auto decreased_regularization(const Settings &settings, const double psi)
 }
 
 struct TerminationChecks {
-  bool duality_gap_satisfied;
-  bool primal_feasibility_satisfied;
-  bool kkt_error_satisfied;
-  bool merit_slope_too_small;
-  bool cost_change_satisfied;
   bool solved;
   bool stalled;
 };
@@ -189,29 +184,29 @@ auto cost_change_satisfied(const Settings &settings,
 auto check_termination(const Settings &settings,
                        const std::optional<double> previous_cost,
                        const double current_cost, const double merit_slope,
-                       const double kkt_error,
+                       const double dual_residual,
                        const double max_constraint_violation,
+                       const double max_complementarity,
                        const double duality_gap) -> TerminationChecks {
   const bool duality_gap_satisfied = duality_gap <= settings.max_duality_gap;
   const bool primal_feasibility_satisfied =
-      max_constraint_violation < settings.max_kkt_violation;
-  const bool kkt_error_satisfied = kkt_error < settings.max_kkt_violation;
+      max_constraint_violation < settings.max_constraint_violation;
+  const bool dual_residual_satisfied =
+      dual_residual < settings.max_dual_residual;
+  const bool complementarity_satisfied =
+      max_complementarity < settings.max_complementarity_gap;
   const bool merit_slope_too_small = merit_slope > -settings.max_merit_slope;
   const bool cost_change_ok =
       cost_change_satisfied(settings, previous_cost, current_cost);
 
-  const bool kkt_optimality_satisfied =
-      kkt_error_satisfied ||
-      (merit_slope_too_small && primal_feasibility_satisfied);
+  const bool kkt_optimality_satisfied = dual_residual_satisfied &&
+                                        primal_feasibility_satisfied &&
+                                        complementarity_satisfied;
   const bool cost_change_optimality_satisfied =
       cost_change_ok && primal_feasibility_satisfied;
 
   return TerminationChecks{
-      .duality_gap_satisfied = duality_gap_satisfied,
-      .primal_feasibility_satisfied = primal_feasibility_satisfied,
-      .kkt_error_satisfied = kkt_error_satisfied,
-      .merit_slope_too_small = merit_slope_too_small,
-      .cost_change_satisfied = cost_change_ok,
+      // TODO(joao): probably only consider the duality gap in the first case...
       .solved = duality_gap_satisfied &&
                 (kkt_optimality_satisfied || cost_change_optimality_satisfied),
       .stalled = merit_slope_too_small,
@@ -562,13 +557,15 @@ auto compute_search_direction(const Input &input, const Settings &settings,
                               Workspace &workspace)
     -> std::tuple<bool, const double *, const double *, const double *,
                   const double *, double, double, double, double, double,
-                  double, int> {
+                  double, double, double, int> {
   const int x_dim = input.dimensions.x_dim;
   const int s_dim = input.dimensions.s_dim;
   const int y_dim = input.dimensions.y_dim;
   const int dim_3x3 = x_dim + s_dim + y_dim;
 
+  double dual_residual = 0.0;
   double max_constraint_violation = 0.0;
+  double max_complementarity = 0.0;
   double kkt_error = 0.0;
   double duality_gap = 0.0;
   double lin_sys_error = std::numeric_limits<double>::signaling_NaN();
@@ -637,6 +634,8 @@ auto compute_search_direction(const Input &input, const Settings &settings,
 
   if (!factorization_ok) {
     return std::make_tuple(false, dx, ds, dy, dz, 0.0, 0.0,
+                           std::numeric_limits<double>::infinity(),
+                           std::numeric_limits<double>::infinity(),
                            std::numeric_limits<double>::infinity(),
                            std::numeric_limits<double>::infinity(), 0.0,
                            lin_sys_error, num_regularization_increases);
@@ -718,7 +717,6 @@ auto compute_search_direction(const Input &input, const Settings &settings,
         std::max(max_constraint_violation, std::fabs(c[i]));
   }
 
-  double complementary_slackness = 0.0;
   for (int i = 0; i < s_dim; ++i) {
     const double abs_gps =
         std::fabs(workspace.miscellaneous_workspace.g_plus_s[i]);
@@ -726,19 +724,20 @@ auto compute_search_direction(const Input &input, const Settings &settings,
         std::isnan(abs_gps) ? std::numeric_limits<double>::infinity()
                             : std::max(max_constraint_violation, abs_gps);
     const double sz = s[i] * z[i];
-    complementary_slackness = std::isnan(sz)
-                                  ? std::numeric_limits<double>::infinity()
-                                  : std::max(complementary_slackness, sz);
+    max_complementarity = std::isnan(sz)
+                              ? std::numeric_limits<double>::infinity()
+                              : std::max(max_complementarity, sz);
   }
 
   for (int i = 0; i < x_dim; ++i) {
     const double abs_rx = std::fabs(rx[i]);
-    kkt_error = std::isnan(abs_rx) ? std::numeric_limits<double>::infinity()
-                                   : std::max(kkt_error, abs_rx);
+    dual_residual = std::isnan(abs_rx) ? std::numeric_limits<double>::infinity()
+                                       : std::max(dual_residual, abs_rx);
   }
 
+  kkt_error = dual_residual;
   kkt_error = std::max(kkt_error, max_constraint_violation);
-  kkt_error = std::max(kkt_error, complementary_slackness);
+  kkt_error = std::max(kkt_error, max_complementarity);
   if (std::isnan(kkt_error)) {
     kkt_error = std::numeric_limits<double>::infinity();
   }
@@ -819,8 +818,9 @@ auto compute_search_direction(const Input &input, const Settings &settings,
       check_derivatives(input, settings, tau, workspace);
   }
 
-  return std::make_tuple(true, dx, ds, dy, dz, ms, alpha_s_max, kkt_error,
-                         max_constraint_violation, duality_gap, lin_sys_error,
+  return std::make_tuple(true, dx, ds, dy, dz, ms, alpha_s_max, dual_residual,
+                         max_constraint_violation, max_complementarity,
+                         kkt_error, duality_gap, lin_sys_error,
                          num_regularization_increases);
 }
 
@@ -919,7 +919,9 @@ auto check_settings(const Settings &settings) -> bool {
       settings.num_iterative_refinement_steps < 0) {
     return false;
   }
-  if (!is_finite_nonnegative(settings.max_kkt_violation) ||
+  if (!is_finite_nonnegative(settings.max_dual_residual) ||
+      !is_finite_nonnegative(settings.max_constraint_violation) ||
+      !is_finite_nonnegative(settings.max_complementarity_gap) ||
       !is_nonnegative_or_inf(settings.max_duality_gap) ||
       !is_finite_nonnegative(settings.max_cost_change) ||
       !is_finite_nonnegative(settings.max_relative_cost_change) ||
@@ -1070,7 +1072,8 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
     const double sq_constraint_violation_norm = ctc + gsetgse;
 
     const auto [factorization_ok, dx, ds, dy, dz, merit_slope, alpha_s_max,
-                kkt_error, max_constraint_violation, duality_gap, lin_sys_error,
+                dual_residual, max_constraint_violation, max_complementarity,
+                kkt_error, duality_gap, lin_sys_error,
                 num_regularization_increases] =
         compute_search_direction(input, settings, mu, psi, tau, workspace);
 
@@ -1084,9 +1087,9 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
       };
     }
 
-    const TerminationChecks termination =
-        check_termination(settings, previous_cost, f0, merit_slope, kkt_error,
-                          max_constraint_violation, duality_gap);
+    const TerminationChecks termination = check_termination(
+        settings, previous_cost, f0, merit_slope, dual_residual,
+        max_constraint_violation, max_complementarity, duality_gap);
 
     const bool hit_ls_iteration_limit =
         total_ls_iterations >= settings.max_ls_iterations;
