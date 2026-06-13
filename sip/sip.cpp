@@ -214,7 +214,7 @@ auto check_termination(const Settings &settings,
       .cost_change_satisfied = cost_change_ok,
       .solved = duality_gap_satisfied &&
                 (kkt_optimality_satisfied || cost_change_optimality_satisfied),
-      .stalled = merit_slope_too_small && duality_gap_satisfied,
+      .stalled = merit_slope_too_small,
   };
 }
 
