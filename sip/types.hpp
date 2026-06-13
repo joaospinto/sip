@@ -47,6 +47,13 @@ struct Settings {
   double max_kkt_violation = 1e-8;
   // The maximum allowed QP-style duality gap. Disabled when infinite.
   double max_duality_gap = std::numeric_limits<double>::infinity();
+  // Enable cost-change termination based on objective change and primal
+  // feasibility.
+  bool enable_cost_change_termination = false;
+  // The absolute objective-change tolerance for cost-change termination.
+  double max_cost_change = 1e-8;
+  // The relative objective-change tolerance for cost-change termination.
+  double max_relative_cost_change = 1e-8;
   // The maximum allowed constraint violation to declare suboptimality.
   double max_suboptimal_constraint_violation = 1e-2;
   // The maximum allowed merit function slope.

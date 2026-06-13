@@ -161,6 +161,63 @@ auto decreased_regularization(const Settings &settings, const double psi)
   return decreased < regularization.first_positive ? 0.0 : decreased;
 }
 
+struct TerminationChecks {
+  bool duality_gap_satisfied;
+  bool primal_feasibility_satisfied;
+  bool kkt_error_satisfied;
+  bool merit_slope_too_small;
+  bool cost_change_satisfied;
+  bool solved;
+  bool stalled;
+};
+
+auto cost_change_satisfied(const Settings &settings,
+                           const std::optional<double> previous_cost,
+                           const double current_cost) -> bool {
+  if (!settings.enable_cost_change_termination || !previous_cost.has_value() ||
+      !std::isfinite(*previous_cost) || !std::isfinite(current_cost)) {
+    return false;
+  }
+
+  const double cost_change = std::fabs(current_cost - *previous_cost);
+  const double cost_scale = std::max(1.0, std::fabs(*previous_cost));
+  const double max_cost_change =
+      settings.max_cost_change + settings.max_relative_cost_change * cost_scale;
+  return cost_change <= max_cost_change;
+}
+
+auto check_termination(const Settings &settings,
+                       const std::optional<double> previous_cost,
+                       const double current_cost, const double merit_slope,
+                       const double kkt_error,
+                       const double max_constraint_violation,
+                       const double duality_gap) -> TerminationChecks {
+  const bool duality_gap_satisfied = duality_gap <= settings.max_duality_gap;
+  const bool primal_feasibility_satisfied =
+      max_constraint_violation < settings.max_kkt_violation;
+  const bool kkt_error_satisfied = kkt_error < settings.max_kkt_violation;
+  const bool merit_slope_too_small = merit_slope > -settings.max_merit_slope;
+  const bool cost_change_ok =
+      cost_change_satisfied(settings, previous_cost, current_cost);
+
+  const bool kkt_optimality_satisfied =
+      kkt_error_satisfied ||
+      (merit_slope_too_small && primal_feasibility_satisfied);
+  const bool cost_change_optimality_satisfied =
+      cost_change_ok && primal_feasibility_satisfied;
+
+  return TerminationChecks{
+      .duality_gap_satisfied = duality_gap_satisfied,
+      .primal_feasibility_satisfied = primal_feasibility_satisfied,
+      .kkt_error_satisfied = kkt_error_satisfied,
+      .merit_slope_too_small = merit_slope_too_small,
+      .cost_change_satisfied = cost_change_ok,
+      .solved = duality_gap_satisfied &&
+                (kkt_optimality_satisfied || cost_change_optimality_satisfied),
+      .stalled = merit_slope_too_small && duality_gap_satisfied,
+  };
+}
+
 auto update_penalty_parameters(const Input &input, const Settings &settings,
                                Workspace &workspace) -> bool {
   const int s_dim = input.dimensions.s_dim;
@@ -864,6 +921,8 @@ auto check_settings(const Settings &settings) -> bool {
   }
   if (!is_finite_nonnegative(settings.max_kkt_violation) ||
       !is_nonnegative_or_inf(settings.max_duality_gap) ||
+      !is_finite_nonnegative(settings.max_cost_change) ||
+      !is_finite_nonnegative(settings.max_relative_cost_change) ||
       !is_finite_nonnegative(settings.max_suboptimal_constraint_violation) ||
       !is_finite_nonnegative(settings.max_merit_slope)) {
     return false;
@@ -999,6 +1058,7 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
   const double tau = settings.tau;
 
   int total_ls_iterations = 0;
+  std::optional<double> previous_cost;
 
   for (int iteration = 0; iteration < settings.max_iterations; ++iteration) {
     const double f0 = input.get_f();
@@ -1024,19 +1084,14 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
       };
     }
 
-    const bool merit_slope_too_small = merit_slope > -settings.max_merit_slope;
-    const bool duality_gap_ok = duality_gap <= settings.max_duality_gap;
-
-    const bool succeeded =
-        duality_gap_ok &&
-        (kkt_error < settings.max_kkt_violation ||
-         (merit_slope_too_small &&
-          max_constraint_violation < settings.max_kkt_violation));
+    const TerminationChecks termination =
+        check_termination(settings, previous_cost, f0, merit_slope, kkt_error,
+                          max_constraint_violation, duality_gap);
 
     const bool hit_ls_iteration_limit =
         total_ls_iterations >= settings.max_ls_iterations;
 
-    if (settings.print_logs && (succeeded || hit_ls_iteration_limit)) {
+    if (settings.print_logs && (termination.solved || hit_ls_iteration_limit)) {
       if (iteration == 0 || settings.print_line_search_logs ||
           settings.print_search_direction_logs) {
         print_log_header();
@@ -1052,14 +1107,15 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
                  num_regularization_increases, kkt_error);
     }
 
-    if (succeeded || (merit_slope_too_small && duality_gap_ok)) {
+    if (termination.solved || termination.stalled) {
       const bool suboptimal = max_constraint_violation <
                               settings.max_suboptimal_constraint_violation;
 
       return Output{
-          .exit_status = succeeded ? Status::SOLVED
-                                   : (suboptimal ? Status::SUBOPTIMAL
-                                                 : Status::LOCALLY_INFEASIBLE),
+          .exit_status = termination.solved
+                             ? Status::SOLVED
+                             : (suboptimal ? Status::SUBOPTIMAL
+                                           : Status::LOCALLY_INFEASIBLE),
           .num_iterations = iteration,
           .num_ls_iterations = total_ls_iterations,
           .max_primal_violation = max_primal_violation(input),
@@ -1119,6 +1175,7 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
     }
 
     std::swap(workspace.vars, workspace.next_vars);
+    previous_cost = f0;
 
     if (input.timeout_callback()) {
       return Output{
