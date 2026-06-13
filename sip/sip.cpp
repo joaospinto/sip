@@ -111,10 +111,11 @@ auto get_alpha_s_max(const int s_dim, const double tau, const double *s,
 void print_log_header() {
   fmt::print(fmt::emphasis::bold | fg(fmt::color::red),
              // clang-format off
-             "{:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10}\n",
+             "{:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10}\n",
              // clang-format on
              "iteration", "alpha", "f", "|c|", "|g+s|", "merit", "|dx|", "|ds|",
-             "|dy|", "|dz|", "mu", "eta", "tau", "psi", "n_reg", "kkt_error");
+             "|dy|", "|dz|", "mu", "eta", "tau", "psi", "n_reg", "max_sz",
+             "dual_res", "kkt_error");
 }
 
 void print_search_direction_log_header() {
@@ -1100,14 +1101,15 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
         print_log_header();
       }
       const double eta = mean_penalty_parameter(workspace, s_dim, y_dim);
-      fmt::print(fg(fmt::color::red),
-                 // clang-format off
-                       "{:^+10} {:^10} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^10} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^10} {:^+10.4g}\n",
-                 // clang-format on
-                 iteration, "", input.get_f(), std::sqrt(ctc),
-                 std::sqrt(gsetgse), "", norm(dx, x_dim), norm(ds, s_dim),
-                 norm(dy, y_dim), norm(dz, s_dim), mu, eta, tau, psi,
-                 num_regularization_increases, kkt_error);
+      fmt::print(
+          fg(fmt::color::red),
+          // clang-format off
+                       "{:^+10} {:^10} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^10} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^10} {:^+10.4g} {:^+10.4g} {:^+10.4g}\n",
+          // clang-format on
+          iteration, "", input.get_f(), std::sqrt(ctc), std::sqrt(gsetgse), "",
+          norm(dx, x_dim), norm(ds, s_dim), norm(dy, y_dim), norm(dz, s_dim),
+          mu, eta, tau, psi, num_regularization_increases, max_complementarity,
+          dual_residual, kkt_error);
     }
 
     if (termination.solved || termination.stalled) {
@@ -1160,11 +1162,12 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
       fmt::print(
           fg(fmt::color::red),
           // clang-format off
-                       "{:^+10} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g}  {:^+10.4g} {:^+10.4g} {:^10} {:^+10.4g}\n",
+                       "{:^+10} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g}  {:^+10.4g} {:^+10.4g} {:^10} {:^+10.4g} {:^+10.4g} {:^+10.4g}\n",
           // clang-format on
           iteration, alpha, f0, std::sqrt(ctc), std::sqrt(gsetgse), m0,
           norm(dx, x_dim), norm(ds, s_dim), norm(dy, y_dim), norm(dz, s_dim),
-          mu, eta, tau, psi, num_regularization_increases, kkt_error);
+          mu, eta, tau, psi, num_regularization_increases, max_complementarity,
+          dual_residual, kkt_error);
     }
 
     if (settings.enable_line_search_failures && !ls_succeeded) {
