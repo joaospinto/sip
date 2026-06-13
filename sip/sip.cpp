@@ -170,15 +170,17 @@ struct TerminationChecks {
 auto cost_change_satisfied(const Settings &settings,
                            const std::optional<double> previous_cost,
                            const double current_cost) -> bool {
-  if (!settings.enable_cost_change_termination || !previous_cost.has_value() ||
-      !std::isfinite(*previous_cost) || !std::isfinite(current_cost)) {
+  if (!settings.termination.enable_cost_change_termination ||
+      !previous_cost.has_value() || !std::isfinite(*previous_cost) ||
+      !std::isfinite(current_cost)) {
     return false;
   }
 
   const double cost_change = std::fabs(current_cost - *previous_cost);
   const double cost_scale = std::max(1.0, std::fabs(*previous_cost));
   const double max_cost_change =
-      settings.max_cost_change + settings.max_relative_cost_change * cost_scale;
+      settings.termination.max_cost_change +
+      settings.termination.max_relative_cost_change * cost_scale;
   return cost_change <= max_cost_change;
 }
 
@@ -189,14 +191,16 @@ auto check_termination(const Settings &settings,
                        const double max_constraint_violation,
                        const double max_complementarity,
                        const double duality_gap) -> TerminationChecks {
-  const bool duality_gap_satisfied = duality_gap <= settings.max_duality_gap;
+  const bool duality_gap_satisfied =
+      duality_gap <= settings.termination.max_duality_gap;
   const bool primal_feasibility_satisfied =
-      max_constraint_violation < settings.max_constraint_violation;
+      max_constraint_violation < settings.termination.max_constraint_violation;
   const bool dual_residual_satisfied =
-      dual_residual < settings.max_dual_residual;
+      dual_residual < settings.termination.max_dual_residual;
   const bool complementarity_satisfied =
-      max_complementarity < settings.max_complementarity_gap;
-  const bool merit_slope_too_small = merit_slope > -settings.max_merit_slope;
+      max_complementarity < settings.termination.max_complementarity_gap;
+  const bool merit_slope_too_small =
+      merit_slope > -settings.termination.max_merit_slope;
   const bool cost_change_ok =
       cost_change_satisfied(settings, previous_cost, current_cost);
 
@@ -229,15 +233,17 @@ auto update_penalty_parameters(const Input &input, const Settings &settings,
     const double improvement_ratio =
         new_c[i] * new_c[i] / std::max(old_c[i] * old_c[i], 1e-12);
     if (improvement_ratio >
-        settings.min_acceptable_constraint_violation_ratio) {
-      workspace.penalties.y[i] = std::min(
-          workspace.penalties.y[i] * settings.penalty_parameter_increase_factor,
-          settings.max_penalty_parameter);
+        settings.penalty.min_acceptable_constraint_violation_ratio) {
+      workspace.penalties.y[i] =
+          std::min(workspace.penalties.y[i] *
+                       settings.penalty.penalty_parameter_increase_factor,
+                   settings.penalty.max_penalty_parameter);
       any_increased = true;
     } else {
-      workspace.penalties.y[i] = std::min(
-          workspace.penalties.y[i] * settings.penalty_parameter_decrease_factor,
-          settings.max_penalty_parameter);
+      workspace.penalties.y[i] =
+          std::min(workspace.penalties.y[i] *
+                       settings.penalty.penalty_parameter_decrease_factor,
+                   settings.penalty.max_penalty_parameter);
     }
   }
 
@@ -245,15 +251,17 @@ auto update_penalty_parameters(const Input &input, const Settings &settings,
     const double improvement_ratio =
         new_gps[i] * new_gps[i] / std::max(old_gps[i] * old_gps[i], 1e-12);
     if (improvement_ratio >
-        settings.min_acceptable_constraint_violation_ratio) {
-      workspace.penalties.z[i] = std::min(
-          workspace.penalties.z[i] * settings.penalty_parameter_increase_factor,
-          settings.max_penalty_parameter);
+        settings.penalty.min_acceptable_constraint_violation_ratio) {
+      workspace.penalties.z[i] =
+          std::min(workspace.penalties.z[i] *
+                       settings.penalty.penalty_parameter_increase_factor,
+                   settings.penalty.max_penalty_parameter);
       any_increased = true;
     } else {
-      workspace.penalties.z[i] = std::min(
-          workspace.penalties.z[i] * settings.penalty_parameter_decrease_factor,
-          settings.max_penalty_parameter);
+      workspace.penalties.z[i] =
+          std::min(workspace.penalties.z[i] *
+                       settings.penalty.penalty_parameter_decrease_factor,
+                   settings.penalty.max_penalty_parameter);
     }
   }
 
@@ -477,7 +485,7 @@ auto check_derivatives(const Input &input, const Settings &settings,
     }
   };
 
-  if (settings.only_check_search_direction_slope) {
+  if (settings.logging.only_check_search_direction_slope) {
     check_direction(std::nullopt);
   } else {
     VariablesWorkspace delta_vars_tmp;
@@ -647,7 +655,7 @@ auto compute_search_direction(const Input &input, const Settings &settings,
   input.add_CTx_to_y(y, rx);
   input.add_GTx_to_y(z, rx);
 
-  if (std::isfinite(settings.max_duality_gap)) {
+  if (std::isfinite(settings.termination.max_duality_gap)) {
     const double *g = input.get_g();
     duality_gap =
         dot(workspace.vars.x, rx, x_dim) - dot(c, y, y_dim) - dot(g, z, s_dim);
@@ -746,7 +754,7 @@ auto compute_search_direction(const Input &input, const Settings &settings,
   const auto alpha_s_max =
       get_alpha_s_max(s_dim, tau, workspace.vars.s, workspace.delta_vars.s);
 
-  if (settings.print_search_direction_logs) {
+  if (settings.logging.print_search_direction_logs) {
     double *res_x = residual;
     double *res_s = res_x + x_dim;
     double *res_y = res_s + s_dim;
@@ -815,7 +823,7 @@ auto compute_search_direction(const Input &input, const Settings &settings,
         (std::fabs(ms_x - os_x) /
              std::max({std::fabs(ms_x), std::fabs(os_x), 1e-12}) >
          0.5);
-    if (settings.print_derivative_check_logs && suspicious_derivatives)
+    if (settings.logging.print_derivative_check_logs && suspicious_derivatives)
       check_derivatives(input, settings, tau, workspace);
   }
 
@@ -839,13 +847,14 @@ auto do_line_search(const Input &input, const Settings &settings,
                      workspace.vars.z, mu);
 
   bool ls_succeeded = false;
-  double alpha = settings.start_ls_with_alpha_s_max ? alpha_s_max : 1.0;
+  double alpha =
+      settings.line_search.start_ls_with_alpha_s_max ? alpha_s_max : 1.0;
   double trial_alpha = alpha;
   double merit_delta = std::numeric_limits<double>::signaling_NaN();
   double constraint_violation_ratio =
       std::numeric_limits<double>::signaling_NaN();
 
-  if (settings.print_line_search_logs) {
+  if (settings.logging.print_line_search_logs) {
     print_line_search_log_header();
   }
 
@@ -874,7 +883,7 @@ auto do_line_search(const Input &input, const Settings &settings,
     constraint_violation_ratio = next_sq_constraint_violation_norm /
                                  std::max(sq_constraint_violation_norm, 1e-12);
 
-    if (settings.print_line_search_logs) {
+    if (settings.logging.print_line_search_logs) {
       fmt::print(fg(fmt::color::yellow),
                  // clang-format off
                        "{:^10} {:^+10} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g}\n",
@@ -886,15 +895,17 @@ auto do_line_search(const Input &input, const Settings &settings,
 
     ++total_ls_iterations;
 
-    if (merit_slope > settings.min_merit_slope_to_skip_line_search ||
-        merit_delta < settings.armijo_factor * merit_slope * alpha) {
+    if (merit_slope >
+            settings.line_search.min_merit_slope_to_skip_line_search ||
+        merit_delta <
+            settings.line_search.armijo_factor * merit_slope * alpha) {
       ls_succeeded = true;
       break;
     }
 
-    alpha *= settings.line_search_factor;
-  } while (alpha > settings.line_search_min_step_size &&
-           total_ls_iterations < settings.max_ls_iterations);
+    alpha *= settings.line_search.line_search_factor;
+  } while (alpha > settings.line_search.line_search_min_step_size &&
+           total_ls_iterations < settings.line_search.max_iterations);
 
   if (!ls_succeeded) {
     alpha = trial_alpha;
@@ -916,47 +927,51 @@ auto check_settings(const Settings &settings) -> bool {
     return !std::isnan(value) && value >= 0.0;
   };
 
-  if (settings.max_iterations < 0 || settings.max_ls_iterations < 0 ||
+  if (settings.max_iterations < 0 || settings.line_search.max_iterations < 0 ||
       settings.num_iterative_refinement_steps < 0) {
     return false;
   }
-  if (!is_finite_nonnegative(settings.max_dual_residual) ||
-      !is_finite_nonnegative(settings.max_constraint_violation) ||
-      !is_finite_nonnegative(settings.max_complementarity_gap) ||
-      !is_nonnegative_or_inf(settings.max_duality_gap) ||
-      !is_finite_nonnegative(settings.max_cost_change) ||
-      !is_finite_nonnegative(settings.max_relative_cost_change) ||
-      !is_finite_nonnegative(settings.max_suboptimal_constraint_violation) ||
-      !is_finite_nonnegative(settings.max_merit_slope)) {
-    return false;
-  }
-  if (!is_finite_positive(settings.tau) || settings.tau > 1.0) {
-    return false;
-  }
-  if (!is_finite_nonnegative(settings.initial_mu) ||
-      !is_finite_nonnegative(settings.mu_update_factor) ||
-      settings.mu_update_factor > 1.0 ||
-      !is_finite_nonnegative(settings.mu_min) ||
-      !is_finite_nonnegative(settings.mu_update_kappa)) {
-    return false;
-  }
-  if (!is_finite_positive(settings.initial_penalty_parameter) ||
+  if (!is_finite_nonnegative(settings.termination.max_dual_residual) ||
+      !is_finite_nonnegative(settings.termination.max_constraint_violation) ||
+      !is_finite_nonnegative(settings.termination.max_complementarity_gap) ||
+      !is_nonnegative_or_inf(settings.termination.max_duality_gap) ||
+      !is_finite_nonnegative(settings.termination.max_cost_change) ||
+      !is_finite_nonnegative(settings.termination.max_relative_cost_change) ||
       !is_finite_nonnegative(
-          settings.min_acceptable_constraint_violation_ratio) ||
-      !is_finite_positive(settings.penalty_parameter_increase_factor) ||
-      settings.penalty_parameter_increase_factor < 1.0 ||
-      !is_finite_positive(settings.penalty_parameter_decrease_factor) ||
-      settings.penalty_parameter_decrease_factor > 1.0 ||
-      !is_finite_positive(settings.max_penalty_parameter) ||
-      settings.max_penalty_parameter < settings.initial_penalty_parameter) {
+          settings.termination.max_suboptimal_constraint_violation) ||
+      !is_finite_nonnegative(settings.termination.max_merit_slope)) {
     return false;
   }
-  if (!is_finite_nonnegative(settings.armijo_factor) ||
-      settings.armijo_factor > 1.0 ||
-      !is_finite_positive(settings.line_search_factor) ||
-      settings.line_search_factor >= 1.0 ||
-      !is_finite_positive(settings.line_search_min_step_size) ||
-      !std::isfinite(settings.min_merit_slope_to_skip_line_search)) {
+  if (!is_finite_positive(settings.line_search.tau) ||
+      settings.line_search.tau > 1.0) {
+    return false;
+  }
+  if (!is_finite_nonnegative(settings.barrier.initial_mu) ||
+      !is_finite_nonnegative(settings.barrier.mu_update_factor) ||
+      settings.barrier.mu_update_factor > 1.0 ||
+      !is_finite_nonnegative(settings.barrier.mu_min) ||
+      !is_finite_nonnegative(settings.barrier.mu_update_kappa)) {
+    return false;
+  }
+  if (!is_finite_positive(settings.penalty.initial_penalty_parameter) ||
+      !is_finite_nonnegative(
+          settings.penalty.min_acceptable_constraint_violation_ratio) ||
+      !is_finite_positive(settings.penalty.penalty_parameter_increase_factor) ||
+      settings.penalty.penalty_parameter_increase_factor < 1.0 ||
+      !is_finite_positive(settings.penalty.penalty_parameter_decrease_factor) ||
+      settings.penalty.penalty_parameter_decrease_factor > 1.0 ||
+      !is_finite_positive(settings.penalty.max_penalty_parameter) ||
+      settings.penalty.max_penalty_parameter <
+          settings.penalty.initial_penalty_parameter) {
+    return false;
+  }
+  if (!is_finite_nonnegative(settings.line_search.armijo_factor) ||
+      settings.line_search.armijo_factor > 1.0 ||
+      !is_finite_positive(settings.line_search.line_search_factor) ||
+      settings.line_search.line_search_factor >= 1.0 ||
+      !is_finite_positive(settings.line_search.line_search_min_step_size) ||
+      !std::isfinite(
+          settings.line_search.min_merit_slope_to_skip_line_search)) {
     return false;
   }
   const auto &regularization = settings.regularization;
@@ -972,13 +987,15 @@ auto check_settings(const Settings &settings) -> bool {
       regularization.decrease_factor > 1.0) {
     return false;
   }
-  if (settings.print_line_search_logs && !settings.print_logs) {
+  if (settings.logging.print_line_search_logs && !settings.logging.print_logs) {
     return false;
   }
-  if (settings.print_search_direction_logs && !settings.print_logs) {
+  if (settings.logging.print_search_direction_logs &&
+      !settings.logging.print_logs) {
     return false;
   }
-  if (settings.print_derivative_check_logs && !settings.print_logs) {
+  if (settings.logging.print_derivative_check_logs &&
+      !settings.logging.print_logs) {
     return false;
   }
   return true;
@@ -1053,12 +1070,14 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
   add(input.get_g(), workspace.vars.s, s_dim,
       workspace.miscellaneous_workspace.g_plus_s);
 
-  std::fill_n(workspace.penalties.y, y_dim, settings.initial_penalty_parameter);
-  std::fill_n(workspace.penalties.z, s_dim, settings.initial_penalty_parameter);
+  std::fill_n(workspace.penalties.y, y_dim,
+              settings.penalty.initial_penalty_parameter);
+  std::fill_n(workspace.penalties.z, s_dim,
+              settings.penalty.initial_penalty_parameter);
 
-  double mu = settings.initial_mu;
+  double mu = settings.barrier.initial_mu;
   double psi = settings.regularization.initial;
-  const double tau = settings.tau;
+  const double tau = settings.line_search.tau;
 
   int total_ls_iterations = 0;
   std::optional<double> previous_cost;
@@ -1093,11 +1112,12 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
         max_constraint_violation, max_complementarity, duality_gap);
 
     const bool hit_ls_iteration_limit =
-        total_ls_iterations >= settings.max_ls_iterations;
+        total_ls_iterations >= settings.line_search.max_iterations;
 
-    if (settings.print_logs && (termination.solved || hit_ls_iteration_limit)) {
-      if (iteration == 0 || settings.print_line_search_logs ||
-          settings.print_search_direction_logs) {
+    if (settings.logging.print_logs &&
+        (termination.solved || hit_ls_iteration_limit)) {
+      if (iteration == 0 || settings.logging.print_line_search_logs ||
+          settings.logging.print_search_direction_logs) {
         print_log_header();
       }
       const double eta = mean_penalty_parameter(workspace, s_dim, y_dim);
@@ -1113,8 +1133,9 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
     }
 
     if (termination.solved || termination.stalled) {
-      const bool suboptimal = max_constraint_violation <
-                              settings.max_suboptimal_constraint_violation;
+      const bool suboptimal =
+          max_constraint_violation <
+          settings.termination.max_suboptimal_constraint_violation;
 
       return Output{
           .exit_status = termination.solved
@@ -1141,7 +1162,7 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
     bool ls_succeeded;
     double alpha, m0;
 
-    if (settings.skip_line_search) {
+    if (settings.line_search.skip_line_search) {
       alpha = alpha_s_max;
       update_next_primal_vars(input, tau, workspace, alpha, true, true);
       update_next_dual_vars(input, tau, workspace, alpha);
@@ -1153,8 +1174,8 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
           alpha_s_max, total_ls_iterations, workspace);
     }
 
-    if (settings.print_logs) {
-      if (iteration == 0 || settings.print_line_search_logs) {
+    if (settings.logging.print_logs) {
+      if (iteration == 0 || settings.logging.print_line_search_logs) {
         print_log_header();
       }
 
@@ -1170,7 +1191,7 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
           dual_residual, kkt_error);
     }
 
-    if (settings.enable_line_search_failures && !ls_succeeded) {
+    if (settings.line_search.enable_line_search_failures && !ls_succeeded) {
       return Output{
           .exit_status = Status::LINE_SEARCH_FAILURE,
           .num_iterations = iteration,
@@ -1193,8 +1214,9 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
       };
     }
 
-    if (kkt_error <= settings.mu_update_kappa * mu) {
-      mu = std::max(mu * settings.mu_update_factor, settings.mu_min);
+    if (kkt_error <= settings.barrier.mu_update_kappa * mu) {
+      mu = std::max(mu * settings.barrier.mu_update_factor,
+                    settings.barrier.mu_min);
     }
     psi = decreased_regularization(settings, psi);
 

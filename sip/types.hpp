@@ -36,13 +36,31 @@ struct RegularizationSettings {
   double decrease_factor = 0.5;
 };
 
-struct Settings {
-  // The maximum number of iterations the solver can do.
-  int max_iterations = 100;
-  // The maximum cumulative number of line search iterations.
-  int max_ls_iterations = 500;
-  // The number of iterative refinement steps.
-  int num_iterative_refinement_steps = 1;
+struct BarrierSettings {
+  // A parameter of the merit function and descent direction computation.
+  double initial_mu = 1e-3;
+  // Determines how much mu decreases per iteration.
+  double mu_update_factor = 0.5;
+  // The minimum barrier coefficient.
+  double mu_min = 1e-16;
+  // Only decrease mu when kkt_error <= kappa * mu.
+  double mu_update_kappa = 10.0;
+};
+
+struct PenaltySettings {
+  // The initial penalty parameter of the Augmented Lagrangian.
+  double initial_penalty_parameter = 1e3;
+  // Minimum acceptable constraint violation ratio for eta to not increase.
+  double min_acceptable_constraint_violation_ratio = 0.25;
+  // By what factor to increase eta.
+  double penalty_parameter_increase_factor = 10.0;
+  // By what factor to decrease eta.
+  double penalty_parameter_decrease_factor = 1.0;
+  // The maximum allowed penalty parameter in the AL merit function.
+  double max_penalty_parameter = 1e9;
+};
+
+struct TerminationSettings {
   // The maximum allowed dual optimality residual.
   double max_dual_residual = 1e-8;
   // The maximum allowed constraint violation.
@@ -62,30 +80,15 @@ struct Settings {
   double max_suboptimal_constraint_violation = 1e-2;
   // The maximum allowed merit function slope.
   double max_merit_slope = 1e-16;
-  // Settings for inertia-correction x-regularization.
-  RegularizationSettings regularization;
+};
+
+struct LineSearchSettings {
+  // The maximum cumulative number of line search iterations.
+  int max_iterations = 500;
   // A parameter of the fraction-to-the-boundary rule.
   double tau = 0.995;
   // Determines whether we start with alpha=alpha_s_max or alpha=1.
   bool start_ls_with_alpha_s_max = false;
-  // A parameter of the merit function and descent direction computation.
-  double initial_mu = 1e-3;
-  // Determines how much mu decreases per iteration.
-  double mu_update_factor = 0.5;
-  // The minimum barrier coefficient.
-  double mu_min = 1e-16;
-  // Only decrease mu when kkt_error <= kappa * mu.
-  double mu_update_kappa = 10.0;
-  // The initial penalty parameter of the Augmented Lagrangian.
-  double initial_penalty_parameter = 1e3;
-  // Minimum acceptable constraint violation ratio for eta to not increase.
-  double min_acceptable_constraint_violation_ratio = 0.25;
-  // By what factor to increase eta.
-  double penalty_parameter_increase_factor = 10.0;
-  // By what factor to decrease eta.
-  double penalty_parameter_decrease_factor = 1.0;
-  // The maximum allowed penalty parameter in the AL merit function.
-  double max_penalty_parameter = 1e9;
   // Determines when we accept a line search step, by the merit decrease and
   // slope.
   double armijo_factor = 1e-4;
@@ -99,6 +102,9 @@ struct Settings {
   bool skip_line_search = false;
   // When true, halts the optimization process if a good step is not found.
   bool enable_line_search_failures = false;
+};
+
+struct LoggingSettings {
   // Determines whether we should print the solver logs.
   bool print_logs = true;
   // Determines whether we should print the line search logs.
@@ -110,8 +116,27 @@ struct Settings {
   // When running derivative checks, will only use the search direction when
   // true.
   bool only_check_search_direction_slope = false;
+};
+
+struct Settings {
+  // The maximum number of iterations the solver can do.
+  int max_iterations = 100;
+  // The number of iterative refinement steps.
+  int num_iterative_refinement_steps = 1;
   // Handle checks with assert calls.
   bool assert_checks_pass = false;
+  // Settings for barrier parameter updates.
+  BarrierSettings barrier;
+  // Settings for penalty parameter updates.
+  PenaltySettings penalty;
+  // Settings for termination and status classification.
+  TerminationSettings termination;
+  // Settings for inertia-correction x-regularization.
+  RegularizationSettings regularization;
+  // Settings for fraction-to-boundary and merit line search.
+  LineSearchSettings line_search;
+  // Settings for logs and diagnostic checks.
+  LoggingSettings logging;
 };
 
 struct ModelCallbackInput {
