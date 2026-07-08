@@ -21,6 +21,15 @@ auto dot(const double *x, const double *y, const int dim) -> double {
   return out;
 }
 
+auto weighted_dot(const double *x, const double *w, const double *y,
+                  const int dim) -> double {
+  double out = 0.0;
+  for (int i = 0; i < dim; ++i) {
+    out += w[i] * x[i] * y[i];
+  }
+  return out;
+}
+
 auto sum_of_logs(const double *x, const int dim) -> double {
   double out = 0.0;
   for (int i = 0; i < dim; ++i) {
@@ -46,6 +55,15 @@ auto squared_norm(const double *x, const int dim) -> double {
   return out;
 }
 
+auto weighted_squared_norm(const double *x, const double *w, const int dim)
+    -> double {
+  double out = 0.0;
+  for (int i = 0; i < dim; ++i) {
+    out += w[i] * x[i] * x[i];
+  }
+  return out;
+}
+
 auto norm(const double *x, const int dim) -> double {
   return std::sqrt(squared_norm(x, dim));
 }
@@ -54,6 +72,25 @@ auto inf_norm(const double *x, const int dim) -> double {
   double out = 0.0;
   for (int i = 0; i < dim; ++i) {
     out = std::max(out, std::fabs(x[i]));
+  }
+  return out;
+}
+
+auto max_abs_or_inf(const double *x, const int dim) -> double {
+  double out = 0.0;
+  for (int i = 0; i < dim; ++i) {
+    const double abs_x = std::fabs(x[i]);
+    out = std::isnan(abs_x) ? std::numeric_limits<double>::infinity()
+                            : std::max(out, abs_x);
+  }
+  return out;
+}
+
+auto max_positive_or_inf(const double *x, const int dim) -> double {
+  double out = 0.0;
+  for (int i = 0; i < dim; ++i) {
+    out = std::isnan(x[i]) ? std::numeric_limits<double>::infinity()
+                           : std::max(out, x[i]);
   }
   return out;
 }
