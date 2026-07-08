@@ -50,6 +50,8 @@ struct BarrierSettings {
 struct PenaltySettings {
   // The initial penalty parameter of the Augmented Lagrangian.
   double initial_penalty_parameter = 1e3;
+  // Whether to preserve externally initialized penalty vectors in Workspace.
+  bool warm_start_penalties = false;
   // Minimum acceptable constraint violation ratio for eta to not increase.
   double min_acceptable_constraint_violation_ratio = 0.25;
   // By what factor to increase eta.

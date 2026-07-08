@@ -1033,10 +1033,12 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
   add(input.get_g(), workspace.vars.s, s_dim,
       workspace.miscellaneous_workspace.g_plus_s);
 
-  std::fill_n(workspace.penalties.y, y_dim,
-              settings.penalty.initial_penalty_parameter);
-  std::fill_n(workspace.penalties.z, s_dim,
-              settings.penalty.initial_penalty_parameter);
+  if (!settings.penalty.warm_start_penalties) {
+    std::fill_n(workspace.penalties.y, y_dim,
+                settings.penalty.initial_penalty_parameter);
+    std::fill_n(workspace.penalties.z, s_dim,
+                settings.penalty.initial_penalty_parameter);
+  }
 
   double mu = settings.barrier.initial_mu;
   double psi = settings.regularization.initial;
