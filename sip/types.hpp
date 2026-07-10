@@ -91,8 +91,6 @@ struct LineSearchSettings {
   int max_iterations = 500;
   // A parameter of the fraction-to-the-boundary rule.
   double tau = 0.995;
-  // Determines whether we start with alpha=alpha_s_max or alpha=1.
-  bool start_ls_with_alpha_s_max = false;
   // Determines when we accept a line search step, by the merit decrease and
   // slope.
   double armijo_factor = 1e-4;
@@ -104,6 +102,13 @@ struct LineSearchSettings {
   double min_merit_slope_to_skip_line_search = -1e-3;
   // When true, skips the line search and always takes alpha = alpha_s_max.
   bool skip_line_search = false;
+  // When true, accept a trial step if it passes Armijo, sufficiently reduces
+  // primal violation, or sufficiently reduces the objective.
+  bool use_filter_line_search = false;
+  // Filter margin for primal violation.
+  double filter_gamma_theta = 1e-5;
+  // Filter margin for objective.
+  double filter_gamma_f = 1e-5;
   // When true, halts the optimization process if a good step is not found.
   bool enable_line_search_failures = false;
 };

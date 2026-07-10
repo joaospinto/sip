@@ -854,8 +854,7 @@ auto do_line_search(const Input &input, const Settings &settings,
                      workspace.vars.z, mu);
 
   bool ls_succeeded = false;
-  double alpha =
-      settings.line_search.start_ls_with_alpha_s_max ? alpha_s_max : 1.0;
+  double alpha = alpha_s_max;
   double trial_alpha = alpha;
   double merit_delta = std::numeric_limits<double>::signaling_NaN();
   double constraint_violation_ratio =
@@ -889,7 +888,13 @@ auto do_line_search(const Input &input, const Settings &settings,
 
     constraint_violation_ratio = next_sq_constraint_violation_norm /
                                  std::max(sq_constraint_violation_norm, 1e-12);
-
+    const bool filter_accept =
+        settings.line_search.use_filter_line_search &&
+        (next_sq_constraint_violation_norm <=
+             (1.0 - settings.line_search.filter_gamma_theta) *
+                 sq_constraint_violation_norm ||
+         m_f <= m0_f - settings.line_search.filter_gamma_f *
+                            sq_constraint_violation_norm);
     if (settings.logging.print_line_search_logs) {
       fmt::print(fg(fmt::color::yellow),
                  // clang-format off
@@ -905,7 +910,8 @@ auto do_line_search(const Input &input, const Settings &settings,
     if (merit_slope >
             settings.line_search.min_merit_slope_to_skip_line_search ||
         merit_delta <
-            settings.line_search.armijo_factor * merit_slope * alpha) {
+            settings.line_search.armijo_factor * merit_slope * alpha ||
+        filter_accept) {
       ls_succeeded = true;
       break;
     }
@@ -974,6 +980,9 @@ auto check_settings(const Settings &settings) -> bool {
   }
   if (!is_finite_nonnegative(settings.line_search.armijo_factor) ||
       settings.line_search.armijo_factor > 1.0 ||
+      !is_finite_nonnegative(settings.line_search.filter_gamma_theta) ||
+      settings.line_search.filter_gamma_theta > 1.0 ||
+      !is_finite_nonnegative(settings.line_search.filter_gamma_f) ||
       !is_finite_positive(settings.line_search.line_search_factor) ||
       settings.line_search.line_search_factor >= 1.0 ||
       !is_finite_positive(settings.line_search.line_search_min_step_size) ||
