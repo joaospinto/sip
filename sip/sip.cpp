@@ -495,33 +495,74 @@ auto get_observed_merit_slope(const Input &input, const double mu,
   return std::make_tuple(os_x, os_s, os);
 }
 
-auto augmented_barrier_lagrangian_slope(const Input &input,
-                                        const Workspace &workspace,
-                                        const double *dx, const double *ds,
-                                        const double *dy, const double *dz,
-                                        const double psi)
-    -> std::tuple<double, double, double> {
+struct FixedDualMeritSlope {
+  double x;
+  double s;
+  double total;
+};
+
+auto fixed_dual_merit_slope(const Input &input, const Workspace &workspace,
+                            const double *dx, const double *ds)
+    -> FixedDualMeritSlope {
   const int x_dim = input.dimensions.x_dim;
   const int s_dim = input.dimensions.s_dim;
   const int y_dim = input.dimensions.y_dim;
+  const double *c = input.get_c();
   const double *gps = workspace.miscellaneous_workspace.g_plus_s;
-  const double weighted_constraint_violation =
-      weighted_squared_norm(input.get_c(), workspace.penalties.y, y_dim) +
-      weighted_squared_norm(gps, workspace.penalties.z, s_dim);
-  double abl_slope = dot(workspace.nrhs.x, dx, x_dim) +
-                     dot(input.get_c(), dy, y_dim) + dot(gps, dz, s_dim) -
-                     weighted_constraint_violation;
-  const double s_slope = dot(workspace.nrhs.s, ds, s_dim) +
-                         weighted_dot(gps, workspace.penalties.z, ds, s_dim);
-  const double x_slope = abl_slope - s_slope;
 
-  double bound = -psi * squared_norm(dx, x_dim);
+  double *tmp_y = workspace.next_vars.y;
+  double *tmp_s = workspace.next_vars.s;
+
+  std::fill_n(tmp_y, y_dim, 0.0);
+  input.add_Cx_to_y(dx, tmp_y);
+
+  std::fill_n(tmp_s, s_dim, 0.0);
+  input.add_Gx_to_y(dx, tmp_s);
+
+  const double x_slope =
+      dot(workspace.nrhs.x, dx, x_dim) +
+      weighted_dot(c, workspace.penalties.y, tmp_y, y_dim) +
+      weighted_dot(gps, workspace.penalties.z, tmp_s, s_dim);
+
+  const double s_slope =
+      dot(workspace.nrhs.s, ds, s_dim) +
+      weighted_dot(gps, workspace.penalties.z, ds, s_dim);
+
+  return {.x = x_slope, .s = s_slope, .total = x_slope + s_slope};
+}
+
+auto quadratic_model_merit_slope(const Input &input, const Workspace &workspace,
+                                 const double *dx, const double *ds,
+                                 const double psi) -> double {
+  const int x_dim = input.dimensions.x_dim;
+  const int s_dim = input.dimensions.s_dim;
+  const int y_dim = input.dimensions.y_dim;
+
+  double *tmp_x = workspace.next_vars.x;
+  double *tmp_y = workspace.next_vars.y;
+  double *tmp_s = workspace.next_vars.s;
+
+  std::fill_n(tmp_x, x_dim, 0.0);
+  input.add_Hx_to_y(dx, tmp_x);
+  for (int i = 0; i < x_dim; ++i) {
+    tmp_x[i] += psi * dx[i];
+  }
+  const double dxTHdx = dot(tmp_x, dx, x_dim);
+
+  std::fill_n(tmp_y, y_dim, 0.0);
+  input.add_Cx_to_y(dx, tmp_y);
+
+  std::copy_n(ds, s_dim, tmp_s);
+  input.add_Gx_to_y(dx, tmp_s);
+
+  double Winvds = 0.0;
   for (int i = 0; i < s_dim; ++i) {
-    bound -= ds[i] * ds[i] / workspace.csd_workspace.w[i];
+    Winvds += ds[i] * ds[i] / workspace.csd_workspace.w[i];
   }
 
-  abl_slope = std::min(abl_slope, bound);
-  return std::make_tuple(x_slope, s_slope, abl_slope);
+  return -dxTHdx - Winvds -
+         weighted_squared_norm(tmp_y, workspace.penalties.y, y_dim) -
+         weighted_squared_norm(tmp_s, workspace.penalties.z, s_dim);
 }
 
 auto compute_search_direction(const Input &input, const Settings &settings,
@@ -681,8 +722,7 @@ auto compute_search_direction(const Input &input, const Settings &settings,
     ds[i] = -w[i] * (dz[i] + rs[i]);
   }
 
-  const auto [ms_x, ms_s, ms] =
-      augmented_barrier_lagrangian_slope(input, workspace, dx, ds, dy, dz, psi);
+  const auto fixed_dual_ms = fixed_dual_merit_slope(input, workspace, dx, ds);
 
   for (int i = 0; i < y_dim; ++i) {
     max_constraint_violation =
@@ -750,26 +790,8 @@ auto compute_search_direction(const Input &input, const Settings &settings,
 
     print_search_direction_log_header();
 
-    double *tmp_x = workspace.next_vars.x;
-    double *tmp_y = workspace.next_vars.y;
-    double *tmp_s = workspace.next_vars.s;
-    std::fill_n(tmp_x, x_dim, 0.0);
-    input.add_Hx_to_y(dx, tmp_x);
-    for (int i = 0; i < x_dim; ++i) {
-      tmp_x[i] += psi * dx[i];
-    }
-    const double dxTHdx = dot(tmp_x, dx, x_dim);
-    std::fill_n(tmp_y, y_dim, 0.0);
-    input.add_Cx_to_y(dx, tmp_y);
-    double Winvds = 0.0;
-    for (int i = 0; i < s_dim; ++i) {
-      Winvds += ds[i] * ds[i] / w[i];
-    }
-    std::copy_n(ds, s_dim, tmp_s);
-    input.add_Gx_to_y(dx, tmp_s);
-    double ms_v2 = -dxTHdx - Winvds -
-                   weighted_squared_norm(tmp_y, workspace.penalties.y, y_dim) -
-                   weighted_squared_norm(tmp_s, workspace.penalties.z, s_dim);
+    const double quadratic_ms =
+        quadratic_model_merit_slope(input, workspace, dx, ds, psi);
 
     const auto [os_x, os_s, os] =
         get_observed_merit_slope(input, mu, tau, workspace);
@@ -779,21 +801,23 @@ auto compute_search_direction(const Input &input, const Settings &settings,
         // clang-format off
                    "{:^10} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g}\n",
         // clang-format on
-        "", lin_sys_error, alpha_s_max, ms, ms_v2, os, ms_x, os_x, ms_s, os_s,
-        norm(rx, x_dim), norm(rs, s_dim));
+        "", lin_sys_error, alpha_s_max, fixed_dual_ms.total, quadratic_ms, os,
+        fixed_dual_ms.x, os_x, fixed_dual_ms.s, os_s, norm(rx, x_dim),
+        norm(rs, s_dim));
     const bool suspicious_derivatives =
-        (os_x > 0.0 && ms_x < 0.0) || (os > 0.0 && ms < 0.0) ||
-        (std::fabs(ms_x - os_x) /
-             std::max({std::fabs(ms_x), std::fabs(os_x), 1e-12}) >
+        (os_x > 0.0 && fixed_dual_ms.x < 0.0) ||
+        (os > 0.0 && fixed_dual_ms.total < 0.0) ||
+        (std::fabs(fixed_dual_ms.x - os_x) /
+             std::max({std::fabs(fixed_dual_ms.x), std::fabs(os_x), 1e-12}) >
          0.5);
     if (settings.logging.print_derivative_check_logs && suspicious_derivatives)
       check_derivatives(input, settings, tau, workspace);
   }
 
-  return std::make_tuple(true, dx, ds, dy, dz, ms, alpha_s_max, dual_residual,
-                         max_constraint_violation, max_complementarity,
-                         kkt_error, duality_gap, lin_sys_error,
-                         num_regularization_increases);
+  return std::make_tuple(true, dx, ds, dy, dz, fixed_dual_ms.total,
+                         alpha_s_max, dual_residual, max_constraint_violation,
+                         max_complementarity, kkt_error, duality_gap,
+                         lin_sys_error, num_regularization_increases);
 }
 
 auto do_line_search(const Input &input, const Settings &settings,
