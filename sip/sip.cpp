@@ -56,44 +56,41 @@ auto merit_function(const Input &input, const Workspace &workspace,
                          merit);
 }
 
-struct FilterEntry {
-  double theta;
-  double f;
-};
-
-auto filter_accepts(const std::vector<FilterEntry> &filter,
-                    const Settings &settings, const double theta,
-                    const double f) -> bool {
-  for (const auto &entry : filter) {
-    if (theta > (1.0 - settings.line_search.filter_gamma_theta) *
-                    entry.theta &&
-        f > entry.f - settings.line_search.filter_gamma_f * entry.theta) {
+auto filter_accepts(const FilterWorkspace &filter, const Settings &settings,
+                    const double theta, const double f) -> bool {
+  for (int i = 0; i < filter.size; ++i) {
+    if (theta >
+            (1.0 - settings.line_search.filter_gamma_theta) * filter.theta[i] &&
+        f > filter.f[i] -
+                settings.line_search.filter_gamma_f * filter.theta[i]) {
       return false;
     }
   }
   return true;
 }
 
-void add_filter_entry(std::vector<FilterEntry> &filter,
-                      const Settings &settings, const double theta,
-                      const double f) {
+void add_filter_entry(FilterWorkspace &filter, const Settings &settings,
+                      const double theta, const double f) {
   if (!filter_accepts(filter, settings, theta, f)) {
     return;
   }
 
-  const FilterEntry new_entry{.theta = theta, .f = f};
-  filter.erase(
-      std::remove_if(filter.begin(), filter.end(),
-                     [&](const FilterEntry &entry) {
-                       return entry.theta >=
-                                  (1.0 - settings.line_search.filter_gamma_theta) *
-                                      theta &&
-                              entry.f >= f -
-                                             settings.line_search.filter_gamma_f *
-                                                 theta;
-                     }),
-      filter.end());
-  filter.push_back(new_entry);
+  int next_size = 0;
+  for (int i = 0; i < filter.size; ++i) {
+    const bool dominated =
+        filter.theta[i] >=
+            (1.0 - settings.line_search.filter_gamma_theta) * theta &&
+        filter.f[i] >= f - settings.line_search.filter_gamma_f * theta;
+    if (!dominated) {
+      filter.theta[next_size] = filter.theta[i];
+      filter.f[next_size] = filter.f[i];
+      ++next_size;
+    }
+  }
+  assert(next_size < filter.capacity);
+  filter.theta[next_size] = theta;
+  filter.f[next_size] = f;
+  filter.size = next_size + 1;
 }
 
 auto get_alpha_s_max(const int s_dim, const double tau, const double *s,
@@ -213,10 +210,9 @@ auto check_termination(const Settings &settings,
                                         complementarity_satisfied;
   const bool cost_change_optimality_satisfied =
       cost_change_ok && primal_feasibility_satisfied;
-  const bool advance_barrier = merit_slope_too_small &&
-                               primal_feasibility_satisfied &&
-                               dual_residual_satisfied &&
-                               !complementarity_satisfied;
+  const bool advance_barrier =
+      merit_slope_too_small && primal_feasibility_satisfied &&
+      dual_residual_satisfied && !complementarity_satisfied;
 
   return TerminationChecks{
       // TODO(joao): probably only consider the duality gap in the first case...
@@ -243,8 +239,7 @@ auto update_penalty_parameters(const Input &input, const Settings &settings,
   double acceptable_ratio = min_ratio;
   if (settings.penalty.scale_violation_reduction_with_step_size) {
     const double min_norm_ratio = std::sqrt(min_ratio);
-    const double step_aware_norm_ratio =
-        1.0 - alpha * (1.0 - min_norm_ratio);
+    const double step_aware_norm_ratio = 1.0 - alpha * (1.0 - min_norm_ratio);
     acceptable_ratio = step_aware_norm_ratio * step_aware_norm_ratio;
   }
 
@@ -252,8 +247,7 @@ auto update_penalty_parameters(const Input &input, const Settings &settings,
     const double improvement_ratio =
         new_c[i] * new_c[i] / std::max(old_c[i] * old_c[i], 1e-12);
     if ((!settings.penalty.scale_violation_reduction_with_step_size ||
-         std::fabs(new_c[i]) >
-             settings.termination.max_constraint_violation) &&
+         std::fabs(new_c[i]) > settings.termination.max_constraint_violation) &&
         improvement_ratio > acceptable_ratio) {
       workspace.penalties.y[i] =
           std::min(workspace.penalties.y[i] *
@@ -579,14 +573,12 @@ auto fixed_dual_merit_slope(const Input &input, const Workspace &workspace,
   std::fill_n(tmp_s, s_dim, 0.0);
   input.add_Gx_to_y(dx, tmp_s);
 
-  const double x_slope =
-      dot(workspace.nrhs.x, dx, x_dim) +
-      weighted_dot(c, workspace.penalties.y, tmp_y, y_dim) +
-      weighted_dot(gps, workspace.penalties.z, tmp_s, s_dim);
+  const double x_slope = dot(workspace.nrhs.x, dx, x_dim) +
+                         weighted_dot(c, workspace.penalties.y, tmp_y, y_dim) +
+                         weighted_dot(gps, workspace.penalties.z, tmp_s, s_dim);
 
-  const double s_slope =
-      dot(workspace.nrhs.s, ds, s_dim) +
-      weighted_dot(gps, workspace.penalties.z, ds, s_dim);
+  const double s_slope = dot(workspace.nrhs.s, ds, s_dim) +
+                         weighted_dot(gps, workspace.penalties.z, ds, s_dim);
 
   return {.x = x_slope, .s = s_slope, .total = x_slope + s_slope};
 }
@@ -874,8 +866,8 @@ auto compute_search_direction(const Input &input, const Settings &settings,
       check_derivatives(input, settings, tau, workspace);
   }
 
-  return std::make_tuple(true, dx, ds, dy, dz, fixed_dual_ms.total,
-                         alpha_s_max, dual_residual, max_constraint_violation,
+  return std::make_tuple(true, dx, ds, dy, dz, fixed_dual_ms.total, alpha_s_max,
+                         dual_residual, max_constraint_violation,
                          max_complementarity, kkt_error, duality_gap,
                          lin_sys_error, num_regularization_increases);
 }
@@ -884,8 +876,8 @@ auto do_line_search(const Input &input, const Settings &settings,
                     const double mu, const double tau,
                     const double sq_constraint_violation_norm,
                     const double merit_slope, const double alpha_s_max,
-                    int &total_ls_iterations,
-                    std::vector<FilterEntry> &filter, Workspace &workspace)
+                    int &total_ls_iterations, FilterWorkspace &filter,
+                    Workspace &workspace)
     -> std::tuple<bool, double, double, double> {
   const int s_dim = input.dimensions.s_dim;
   const int y_dim = input.dimensions.y_dim;
@@ -895,7 +887,8 @@ auto do_line_search(const Input &input, const Settings &settings,
                      workspace.vars.z, mu);
 
   bool ls_succeeded = false;
-  double alpha = alpha_s_max;
+  double alpha =
+      settings.line_search.start_ls_with_alpha_s_max ? alpha_s_max : 1.0;
   double trial_alpha = alpha;
   double merit_delta = std::numeric_limits<double>::signaling_NaN();
   double constraint_violation_ratio =
@@ -1150,10 +1143,9 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
 
   int total_ls_iterations = 0;
   std::optional<double> previous_cost;
-  std::vector<FilterEntry> filter;
-  if (settings.line_search.use_filter_line_search) {
-    filter.reserve(settings.max_iterations + 1);
-  }
+  workspace.filter.size = 0;
+  assert(workspace.filter.capacity >=
+         FilterWorkspace::required_capacity(settings));
 
   for (int iteration = 0; iteration < settings.max_iterations; ++iteration) {
     const double f0 = input.get_f();
@@ -1223,9 +1215,8 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
     }
 
     if (termination.advance_barrier) {
-      const double next_mu =
-          std::max(mu * settings.barrier.mu_update_factor,
-                   settings.barrier.mu_min);
+      const double next_mu = std::max(mu * settings.barrier.mu_update_factor,
+                                      settings.barrier.mu_min);
       if (next_mu < mu) {
         mu = next_mu;
         continue;
@@ -1254,7 +1245,7 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
     } else {
       std::tie(ls_succeeded, alpha, m0, std::ignore) = do_line_search(
           input, settings, mu, tau, sq_constraint_violation_norm, merit_slope,
-          alpha_s_max, total_ls_iterations, filter, workspace);
+          alpha_s_max, total_ls_iterations, workspace.filter, workspace);
     }
 
     if (settings.logging.print_logs) {

@@ -159,7 +159,31 @@ auto PenaltyParameterWorkspace::mem_assign(int s_dim, int y_dim,
   return cum_size;
 }
 
-void Workspace::reserve(int x_dim, int s_dim, int y_dim) {
+void FilterWorkspace::reserve(int filter_capacity) {
+  theta = new double[filter_capacity];
+  f = new double[filter_capacity];
+  size = 0;
+  capacity = filter_capacity;
+}
+
+void FilterWorkspace::free() {
+  delete[] theta;
+  delete[] f;
+}
+
+auto FilterWorkspace::mem_assign(int filter_capacity, unsigned char *mem_ptr)
+    -> int {
+  int cum_size = 0;
+  theta = reinterpret_cast<decltype(theta)>(mem_ptr + cum_size);
+  cum_size += filter_capacity * sizeof(double);
+  f = reinterpret_cast<decltype(f)>(mem_ptr + cum_size);
+  cum_size += filter_capacity * sizeof(double);
+  size = 0;
+  capacity = filter_capacity;
+  return cum_size;
+}
+
+void Workspace::reserve(int x_dim, int s_dim, int y_dim, int filter_capacity) {
   vars.reserve(x_dim, s_dim, y_dim);
   delta_vars.reserve(x_dim, s_dim, y_dim);
   next_vars.reserve(x_dim, s_dim, y_dim);
@@ -169,6 +193,7 @@ void Workspace::reserve(int x_dim, int s_dim, int y_dim) {
   const int full_dim = kkt_dim + s_dim;
   csd_workspace.reserve(s_dim, y_dim, kkt_dim, full_dim);
   penalties.reserve(s_dim, y_dim);
+  filter.reserve(filter_capacity);
 }
 
 void Workspace::free() {
@@ -179,9 +204,10 @@ void Workspace::free() {
   miscellaneous_workspace.free();
   csd_workspace.free();
   penalties.free();
+  filter.free();
 }
 
-auto Workspace::mem_assign(int x_dim, int s_dim, int y_dim,
+auto Workspace::mem_assign(int x_dim, int s_dim, int y_dim, int filter_capacity,
                            unsigned char *mem_ptr) -> int {
   int cum_size = 0;
 
@@ -195,6 +221,7 @@ auto Workspace::mem_assign(int x_dim, int s_dim, int y_dim,
   cum_size += csd_workspace.mem_assign(s_dim, y_dim, kkt_dim, full_dim,
                                        mem_ptr + cum_size);
   cum_size += penalties.mem_assign(s_dim, y_dim, mem_ptr + cum_size);
+  cum_size += filter.mem_assign(filter_capacity, mem_ptr + cum_size);
 
   return cum_size;
 }

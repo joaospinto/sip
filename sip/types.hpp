@@ -91,6 +91,8 @@ struct LineSearchSettings {
   int max_iterations = 500;
   // A parameter of the fraction-to-the-boundary rule.
   double tau = 0.995;
+  // Determines whether we start with alpha=alpha_s_max or alpha=1.
+  bool start_ls_with_alpha_s_max = false;
   // Determines when we accept a line search step, by the merit decrease and
   // slope.
   double armijo_factor = 1e-4;
@@ -338,6 +340,28 @@ struct PenaltyParameterWorkspace {
   }
 };
 
+struct FilterWorkspace {
+  double *theta;
+  double *f;
+  int size;
+  int capacity;
+
+  void reserve(int filter_capacity);
+  void free();
+
+  auto mem_assign(int filter_capacity, unsigned char *mem_ptr) -> int;
+
+  static constexpr auto num_bytes(int filter_capacity) -> int {
+    return 2 * filter_capacity * sizeof(double);
+  }
+
+  static constexpr auto required_capacity(const Settings &settings) -> int {
+    return settings.line_search.use_filter_line_search
+               ? settings.max_iterations + 1
+               : 0;
+  }
+};
+
 // This data structure is used to avoid doing dynamic memory allocation inside
 // of the solver, as well as avoiding excessive templating in the solver code.
 struct Workspace {
@@ -359,24 +383,28 @@ struct Workspace {
   ComputeSearchDirectionWorkspace csd_workspace;
   // Stores equality and inequality penalty parameters.
   PenaltyParameterWorkspace penalties;
+  // Stores the line-search filter entries.
+  FilterWorkspace filter;
 
   // To dynamically allocate the required memory.
-  void reserve(int x_dim, int s_dim, int y_dim);
+  void reserve(int x_dim, int s_dim, int y_dim, int filter_capacity);
   void free();
 
   // For using pre-allocated (possibly statically allocated) memory.
-  auto mem_assign(int x_dim, int s_dim, int y_dim, unsigned char *mem_ptr)
-      -> int;
+  auto mem_assign(int x_dim, int s_dim, int y_dim, int filter_capacity,
+                  unsigned char *mem_ptr) -> int;
 
   // For knowing how much memory to pre-allocate.
-  static constexpr auto num_bytes(int x_dim, int s_dim, int y_dim) -> int {
+  static constexpr auto num_bytes(int x_dim, int s_dim, int y_dim,
+                                  int filter_capacity) -> int {
     const int kkt_dim = x_dim + s_dim + y_dim;
     const int full_dim = kkt_dim + s_dim;
     return 4 * VariablesWorkspace::num_bytes(x_dim, s_dim, y_dim) +
            MiscellaneousWorkspace::num_bytes(s_dim) +
            ComputeSearchDirectionWorkspace::num_bytes(s_dim, y_dim, kkt_dim,
                                                       full_dim) +
-           PenaltyParameterWorkspace::num_bytes(s_dim, y_dim);
+           PenaltyParameterWorkspace::num_bytes(s_dim, y_dim) +
+           FilterWorkspace::num_bytes(filter_capacity);
   }
 };
 
