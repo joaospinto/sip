@@ -128,6 +128,7 @@ auto decreased_regularization(const Settings &settings, const double psi)
 struct TerminationChecks {
   bool solved;
   bool stalled;
+  bool advance_barrier;
 };
 
 auto cost_change_satisfied(const Settings &settings,
@@ -172,17 +173,23 @@ auto check_termination(const Settings &settings,
                                         complementarity_satisfied;
   const bool cost_change_optimality_satisfied =
       cost_change_ok && primal_feasibility_satisfied;
+  const bool advance_barrier = merit_slope_too_small &&
+                               primal_feasibility_satisfied &&
+                               dual_residual_satisfied &&
+                               !complementarity_satisfied;
 
   return TerminationChecks{
       // TODO(joao): probably only consider the duality gap in the first case...
       .solved = duality_gap_satisfied &&
                 (kkt_optimality_satisfied || cost_change_optimality_satisfied),
-      .stalled = merit_slope_too_small,
+      .stalled = merit_slope_too_small && !advance_barrier,
+      .advance_barrier = advance_barrier,
   };
 }
 
 auto update_penalty_parameters(const Input &input, const Settings &settings,
-                               Workspace &workspace) -> bool {
+                               const double alpha, Workspace &workspace)
+    -> bool {
   const int s_dim = input.dimensions.s_dim;
   const int y_dim = input.dimensions.y_dim;
   bool any_increased = false;
@@ -191,12 +198,23 @@ auto update_penalty_parameters(const Input &input, const Settings &settings,
   const double *old_gps = workspace.nrhs.z;
   const double *new_c = input.get_c();
   const double *new_gps = workspace.miscellaneous_workspace.g_plus_s;
+  const double min_ratio =
+      settings.penalty.min_acceptable_constraint_violation_ratio;
+  double acceptable_ratio = min_ratio;
+  if (settings.penalty.scale_violation_reduction_with_step_size) {
+    const double min_norm_ratio = std::sqrt(min_ratio);
+    const double step_aware_norm_ratio =
+        1.0 - alpha * (1.0 - min_norm_ratio);
+    acceptable_ratio = step_aware_norm_ratio * step_aware_norm_ratio;
+  }
 
   for (int i = 0; i < y_dim; ++i) {
     const double improvement_ratio =
         new_c[i] * new_c[i] / std::max(old_c[i] * old_c[i], 1e-12);
-    if (improvement_ratio >
-        settings.penalty.min_acceptable_constraint_violation_ratio) {
+    if ((!settings.penalty.scale_violation_reduction_with_step_size ||
+         std::fabs(new_c[i]) >
+             settings.termination.max_constraint_violation) &&
+        improvement_ratio > acceptable_ratio) {
       workspace.penalties.y[i] =
           std::min(workspace.penalties.y[i] *
                        settings.penalty.penalty_parameter_increase_factor,
@@ -213,8 +231,10 @@ auto update_penalty_parameters(const Input &input, const Settings &settings,
   for (int i = 0; i < s_dim; ++i) {
     const double improvement_ratio =
         new_gps[i] * new_gps[i] / std::max(old_gps[i] * old_gps[i], 1e-12);
-    if (improvement_ratio >
-        settings.penalty.min_acceptable_constraint_violation_ratio) {
+    if ((!settings.penalty.scale_violation_reduction_with_step_size ||
+         std::fabs(new_gps[i]) >
+             settings.termination.max_constraint_violation) &&
+        improvement_ratio > acceptable_ratio) {
       workspace.penalties.z[i] =
           std::min(workspace.penalties.z[i] *
                        settings.penalty.penalty_parameter_increase_factor,
@@ -1138,6 +1158,16 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
       };
     }
 
+    if (termination.advance_barrier) {
+      const double next_mu =
+          std::max(mu * settings.barrier.mu_update_factor,
+                   settings.barrier.mu_min);
+      if (next_mu < mu) {
+        mu = next_mu;
+        continue;
+      }
+    }
+
     if (hit_ls_iteration_limit) {
       return Output{
           .exit_status = Status::LINE_SEARCH_ITERATION_LIMIT,
@@ -1210,7 +1240,7 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
     psi = decreased_regularization(settings, psi);
 
     const bool any_penalty_increased =
-        update_penalty_parameters(input, settings, workspace);
+        update_penalty_parameters(input, settings, alpha, workspace);
     if (any_penalty_increased) {
       // Reset regularization when penalty increases, to stabilize the
       // modified KKT system.

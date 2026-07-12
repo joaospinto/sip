@@ -54,6 +54,8 @@ struct PenaltySettings {
   bool warm_start_penalties = false;
   // Minimum acceptable constraint violation ratio for eta to not increase.
   double min_acceptable_constraint_violation_ratio = 0.25;
+  // Scale the acceptable violation reduction by the accepted primal step.
+  bool scale_violation_reduction_with_step_size = false;
   // By what factor to increase eta.
   double penalty_parameter_increase_factor = 10.0;
   // By what factor to decrease eta.
