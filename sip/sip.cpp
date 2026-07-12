@@ -724,54 +724,72 @@ auto compute_search_direction(const Input &input, const Settings &settings,
   std::copy_n(c, y_dim, ry);
   std::copy_n(gps, s_dim, rz);
 
-  std::copy_n(rx, x_dim, bx);
-  std::copy_n(c, y_dim, by);
-
-  for (int i = 0; i < s_dim; ++i) {
-    rs[i] = z[i] - mu / s[i];
-    bz[i] = rz[i] - w[i] * rs[i];
-  }
-
-  for (int i = 0; i < dim_3x3; ++i) {
-    b[i] = -b[i];
-  }
-
-  input.solve(b, v);
-
-  for (int j = 0; j < settings.num_iterative_refinement_steps; ++j) {
-    // We do an iterative refinement step:
-    // res = Kv - b
-    // Ku = res => Ku = Kv - b => K(v - u) = b
-
-    double *res_x = residual;
-    double *res_y = res_x + x_dim;
-    double *res_z = res_y + y_dim;
-
+  const auto solve_direction = [&](const double target_mu,
+                                   const double *affine_ds,
+                                   const double *affine_dz) {
+    std::copy_n(rx, x_dim, bx);
+    std::copy_n(c, y_dim, by);
+    for (int i = 0; i < s_dim; ++i) {
+      const double second_order =
+          affine_ds == nullptr ? 0.0 : affine_ds[i] * affine_dz[i];
+      rs[i] = z[i] - target_mu / s[i] + second_order / s[i];
+      bz[i] = rz[i] - w[i] * rs[i];
+    }
     for (int i = 0; i < dim_3x3; ++i) {
-      residual[i] = -b[i];
+      b[i] = -b[i];
     }
 
-    input.add_Kx_to_y(w, psi, r2, r3, vx, vy, vz, res_x, res_y, res_z);
-
-    input.solve(residual, u);
-
-    for (int i = 0; i < dim_3x3; ++i) {
-      v[i] -= u[i];
+    input.solve(b, v);
+    for (int j = 0; j < settings.num_iterative_refinement_steps; ++j) {
+      // res = Kv - b; Ku = res; therefore K(v - u) = b.
+      double *res_x = residual;
+      double *res_y = res_x + x_dim;
+      double *res_z = res_y + y_dim;
+      for (int i = 0; i < dim_3x3; ++i) {
+        residual[i] = -b[i];
+      }
+      input.add_Kx_to_y(w, psi, r2, r3, vx, vy, vz, res_x, res_y, res_z);
+      input.solve(residual, u);
+      for (int i = 0; i < dim_3x3; ++i) {
+        v[i] -= u[i];
+      }
     }
-  }
 
-  {
-    auto ptr = v;
-    std::copy_n(ptr, x_dim, dx);
-    ptr += x_dim;
-    std::copy_n(ptr, y_dim, dy);
-    ptr += y_dim;
-    std::copy_n(ptr, s_dim, dz);
-    ptr += s_dim;
-  }
+    const double *solution = v;
+    std::copy_n(solution, x_dim, dx);
+    solution += x_dim;
+    std::copy_n(solution, y_dim, dy);
+    solution += y_dim;
+    std::copy_n(solution, s_dim, dz);
+    for (int i = 0; i < s_dim; ++i) {
+      ds[i] = -w[i] * (dz[i] + rs[i]);
+    }
+  };
 
-  for (int i = 0; i < s_dim; ++i) {
-    ds[i] = -w[i] * (dz[i] + rs[i]);
+  if (settings.barrier.use_predictor_corrector && s_dim > 0) {
+    solve_direction(0.0, nullptr, nullptr);
+    double *affine_ds = workspace.next_vars.s;
+    double *affine_dz = workspace.next_vars.z;
+    std::copy_n(ds, s_dim, affine_ds);
+    std::copy_n(dz, s_dim, affine_dz);
+
+    const double alpha_s = get_alpha_s_max(s_dim, 1.0, s, affine_ds);
+    const double alpha_z = get_alpha_s_max(s_dim, 1.0, z, affine_dz);
+    double current_mu = 0.0;
+    double affine_mu = 0.0;
+    for (int i = 0; i < s_dim; ++i) {
+      current_mu += s[i] * z[i];
+      affine_mu +=
+          (s[i] + alpha_s * affine_ds[i]) * (z[i] + alpha_z * affine_dz[i]);
+    }
+    current_mu /= s_dim;
+    affine_mu /= s_dim;
+    const double mu_ratio =
+        current_mu > 0.0 ? std::clamp(affine_mu / current_mu, 0.0, 1.0) : 0.0;
+    const double sigma = mu_ratio * mu_ratio * mu_ratio;
+    solve_direction(sigma * current_mu, affine_ds, affine_dz);
+  } else {
+    solve_direction(mu, nullptr, nullptr);
   }
 
   const auto fixed_dual_ms = fixed_dual_merit_slope(input, workspace, dx, ds);

@@ -45,6 +45,8 @@ struct BarrierSettings {
   double mu_min = 1e-16;
   // Only decrease mu when kkt_error <= kappa * mu.
   double mu_update_kappa = 10.0;
+  // Use an affine predictor and second-order centering corrector direction.
+  bool use_predictor_corrector = false;
 };
 
 struct PenaltySettings {
