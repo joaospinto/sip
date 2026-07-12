@@ -895,8 +895,12 @@ auto do_line_search(const Input &input, const Settings &settings,
       std::numeric_limits<double>::signaling_NaN();
   double accepted_theta = std::numeric_limits<double>::signaling_NaN();
   double accepted_f = std::numeric_limits<double>::signaling_NaN();
+  const bool filter_active =
+      settings.line_search.use_filter_line_search &&
+      total_ls_iterations >=
+          settings.line_search.filter_min_total_line_search_iterations;
 
-  if (settings.line_search.use_filter_line_search) {
+  if (filter_active) {
     add_filter_entry(filter, settings, std::sqrt(sq_constraint_violation_norm),
                      m0_f);
   }
@@ -931,8 +935,7 @@ auto do_line_search(const Input &input, const Settings &settings,
     constraint_violation_ratio = next_sq_constraint_violation_norm /
                                  std::max(sq_constraint_violation_norm, 1e-12);
     const bool filter_accept =
-        settings.line_search.use_filter_line_search &&
-        filter_accepts(filter, settings, next_theta, m_f);
+        filter_active && filter_accepts(filter, settings, next_theta, m_f);
     if (settings.logging.print_line_search_logs) {
       fmt::print(fg(fmt::color::yellow),
                  // clang-format off
@@ -966,7 +969,7 @@ auto do_line_search(const Input &input, const Settings &settings,
 
   update_next_dual_vars(input, tau, workspace, alpha);
 
-  if (ls_succeeded && settings.line_search.use_filter_line_search) {
+  if (ls_succeeded && filter_active) {
     add_filter_entry(filter, settings, accepted_theta, accepted_f);
   }
 
@@ -985,6 +988,7 @@ auto check_settings(const Settings &settings) -> bool {
   };
 
   if (settings.max_iterations < 0 || settings.line_search.max_iterations < 0 ||
+      settings.line_search.filter_min_total_line_search_iterations < 0 ||
       settings.num_iterative_refinement_steps < 0) {
     return false;
   }

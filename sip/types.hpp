@@ -111,6 +111,8 @@ struct LineSearchSettings {
   double filter_gamma_theta = 1e-5;
   // Filter margin for objective.
   double filter_gamma_f = 1e-5;
+  // Do not activate the filter before this many cumulative line-search trials.
+  int filter_min_total_line_search_iterations = 0;
   // When true, halts the optimization process if a good step is not found.
   bool enable_line_search_failures = false;
 };
