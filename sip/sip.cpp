@@ -903,6 +903,7 @@ auto do_line_search(const Input &input, const Settings &settings,
   const auto [m0_f, m0_s, m0_c, m0_g, m0_aug, m0] =
       merit_function(input, workspace, workspace.vars.s, workspace.vars.y,
                      workspace.vars.z, mu);
+  const double m0_phi = m0_f + m0_s;
 
   bool ls_succeeded = false;
   double alpha =
@@ -935,6 +936,7 @@ auto do_line_search(const Input &input, const Settings &settings,
     const auto [m_f, m_s, m_c, m_g, m_aug, m] =
         merit_function(input, workspace, workspace.next_vars.s,
                        workspace.vars.y, workspace.vars.z, mu);
+    const double phi = m_f + m_s;
 
     const double dm_f = m_f - m0_f;
     const double dm_s = m_s - m0_s;
@@ -950,10 +952,10 @@ auto do_line_search(const Input &input, const Settings &settings,
     const bool acceptable_to_current_iterate =
         next_theta <=
             (1.0 - settings.line_search.filter_gamma_theta) * current_theta ||
-        m_f <= m0_f - settings.line_search.filter_gamma_f * current_theta;
+        phi <= m0_phi - settings.line_search.filter_gamma_f * current_theta;
     const bool filter_accept =
         filter_active && acceptable_to_current_iterate &&
-        filter_accepts(filter, settings, next_theta, m_f);
+        filter_accepts(filter, settings, next_theta, phi);
     if (settings.logging.print_line_search_logs) {
       fmt::print(fg(fmt::color::yellow),
                  // clang-format off
@@ -987,7 +989,7 @@ auto do_line_search(const Input &input, const Settings &settings,
 
   if (ls_succeeded && filter_active && !accepted_without_filter) {
     add_filter_entry(filter, settings, std::sqrt(sq_constraint_violation_norm),
-                     m0_f);
+                     m0_phi);
   }
 
   return std::make_tuple(ls_succeeded, alpha, m0, constraint_violation_ratio);

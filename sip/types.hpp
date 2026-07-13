@@ -111,7 +111,7 @@ struct LineSearchSettings {
   bool use_filter_line_search = false;
   // Filter margin for primal violation.
   double filter_gamma_theta = 1e-5;
-  // Filter margin for objective.
+  // Filter margin for the barrier objective.
   double filter_gamma_f = 1e-5;
   // Do not activate the filter before this many cumulative line-search trials.
   int filter_min_total_line_search_iterations = 0;
