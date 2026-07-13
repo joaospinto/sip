@@ -93,19 +93,20 @@ void add_filter_entry(FilterWorkspace &filter, const Settings &settings,
   filter.size = next_size + 1;
 }
 
-auto get_alpha_s_max(const int s_dim, const double tau, const double *s,
-                     const double *ds) -> double {
-  // s + alpha_s_max * ds >= (1 - tau) * s
+auto get_fraction_to_boundary_step(const int dim, const double tau,
+                                   const double *value, const double *direction)
+    -> double {
+  // value + alpha * direction >= (1 - tau) * value
 
-  double alpha_s_max = 1.0;
+  double alpha = 1.0;
 
-  for (int i = 0; i < s_dim; ++i) {
-    if (ds[i] < 0.0) {
-      alpha_s_max = std::min(alpha_s_max, tau * s[i] / std::max(-ds[i], 1e-12));
+  for (int i = 0; i < dim; ++i) {
+    if (direction[i] < 0.0) {
+      alpha = std::min(alpha, tau * value[i] / std::max(-direction[i], 1e-12));
     }
   }
 
-  return alpha_s_max;
+  return alpha;
 }
 
 void print_log_header() {
@@ -324,20 +325,20 @@ void update_next_primal_vars(const Input &input, const double tau,
       workspace.miscellaneous_workspace.g_plus_s);
 }
 
-void update_next_dual_vars(const Input &input, const double tau,
-                           Workspace &workspace, const double alpha) {
+void update_next_dual_vars(const Input &input, Workspace &workspace,
+                           const double primal_step, const double dual_step) {
   const int s_dim = input.dimensions.s_dim;
   const int y_dim = input.dimensions.y_dim;
 
   for (int i = 0; i < y_dim; ++i) {
     workspace.next_vars.y[i] =
-        workspace.vars.y[i] + alpha * workspace.delta_vars.y[i];
+        workspace.vars.y[i] + primal_step * workspace.delta_vars.y[i];
   }
 
   for (int i = 0; i < s_dim; ++i) {
     workspace.next_vars.z[i] =
-        std::max(workspace.vars.z[i] + alpha * workspace.delta_vars.z[i],
-                 (1.0 - tau) * workspace.vars.z[i]);
+        workspace.vars.z[i] + dual_step * workspace.delta_vars.z[i];
+    assert(workspace.next_vars.z[i] > 0.0);
   }
 
   ModelCallbackInput mci{
@@ -773,8 +774,10 @@ auto compute_search_direction(const Input &input, const Settings &settings,
     std::copy_n(ds, s_dim, affine_ds);
     std::copy_n(dz, s_dim, affine_dz);
 
-    const double alpha_s = get_alpha_s_max(s_dim, 1.0, s, affine_ds);
-    const double alpha_z = get_alpha_s_max(s_dim, 1.0, z, affine_dz);
+    const double alpha_s =
+        get_fraction_to_boundary_step(s_dim, 1.0, s, affine_ds);
+    const double alpha_z =
+        get_fraction_to_boundary_step(s_dim, 1.0, z, affine_dz);
     double current_mu = 0.0;
     double affine_mu = 0.0;
     for (int i = 0; i < s_dim; ++i) {
@@ -824,8 +827,8 @@ auto compute_search_direction(const Input &input, const Settings &settings,
     kkt_error = std::numeric_limits<double>::infinity();
   }
 
-  const auto alpha_s_max =
-      get_alpha_s_max(s_dim, tau, workspace.vars.s, workspace.delta_vars.s);
+  const auto alpha_s_max = get_fraction_to_boundary_step(
+      s_dim, tau, workspace.vars.s, workspace.delta_vars.s);
 
   if (settings.logging.print_search_direction_logs) {
     double *res_x = residual;
@@ -894,8 +897,8 @@ auto do_line_search(const Input &input, const Settings &settings,
                     const double mu, const double tau,
                     const double sq_constraint_violation_norm,
                     const double merit_slope, const double alpha_s_max,
-                    int &total_ls_iterations, FilterWorkspace &filter,
-                    Workspace &workspace)
+                    const double alpha_z_max, int &total_ls_iterations,
+                    FilterWorkspace &filter, Workspace &workspace)
     -> std::tuple<bool, double, double, double> {
   const int s_dim = input.dimensions.s_dim;
   const int y_dim = input.dimensions.y_dim;
@@ -983,7 +986,7 @@ auto do_line_search(const Input &input, const Settings &settings,
     alpha = trial_alpha;
   }
 
-  update_next_dual_vars(input, tau, workspace, alpha);
+  update_next_dual_vars(input, workspace, alpha, alpha_z_max);
 
   if (ls_succeeded && filter_active && !accepted_without_filter) {
     add_filter_entry(filter, settings, std::sqrt(sq_constraint_violation_norm),
@@ -1193,6 +1196,9 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
       };
     }
 
+    const double alpha_z_max = get_fraction_to_boundary_step(
+        s_dim, tau, workspace.vars.z, workspace.delta_vars.z);
+
     const TerminationChecks termination = check_termination(
         settings, previous_cost, f0, merit_slope, dual_residual,
         max_constraint_violation, max_complementarity, duality_gap);
@@ -1260,13 +1266,14 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
     if (settings.line_search.skip_line_search) {
       alpha = alpha_s_max;
       update_next_primal_vars(input, tau, workspace, alpha, true, true);
-      update_next_dual_vars(input, tau, workspace, alpha);
+      update_next_dual_vars(input, workspace, alpha, alpha_z_max);
       ls_succeeded = true;
       m0 = 0.0;
     } else {
-      std::tie(ls_succeeded, alpha, m0, std::ignore) = do_line_search(
-          input, settings, mu, tau, sq_constraint_violation_norm, merit_slope,
-          alpha_s_max, total_ls_iterations, workspace.filter, workspace);
+      std::tie(ls_succeeded, alpha, m0, std::ignore) =
+          do_line_search(input, settings, mu, tau, sq_constraint_violation_norm,
+                         merit_slope, alpha_s_max, alpha_z_max,
+                         total_ls_iterations, workspace.filter, workspace);
     }
 
     if (settings.logging.print_logs) {
