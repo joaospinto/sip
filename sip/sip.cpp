@@ -224,6 +224,14 @@ auto check_termination(const Settings &settings,
   };
 }
 
+auto increase_penalty_parameter(const PenaltySettings &settings,
+                                double &penalty) -> bool {
+  const double previous = penalty;
+  penalty = std::min(penalty * settings.penalty_parameter_increase_factor,
+                     settings.max_penalty_parameter);
+  return penalty > previous;
+}
+
 auto update_penalty_parameters(const Input &input, const Settings &settings,
                                const double alpha, Workspace &workspace)
     -> bool {
@@ -250,11 +258,8 @@ auto update_penalty_parameters(const Input &input, const Settings &settings,
     if ((!settings.penalty.scale_violation_reduction_with_step_size ||
          std::fabs(new_c[i]) > settings.termination.max_constraint_violation) &&
         improvement_ratio > acceptable_ratio) {
-      workspace.penalties.y[i] =
-          std::min(workspace.penalties.y[i] *
-                       settings.penalty.penalty_parameter_increase_factor,
-                   settings.penalty.max_penalty_parameter);
-      any_increased = true;
+      any_increased |= increase_penalty_parameter(
+          settings.penalty, workspace.penalties.y[i]);
     } else {
       workspace.penalties.y[i] =
           std::min(workspace.penalties.y[i] *
@@ -270,11 +275,8 @@ auto update_penalty_parameters(const Input &input, const Settings &settings,
          std::fabs(new_gps[i]) >
              settings.termination.max_constraint_violation) &&
         improvement_ratio > acceptable_ratio) {
-      workspace.penalties.z[i] =
-          std::min(workspace.penalties.z[i] *
-                       settings.penalty.penalty_parameter_increase_factor,
-                   settings.penalty.max_penalty_parameter);
-      any_increased = true;
+      any_increased |= increase_penalty_parameter(
+          settings.penalty, workspace.penalties.z[i]);
     } else {
       workspace.penalties.z[i] =
           std::min(workspace.penalties.z[i] *
