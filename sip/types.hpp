@@ -102,6 +102,15 @@ struct LineSearchSettings {
   double min_merit_slope_to_skip_line_search = -1e-3;
   // When true, skips the line search and always takes alpha = alpha_s_max.
   bool skip_line_search = false;
+  // When true, accept a trial step if it passes Armijo, sufficiently reduces
+  // primal violation, or sufficiently reduces the objective.
+  bool use_filter_line_search = false;
+  // Filter margin for primal violation.
+  double filter_gamma_theta = 1e-5;
+  // Filter margin for objective.
+  double filter_gamma_f = 1e-5;
+  // Do not activate the filter before this many cumulative line-search trials.
+  int filter_min_total_line_search_iterations = 0;
   // When true, halts the optimization process if a good step is not found.
   bool enable_line_search_failures = false;
 };
@@ -331,6 +340,22 @@ struct PenaltyParameterWorkspace {
   }
 };
 
+struct FilterWorkspace {
+  double *theta;
+  double *f;
+  int size;
+  int capacity;
+
+  void reserve(int filter_capacity);
+  void free();
+
+  auto mem_assign(int filter_capacity, unsigned char *mem_ptr) -> int;
+
+  static constexpr auto num_bytes(int filter_capacity) -> int {
+    return 2 * filter_capacity * sizeof(double);
+  }
+};
+
 // This data structure is used to avoid doing dynamic memory allocation inside
 // of the solver, as well as avoiding excessive templating in the solver code.
 struct Workspace {
@@ -352,24 +377,35 @@ struct Workspace {
   ComputeSearchDirectionWorkspace csd_workspace;
   // Stores equality and inequality penalty parameters.
   PenaltyParameterWorkspace penalties;
+  // Stores the line-search filter entries.
+  FilterWorkspace filter;
 
   // To dynamically allocate the required memory.
-  void reserve(int x_dim, int s_dim, int y_dim);
+  void reserve(int x_dim, int s_dim, int y_dim, const Settings &settings);
   void free();
 
   // For using pre-allocated (possibly statically allocated) memory.
-  auto mem_assign(int x_dim, int s_dim, int y_dim, unsigned char *mem_ptr)
-      -> int;
+  auto mem_assign(int x_dim, int s_dim, int y_dim, const Settings &settings,
+                  unsigned char *mem_ptr) -> int;
 
   // For knowing how much memory to pre-allocate.
-  static constexpr auto num_bytes(int x_dim, int s_dim, int y_dim) -> int {
+  static constexpr auto num_bytes(int x_dim, int s_dim, int y_dim,
+                                  const Settings &settings) -> int {
     const int kkt_dim = x_dim + s_dim + y_dim;
     const int full_dim = kkt_dim + s_dim;
     return 4 * VariablesWorkspace::num_bytes(x_dim, s_dim, y_dim) +
            MiscellaneousWorkspace::num_bytes(s_dim) +
            ComputeSearchDirectionWorkspace::num_bytes(s_dim, y_dim, kkt_dim,
                                                       full_dim) +
-           PenaltyParameterWorkspace::num_bytes(s_dim, y_dim);
+           PenaltyParameterWorkspace::num_bytes(s_dim, y_dim) +
+           FilterWorkspace::num_bytes(filter_capacity(settings));
+  }
+
+private:
+  static constexpr auto filter_capacity(const Settings &settings) -> int {
+    return settings.line_search.use_filter_line_search
+               ? settings.max_iterations + 1
+               : 0;
   }
 };
 

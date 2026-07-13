@@ -56,6 +56,43 @@ auto merit_function(const Input &input, const Workspace &workspace,
                          merit);
 }
 
+auto filter_accepts(const FilterWorkspace &filter, const Settings &settings,
+                    const double theta, const double f) -> bool {
+  for (int i = 0; i < filter.size; ++i) {
+    if (theta >
+            (1.0 - settings.line_search.filter_gamma_theta) * filter.theta[i] &&
+        f > filter.f[i] -
+                settings.line_search.filter_gamma_f * filter.theta[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+void add_filter_entry(FilterWorkspace &filter, const Settings &settings,
+                      const double theta, const double f) {
+  if (!filter_accepts(filter, settings, theta, f)) {
+    return;
+  }
+
+  int next_size = 0;
+  for (int i = 0; i < filter.size; ++i) {
+    const bool dominated =
+        filter.theta[i] >=
+            (1.0 - settings.line_search.filter_gamma_theta) * theta &&
+        filter.f[i] >= f - settings.line_search.filter_gamma_f * theta;
+    if (!dominated) {
+      filter.theta[next_size] = filter.theta[i];
+      filter.f[next_size] = filter.f[i];
+      ++next_size;
+    }
+  }
+  assert(next_size < filter.capacity);
+  filter.theta[next_size] = theta;
+  filter.f[next_size] = f;
+  filter.size = next_size + 1;
+}
+
 auto get_alpha_s_max(const int s_dim, const double tau, const double *s,
                      const double *ds) -> double {
   // s + alpha_s_max * ds >= (1 - tau) * s
@@ -830,7 +867,8 @@ auto do_line_search(const Input &input, const Settings &settings,
                     const double mu, const double tau,
                     const double sq_constraint_violation_norm,
                     const double merit_slope, const double alpha_s_max,
-                    int &total_ls_iterations, Workspace &workspace)
+                    int &total_ls_iterations, FilterWorkspace &filter,
+                    Workspace &workspace)
     -> std::tuple<bool, double, double, double> {
   const int s_dim = input.dimensions.s_dim;
   const int y_dim = input.dimensions.y_dim;
@@ -846,6 +884,11 @@ auto do_line_search(const Input &input, const Settings &settings,
   double merit_delta = std::numeric_limits<double>::signaling_NaN();
   double constraint_violation_ratio =
       std::numeric_limits<double>::signaling_NaN();
+  bool accepted_without_filter = false;
+  const bool filter_active =
+      settings.line_search.use_filter_line_search &&
+      total_ls_iterations >=
+          settings.line_search.filter_min_total_line_search_iterations;
 
   if (settings.logging.print_line_search_logs) {
     print_line_search_log_header();
@@ -858,6 +901,7 @@ auto do_line_search(const Input &input, const Settings &settings,
     const double next_gsetgse =
         squared_norm(workspace.miscellaneous_workspace.g_plus_s, s_dim);
     const double next_sq_constraint_violation_norm = next_ctc + next_gsetgse;
+    const double next_theta = std::sqrt(next_sq_constraint_violation_norm);
 
     // NOTE: the line search is only over the primal variables, so we cannot
     // use next_vars.y and next_vars.z.
@@ -875,7 +919,14 @@ auto do_line_search(const Input &input, const Settings &settings,
 
     constraint_violation_ratio = next_sq_constraint_violation_norm /
                                  std::max(sq_constraint_violation_norm, 1e-12);
-
+    const double current_theta = std::sqrt(sq_constraint_violation_norm);
+    const bool acceptable_to_current_iterate =
+        next_theta <=
+            (1.0 - settings.line_search.filter_gamma_theta) * current_theta ||
+        m_f <= m0_f - settings.line_search.filter_gamma_f * current_theta;
+    const bool filter_accept =
+        filter_active && acceptable_to_current_iterate &&
+        filter_accepts(filter, settings, next_theta, m_f);
     if (settings.logging.print_line_search_logs) {
       fmt::print(fg(fmt::color::yellow),
                  // clang-format off
@@ -888,10 +939,11 @@ auto do_line_search(const Input &input, const Settings &settings,
 
     ++total_ls_iterations;
 
-    if (merit_slope >
+    accepted_without_filter =
+        merit_slope >
             settings.line_search.min_merit_slope_to_skip_line_search ||
-        merit_delta <
-            settings.line_search.armijo_factor * merit_slope * alpha) {
+        merit_delta < settings.line_search.armijo_factor * merit_slope * alpha;
+    if (accepted_without_filter || filter_accept) {
       ls_succeeded = true;
       break;
     }
@@ -905,6 +957,11 @@ auto do_line_search(const Input &input, const Settings &settings,
   }
 
   update_next_dual_vars(input, tau, workspace, alpha);
+
+  if (ls_succeeded && filter_active && !accepted_without_filter) {
+    add_filter_entry(filter, settings, std::sqrt(sq_constraint_violation_norm),
+                     m0_f);
+  }
 
   return std::make_tuple(ls_succeeded, alpha, m0, constraint_violation_ratio);
 }
@@ -921,6 +978,7 @@ auto check_settings(const Settings &settings) -> bool {
   };
 
   if (settings.max_iterations < 0 || settings.line_search.max_iterations < 0 ||
+      settings.line_search.filter_min_total_line_search_iterations < 0 ||
       settings.num_iterative_refinement_steps < 0) {
     return false;
   }
@@ -960,6 +1018,9 @@ auto check_settings(const Settings &settings) -> bool {
   }
   if (!is_finite_nonnegative(settings.line_search.armijo_factor) ||
       settings.line_search.armijo_factor > 1.0 ||
+      !is_finite_nonnegative(settings.line_search.filter_gamma_theta) ||
+      settings.line_search.filter_gamma_theta > 1.0 ||
+      !is_finite_nonnegative(settings.line_search.filter_gamma_f) ||
       !is_finite_positive(settings.line_search.line_search_factor) ||
       settings.line_search.line_search_factor >= 1.0 ||
       !is_finite_positive(settings.line_search.line_search_min_step_size) ||
@@ -1076,6 +1137,7 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
 
   int total_ls_iterations = 0;
   std::optional<double> previous_cost;
+  workspace.filter.size = 0;
 
   for (int iteration = 0; iteration < settings.max_iterations; ++iteration) {
     const double f0 = input.get_f();
@@ -1176,7 +1238,7 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
     } else {
       std::tie(ls_succeeded, alpha, m0, std::ignore) = do_line_search(
           input, settings, mu, tau, sq_constraint_violation_norm, merit_slope,
-          alpha_s_max, total_ls_iterations, workspace);
+          alpha_s_max, total_ls_iterations, workspace.filter, workspace);
     }
 
     if (settings.logging.print_logs) {
