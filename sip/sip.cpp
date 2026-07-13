@@ -911,17 +911,11 @@ auto do_line_search(const Input &input, const Settings &settings,
   double merit_delta = std::numeric_limits<double>::signaling_NaN();
   double constraint_violation_ratio =
       std::numeric_limits<double>::signaling_NaN();
-  double accepted_theta = std::numeric_limits<double>::signaling_NaN();
-  double accepted_f = std::numeric_limits<double>::signaling_NaN();
+  bool accepted_without_filter = false;
   const bool filter_active =
       settings.line_search.use_filter_line_search &&
       total_ls_iterations >=
           settings.line_search.filter_min_total_line_search_iterations;
-
-  if (filter_active) {
-    add_filter_entry(filter, settings, std::sqrt(sq_constraint_violation_norm),
-                     m0_f);
-  }
 
   if (settings.logging.print_line_search_logs) {
     print_line_search_log_header();
@@ -952,8 +946,14 @@ auto do_line_search(const Input &input, const Settings &settings,
 
     constraint_violation_ratio = next_sq_constraint_violation_norm /
                                  std::max(sq_constraint_violation_norm, 1e-12);
+    const double current_theta = std::sqrt(sq_constraint_violation_norm);
+    const bool acceptable_to_current_iterate =
+        next_theta <=
+            (1.0 - settings.line_search.filter_gamma_theta) * current_theta ||
+        m_f <= m0_f - settings.line_search.filter_gamma_f * current_theta;
     const bool filter_accept =
-        filter_active && filter_accepts(filter, settings, next_theta, m_f);
+        filter_active && acceptable_to_current_iterate &&
+        filter_accepts(filter, settings, next_theta, m_f);
     if (settings.logging.print_line_search_logs) {
       fmt::print(fg(fmt::color::yellow),
                  // clang-format off
@@ -966,14 +966,12 @@ auto do_line_search(const Input &input, const Settings &settings,
 
     ++total_ls_iterations;
 
-    if (merit_slope >
+    accepted_without_filter =
+        merit_slope >
             settings.line_search.min_merit_slope_to_skip_line_search ||
-        merit_delta <
-            settings.line_search.armijo_factor * merit_slope * alpha ||
-        filter_accept) {
+        merit_delta < settings.line_search.armijo_factor * merit_slope * alpha;
+    if (accepted_without_filter || filter_accept) {
       ls_succeeded = true;
-      accepted_theta = next_theta;
-      accepted_f = m_f;
       break;
     }
 
@@ -987,8 +985,9 @@ auto do_line_search(const Input &input, const Settings &settings,
 
   update_next_dual_vars(input, tau, workspace, alpha);
 
-  if (ls_succeeded && filter_active) {
-    add_filter_entry(filter, settings, accepted_theta, accepted_f);
+  if (ls_succeeded && filter_active && !accepted_without_filter) {
+    add_filter_entry(filter, settings, std::sqrt(sq_constraint_violation_norm),
+                     m0_f);
   }
 
   return std::make_tuple(ls_succeeded, alpha, m0, constraint_violation_ratio);
