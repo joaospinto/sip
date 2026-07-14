@@ -24,6 +24,34 @@ constexpr auto uses_dual_center(const Mode mode) -> bool {
   return mode == Mode::PRIMAL_DUAL_PROXIMAL_IPM;
 }
 
+auto unscaled_max_abs(const double *values, const double *scaling,
+                      const int size) -> double {
+  if (scaling == nullptr) {
+    return max_abs_or_inf(values, size);
+  }
+  double result = 0.0;
+  for (int i = 0; i < size; ++i) {
+    const double value = std::fabs(values[i] / scaling[i]);
+    result = std::isnan(value) ? std::numeric_limits<double>::infinity()
+                               : std::max(result, value);
+  }
+  return result;
+}
+
+auto unscaled_max_positive(const double *values, const double *scaling,
+                           const int size) -> double {
+  if (scaling == nullptr) {
+    return max_positive_or_inf(values, size);
+  }
+  double result = 0.0;
+  for (int i = 0; i < size; ++i) {
+    const double value = values[i] / scaling[i];
+    result = std::isnan(value) ? std::numeric_limits<double>::infinity()
+                               : std::max(result, value);
+  }
+  return result;
+}
+
 auto mean_penalty_parameter(const Workspace &workspace, const int s_dim,
                             const int y_dim) -> double {
   double sum = 0.0;
@@ -40,8 +68,10 @@ auto mean_penalty_parameter(const Workspace &workspace, const int s_dim,
 auto max_primal_violation(const Input &input) -> double {
   const int s_dim = input.dimensions.s_dim;
   const int y_dim = input.dimensions.y_dim;
-  return std::max(max_abs_or_inf(input.get_c(), y_dim),
-                  max_positive_or_inf(input.get_g(), s_dim));
+  return std::max(
+      unscaled_max_abs(input.get_c(), input.residual_scaling.equality, y_dim),
+      unscaled_max_positive(input.get_g(), input.residual_scaling.inequality,
+                            s_dim));
 }
 
 auto merit_function(const Input &input, const Settings &settings,
@@ -851,13 +881,21 @@ auto compute_search_direction(const Input &input, const Settings &settings,
       merit_slope(input, settings, workspace, mu, dx, ds, dy, dz);
 
   for (int i = 0; i < y_dim; ++i) {
-    max_constraint_violation =
-        std::max(max_constraint_violation, std::fabs(c[i]));
+    const double abs_c =
+        std::fabs(c[i] / (input.residual_scaling.equality == nullptr
+                              ? 1.0
+                              : input.residual_scaling.equality[i]));
+    max_constraint_violation = std::isnan(abs_c)
+                                   ? std::numeric_limits<double>::infinity()
+                                   : std::max(max_constraint_violation, abs_c);
   }
 
   for (int i = 0; i < s_dim; ++i) {
     const double abs_gps =
-        std::fabs(workspace.miscellaneous_workspace.g_plus_s[i]);
+        std::fabs(workspace.miscellaneous_workspace.g_plus_s[i] /
+                  (input.residual_scaling.inequality == nullptr
+                       ? 1.0
+                       : input.residual_scaling.inequality[i]));
     max_constraint_violation =
         std::isnan(abs_gps) ? std::numeric_limits<double>::infinity()
                             : std::max(max_constraint_violation, abs_gps);
@@ -868,7 +906,10 @@ auto compute_search_direction(const Input &input, const Settings &settings,
   }
 
   for (int i = 0; i < x_dim; ++i) {
-    const double abs_rx = std::fabs(rx[i]);
+    const double abs_rx =
+        std::fabs(rx[i] / (input.residual_scaling.dual == nullptr
+                               ? 1.0
+                               : input.residual_scaling.dual[i]));
     dual_residual = std::isnan(abs_rx) ? std::numeric_limits<double>::infinity()
                                        : std::max(dual_residual, abs_rx);
   }
