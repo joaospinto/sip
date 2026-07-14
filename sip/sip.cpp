@@ -16,6 +16,8 @@ namespace sip {
 
 namespace {
 
+constexpr int kRequiredConsecutiveStalledIterations = 2;
+
 auto mean_penalty_parameter(const Workspace &workspace, const int s_dim,
                             const int y_dim) -> double {
   double sum = 0.0;
@@ -1132,6 +1134,8 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
   const double tau = settings.line_search.tau;
 
   int total_ls_iterations = 0;
+  // A single poorly conditioned solve can produce a spurious flat direction.
+  int consecutive_stalled_iterations = 0;
   std::optional<double> previous_cost;
   workspace.filter.size = 0;
 
@@ -1185,7 +1189,14 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
           dual_residual, kkt_error);
     }
 
-    if (termination.solved || termination.stalled) {
+    if (termination.stalled) {
+      ++consecutive_stalled_iterations;
+    } else {
+      consecutive_stalled_iterations = 0;
+    }
+
+    if (termination.solved || consecutive_stalled_iterations >=
+                                  kRequiredConsecutiveStalledIterations) {
       const bool suboptimal =
           max_constraint_violation <
           settings.termination.max_suboptimal_constraint_violation;
