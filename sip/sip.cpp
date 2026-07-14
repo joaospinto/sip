@@ -171,7 +171,7 @@ auto get_fraction_to_boundary_step(const int dim, const double tau,
 
   for (int i = 0; i < dim; ++i) {
     if (direction[i] < 0.0) {
-      alpha = std::min(alpha, tau * value[i] / std::max(-direction[i], 1e-12));
+      alpha = std::min(alpha, tau * value[i] / -direction[i]);
     }
   }
 
