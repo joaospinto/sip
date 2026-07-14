@@ -210,6 +210,12 @@ struct Input {
     int y_dim;
   };
 
+  struct ResidualScaling {
+    const double *dual{nullptr};
+    const double *equality{nullptr};
+    const double *inequality{nullptr};
+  };
+
   // Callback for factoring the reduced-block-3x3 Newton-KKT system.
   FactorCallback factor;
   // Callback for solving the reduced-block-3x3 Newton-KKT system.
@@ -238,6 +244,8 @@ struct Input {
   ModelCallback model_callback;
   // Callback for (optionally) declaring a timeout. Return true for timeout.
   TimeoutCallback timeout_callback;
+  // Multipliers applied to model residuals by an external equilibration.
+  ResidualScaling residual_scaling;
   // The problem dimensions.
   Dimensions dimensions;
 };
