@@ -870,7 +870,7 @@ auto compute_search_direction(const Input &input, const Settings &settings,
     compute_refinement_residual();
     double previous_refinement_error = max_abs_or_inf(residual, dim_3x3);
     const int num_iterative_refinement_steps =
-        use_predictor_corrector ? 10 : settings.num_iterative_refinement_steps;
+        settings.num_iterative_refinement_steps;
     for (int j = 0; j < num_iterative_refinement_steps; ++j) {
       input.solve(residual, u);
       for (int i = 0; i < dim_3x3; ++i) {
