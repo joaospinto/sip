@@ -101,7 +101,7 @@ auto get_alpha_s_max(const int s_dim, const double tau, const double *s,
 
   for (int i = 0; i < s_dim; ++i) {
     if (ds[i] < 0.0) {
-      alpha_s_max = std::min(alpha_s_max, tau * s[i] / std::max(-ds[i], 1e-12));
+      alpha_s_max = std::min(alpha_s_max, tau * s[i] / -ds[i]);
     }
   }
 
