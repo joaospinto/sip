@@ -975,7 +975,9 @@ auto check_settings(const Settings &settings) -> bool {
 
   if (settings.max_iterations < 0 || settings.line_search.max_iterations < 0 ||
       settings.line_search.filter_min_total_line_search_iterations < 0 ||
-      settings.num_iterative_refinement_steps < 0) {
+      settings.num_iterative_refinement_steps < 0 ||
+      settings.termination
+              .num_consecutive_stalled_iterations_before_termination <= 0) {
     return false;
   }
   if (!is_finite_nonnegative(settings.termination.max_dual_residual) ||
@@ -1132,6 +1134,8 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
   const double tau = settings.line_search.tau;
 
   int total_ls_iterations = 0;
+  // A single poorly conditioned solve can produce a spurious flat direction.
+  int num_consecutive_stalled_iterations = 0;
   std::optional<double> previous_cost;
   workspace.filter.size = 0;
 
@@ -1185,7 +1189,16 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
           dual_residual, kkt_error);
     }
 
-    if (termination.solved || termination.stalled) {
+    if (termination.stalled) {
+      ++num_consecutive_stalled_iterations;
+    } else {
+      num_consecutive_stalled_iterations = 0;
+    }
+
+    if (termination.solved ||
+        num_consecutive_stalled_iterations >=
+            settings.termination
+                .num_consecutive_stalled_iterations_before_termination) {
       const bool suboptimal =
           max_constraint_violation <
           settings.termination.max_suboptimal_constraint_violation;

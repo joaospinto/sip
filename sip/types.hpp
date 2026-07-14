@@ -82,6 +82,8 @@ struct TerminationSettings {
   double max_suboptimal_constraint_violation = 1e-2;
   // The maximum allowed merit function slope.
   double max_merit_slope = 1e-16;
+  // The number of consecutive stalled iterations before termination.
+  int num_consecutive_stalled_iterations_before_termination = 2;
 };
 
 struct LineSearchSettings {
