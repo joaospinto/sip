@@ -210,13 +210,11 @@ auto check_termination(const Settings &settings,
                                         complementarity_satisfied;
   const bool cost_change_optimality_satisfied =
       cost_change_ok && primal_feasibility_satisfied;
-  const bool advance_barrier = merit_slope_too_small &&
-                               primal_feasibility_satisfied &&
-                               dual_residual_satisfied &&
-                               !complementarity_satisfied;
+  const bool advance_barrier =
+      merit_slope_too_small && primal_feasibility_satisfied &&
+      dual_residual_satisfied && !complementarity_satisfied;
 
   return TerminationChecks{
-      // TODO(joao): probably only consider the duality gap in the first case...
       .solved = duality_gap_satisfied &&
                 (kkt_optimality_satisfied || cost_change_optimality_satisfied),
       .stalled = merit_slope_too_small && !advance_barrier,
@@ -562,14 +560,12 @@ auto fixed_dual_merit_slope(const Input &input, const Workspace &workspace,
   std::fill_n(tmp_s, s_dim, 0.0);
   input.add_Gx_to_y(dx, tmp_s);
 
-  const double x_slope =
-      dot(workspace.nrhs.x, dx, x_dim) +
-      weighted_dot(c, workspace.penalties.y, tmp_y, y_dim) +
-      weighted_dot(gps, workspace.penalties.z, tmp_s, s_dim);
+  const double x_slope = dot(workspace.nrhs.x, dx, x_dim) +
+                         weighted_dot(c, workspace.penalties.y, tmp_y, y_dim) +
+                         weighted_dot(gps, workspace.penalties.z, tmp_s, s_dim);
 
-  const double s_slope =
-      dot(workspace.nrhs.s, ds, s_dim) +
-      weighted_dot(gps, workspace.penalties.z, ds, s_dim);
+  const double s_slope = dot(workspace.nrhs.s, ds, s_dim) +
+                         weighted_dot(gps, workspace.penalties.z, ds, s_dim);
 
   return {.x = x_slope, .s = s_slope, .total = x_slope + s_slope};
 }
@@ -857,8 +853,8 @@ auto compute_search_direction(const Input &input, const Settings &settings,
       check_derivatives(input, settings, tau, workspace);
   }
 
-  return std::make_tuple(true, dx, ds, dy, dz, fixed_dual_ms.total,
-                         alpha_s_max, dual_residual, max_constraint_violation,
+  return std::make_tuple(true, dx, ds, dy, dz, fixed_dual_ms.total, alpha_s_max,
+                         dual_residual, max_constraint_violation,
                          max_complementarity, kkt_error, duality_gap,
                          lin_sys_error, num_regularization_increases);
 }
@@ -1207,9 +1203,8 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
     }
 
     if (termination.advance_barrier) {
-      const double next_mu =
-          std::max(mu * settings.barrier.mu_update_factor,
-                   settings.barrier.mu_min);
+      const double next_mu = std::max(mu * settings.barrier.mu_update_factor,
+                                      settings.barrier.mu_min);
       if (next_mu < mu) {
         mu = next_mu;
         continue;
