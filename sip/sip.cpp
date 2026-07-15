@@ -1789,6 +1789,8 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
               ? std::max(0.0, (previous_complementarity - new_complementarity) /
                                   previous_complementarity)
               : 0.0;
+      const double proximal_regularization_progress =
+          s_dim == 0 ? 1.0 : complementarity_reduction;
       if (new_dual_residual < kResidualReductionFactor * dual_residual ||
           new_dual_residual < settings.termination.max_dual_residual ||
           (proximal_rho == settings.proximal_qp.minimum_regularization &&
@@ -1797,7 +1799,7 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
         primal_center_update_rejections.reset();
         proximal_rho =
             std::max(proximal_regularization_limit,
-                     (1.0 - complementarity_reduction) * proximal_rho);
+                     (1.0 - proximal_regularization_progress) * proximal_rho);
       } else {
         ++primal_center_update_rejections_before_regularization_refinement;
         primal_center_update_rejections.reject(dual_residual);
@@ -1806,7 +1808,7 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
           proximal_rho =
               std::max(proximal_regularization_limit,
                        (1.0 - kRejectedCenterRegularizationReductionScale *
-                                  complementarity_reduction) *
+                                  proximal_regularization_progress) *
                            proximal_rho);
         }
         if (primal_center_update_rejections.has_reduced_residual(
@@ -1836,7 +1838,8 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
         dual_center_update_rejections.reset();
         proximal_delta =
             std::max(proximal_regularization_limit,
-                     (1.0 - complementarity_reduction) * proximal_delta);
+                     (1.0 - proximal_regularization_progress) *
+                         proximal_delta);
       } else {
         ++dual_center_update_rejections_before_regularization_refinement;
         dual_center_update_rejections.reject(max_constraint_violation);
@@ -1845,7 +1848,7 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
           proximal_delta =
               std::max(proximal_regularization_limit,
                        (1.0 - kRejectedCenterRegularizationReductionScale *
-                                  complementarity_reduction) *
+                                  proximal_regularization_progress) *
                            proximal_delta);
         }
         if (dual_center_update_rejections.has_reduced_residual(
