@@ -1530,28 +1530,6 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
 
   for (int iteration = 0; iteration < settings.max_iterations; ++iteration) {
     if (settings.proximal_qp.enabled) {
-      const double epsilon = std::numeric_limits<double>::epsilon();
-      bool shifted_from_boundary = false;
-      for (int i = 0; i < s_dim; ++i) {
-        if (workspace.vars.z[i] < epsilon) {
-          workspace.vars.z[i] += epsilon;
-          shifted_from_boundary = true;
-        }
-      }
-      if (shifted_from_boundary) {
-        input.model_callback({
-            .x = workspace.vars.x,
-            .y = workspace.vars.y,
-            .z = workspace.vars.z,
-            .new_x = false,
-            .new_y = false,
-            .new_z = true,
-        });
-        set_barrier_parameter(mean_complementarity(workspace, s_dim));
-      }
-    }
-
-    if (settings.proximal_qp.enabled) {
       const double dual_proximal_residual =
           proximal_rho * unscaled_max_difference(
                              workspace.vars.x, workspace.proximal_centers.x,
