@@ -945,6 +945,7 @@ auto compute_search_direction(const Input &input, const Settings &settings,
 
   int num_regularization_increases = 0;
   bool factorization_ok = false;
+  bool dual_regularization_increased = false;
   double numerical_regularization = 0.0;
   for (int attempt = 0; attempt < settings.regularization.max_attempts;
        ++attempt) {
@@ -960,10 +961,35 @@ auto compute_search_direction(const Input &input, const Settings &settings,
       continue;
     }
     const double next_psi = increased_regularization(settings, psi);
-    if (next_psi <= psi || next_psi > settings.regularization.maximum) {
+    if (next_psi > psi) {
+      psi = next_psi;
+      ++num_regularization_increases;
+      continue;
+    }
+    if (dual_regularization_increased) {
       break;
     }
-    psi = next_psi;
+    bool any_dual_regularization_increased = false;
+    for (int i = 0; i < y_dim; ++i) {
+      const double next = r2[i] * settings.regularization.increase_factor;
+      if (std::isfinite(next) && next > r2[i]) {
+        r2[i] = next;
+        workspace.penalties.y[i] = 1.0 / next;
+        any_dual_regularization_increased = true;
+      }
+    }
+    for (int i = 0; i < s_dim; ++i) {
+      const double next = r3[i] * settings.regularization.increase_factor;
+      if (std::isfinite(next) && next > r3[i]) {
+        r3[i] = next;
+        workspace.penalties.z[i] = 1.0 / next;
+        any_dual_regularization_increased = true;
+      }
+    }
+    if (!any_dual_regularization_increased) {
+      break;
+    }
+    dual_regularization_increased = true;
     ++num_regularization_increases;
   }
 
