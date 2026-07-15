@@ -47,6 +47,9 @@ struct BarrierSettings {
   double mu_update_kappa = 10.0;
   // Use an affine predictor and second-order centering corrector direction.
   bool use_predictor_corrector = false;
+  // Force an accurately solved proximal-center update after this many
+  // consecutive update rejections without sufficient cumulative progress.
+  int max_consecutive_proximal_center_update_rejections = 8;
 };
 
 struct PenaltySettings {

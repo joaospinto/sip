@@ -243,6 +243,28 @@ struct TerminationChecks {
   bool advance_barrier;
 };
 
+struct ProximalCenterUpdateRejections {
+  void reject(const double current_residual) {
+    if (count == 0) {
+      residual_at_start = current_residual;
+    }
+    ++count;
+  }
+
+  void reset() {
+    count = 0;
+    residual_at_start = std::numeric_limits<double>::infinity();
+  }
+
+  auto has_reduced_residual(const double residual,
+                            const double reduction_factor) const -> bool {
+    return residual < reduction_factor * residual_at_start;
+  }
+
+  int count{0};
+  double residual_at_start{std::numeric_limits<double>::infinity()};
+};
+
 auto cost_change_satisfied(const Settings &settings,
                            const std::optional<double> previous_cost,
                            const double current_cost) -> bool {
@@ -1179,6 +1201,7 @@ auto check_settings(const Settings &settings) -> bool {
   if (settings.max_iterations < 0 || settings.line_search.max_iterations < 0 ||
       settings.line_search.filter_min_total_line_search_iterations < 0 ||
       settings.num_iterative_refinement_steps < 0 ||
+      settings.barrier.max_consecutive_proximal_center_update_rejections <= 0 ||
       settings.termination
               .num_consecutive_stalled_iterations_before_termination <= 0) {
     return false;
@@ -1442,8 +1465,13 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
   double proximal_rho = 1e-6;
   double proximal_delta = 1e-4;
   double proximal_regularization_limit = 1e-10;
+  constexpr double kResidualReductionFactor = 0.95;
+  constexpr double kProximalResidualThreshold = 0.9;
+  constexpr double kInexactProximalResidualRatio = 0.1;
   int no_primal_center_update = 0;
   int no_dual_center_update = 0;
+  ProximalCenterUpdateRejections primal_center_update_rejections;
+  ProximalCenterUpdateRejections dual_center_update_rejections;
   const double tau = settings.line_search.tau;
 
   if (settings.barrier.use_predictor_corrector) {
@@ -1508,11 +1536,16 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
                 workspace.vars.z, workspace.proximal_centers.z,
                 input.residual_scaling.inequality, s_dim));
     if (settings.barrier.use_predictor_corrector &&
-        ((no_primal_center_update > 7 &&
+        ((no_primal_center_update >=
+              settings.barrier
+                  .max_consecutive_proximal_center_update_rejections &&
           proximal_rho == proximal_regularization_limit) ||
-         (no_dual_center_update > 7 &&
+         (no_dual_center_update >=
+              settings.barrier
+                  .max_consecutive_proximal_center_update_rejections &&
           proximal_delta == proximal_regularization_limit)) &&
-        dual_proximal_residual < 0.9 && primal_proximal_residual < 0.9) {
+        dual_proximal_residual < kProximalResidualThreshold &&
+        primal_proximal_residual < kProximalResidualThreshold) {
       proximal_regularization_limit = 1e-13;
       no_primal_center_update = 0;
       no_dual_center_update = 0;
@@ -1690,55 +1723,117 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
       const auto [new_primal_residual, new_dual_residual] =
           unregularized_residuals(input, workspace);
       const double new_complementarity = mean_complementarity(workspace, s_dim);
+      for (int i = 0; i < x_dim; ++i) {
+        workspace.nrhs.x[i] += proximal_rho * (workspace.vars.x[i] -
+                                               workspace.proximal_centers.x[i]);
+      }
+      const double regularized_dual_residual = unscaled_max_abs(
+          workspace.nrhs.x, input.residual_scaling.dual, x_dim);
+      const double *new_c = input.get_c();
+      for (int i = 0; i < y_dim; ++i) {
+        workspace.nrhs.y[i] =
+            new_c[i] + proximal_delta * (workspace.proximal_centers.y[i] -
+                                         workspace.vars.y[i]);
+      }
+      for (int i = 0; i < s_dim; ++i) {
+        workspace.nrhs.z[i] =
+            workspace.miscellaneous_workspace.g_plus_s[i] +
+            proximal_delta *
+                (workspace.proximal_centers.z[i] - workspace.vars.z[i]);
+      }
+      const double regularized_primal_residual =
+          std::max(unscaled_max_abs(workspace.nrhs.y,
+                                    input.residual_scaling.equality, y_dim),
+                   unscaled_max_abs(workspace.nrhs.z,
+                                    input.residual_scaling.inequality, s_dim));
       const double new_dual_proximal_residual =
           proximal_rho * unscaled_max_difference(
                              workspace.vars.x, workspace.proximal_centers.x,
                              input.residual_scaling.dual, x_dim);
       const double new_primal_proximal_residual =
           proximal_delta *
-          std::max(
-              unscaled_max_difference(
-                  workspace.vars.y, workspace.proximal_centers.y,
-                  input.residual_scaling.equality, y_dim),
-              unscaled_max_difference(
-                  workspace.vars.z, workspace.proximal_centers.z,
-                  input.residual_scaling.inequality, s_dim));
+          std::max(unscaled_max_difference(
+                       workspace.vars.y, workspace.proximal_centers.y,
+                       input.residual_scaling.equality, y_dim),
+                   unscaled_max_difference(
+                       workspace.vars.z, workspace.proximal_centers.z,
+                       input.residual_scaling.inequality, s_dim));
       const double complementarity_reduction =
           previous_complementarity > 0.0
               ? std::max(0.0, (previous_complementarity - new_complementarity) /
                                   previous_complementarity)
               : 0.0;
 
-      if (new_dual_residual < 0.95 * dual_residual ||
+      if (new_dual_residual < kResidualReductionFactor * dual_residual ||
           new_dual_residual < settings.termination.max_dual_residual ||
-          (proximal_rho == 1e-13 && new_dual_proximal_residual < 0.9)) {
+          (proximal_rho == 1e-13 &&
+           new_dual_proximal_residual < kProximalResidualThreshold)) {
         std::copy_n(workspace.vars.x, x_dim, workspace.proximal_centers.x);
+        primal_center_update_rejections.reset();
         proximal_rho =
             std::max(proximal_regularization_limit,
                      (1.0 - complementarity_reduction) * proximal_rho);
       } else {
         ++no_primal_center_update;
-        if (iteration < 5 || new_dual_proximal_residual < 0.9) {
+        primal_center_update_rejections.reject(dual_residual);
+        if (iteration < 5 ||
+            new_dual_proximal_residual < kProximalResidualThreshold) {
           proximal_rho = std::max(proximal_regularization_limit,
                                   (1.0 - 0.666 * complementarity_reduction) *
                                       proximal_rho);
         }
+        if (primal_center_update_rejections.has_reduced_residual(
+                new_dual_residual, kResidualReductionFactor)) {
+          primal_center_update_rejections.reset();
+        } else if (primal_center_update_rejections.count >=
+                       settings.barrier
+                           .max_consecutive_proximal_center_update_rejections &&
+                   new_dual_proximal_residual >= kProximalResidualThreshold &&
+                   regularized_dual_residual <
+                       std::max(settings.termination.max_dual_residual,
+                                kInexactProximalResidualRatio *
+                                    new_dual_residual)) {
+          std::copy_n(workspace.vars.x, x_dim, workspace.proximal_centers.x);
+          no_primal_center_update = 0;
+          primal_center_update_rejections.reset();
+        }
       }
 
-      if (new_primal_residual < 0.95 * max_constraint_violation ||
+      if (new_primal_residual <
+              kResidualReductionFactor * max_constraint_violation ||
           new_primal_residual < settings.termination.max_constraint_violation ||
-          (proximal_delta == 1e-13 && new_primal_proximal_residual < 0.9)) {
+          (proximal_delta == 1e-13 &&
+           new_primal_proximal_residual < kProximalResidualThreshold)) {
         std::copy_n(workspace.vars.y, y_dim, workspace.proximal_centers.y);
         std::copy_n(workspace.vars.z, s_dim, workspace.proximal_centers.z);
+        dual_center_update_rejections.reset();
         proximal_delta =
             std::max(proximal_regularization_limit,
                      (1.0 - complementarity_reduction) * proximal_delta);
       } else {
         ++no_dual_center_update;
-        if (iteration < 5 || new_primal_proximal_residual < 0.9) {
+        dual_center_update_rejections.reject(max_constraint_violation);
+        if (iteration < 5 ||
+            new_primal_proximal_residual < kProximalResidualThreshold) {
           proximal_delta = std::max(proximal_regularization_limit,
                                     (1.0 - 0.666 * complementarity_reduction) *
                                         proximal_delta);
+        }
+        if (dual_center_update_rejections.has_reduced_residual(
+                new_primal_residual, kResidualReductionFactor)) {
+          dual_center_update_rejections.reset();
+        } else if (dual_center_update_rejections.count >=
+                       settings.barrier
+                           .max_consecutive_proximal_center_update_rejections &&
+                   new_primal_proximal_residual >= kProximalResidualThreshold &&
+                   regularized_primal_residual <
+                       std::max(settings.termination.max_constraint_violation,
+                                kInexactProximalResidualRatio *
+                                    new_primal_residual)) {
+          std::copy_n(workspace.vars.y, y_dim, workspace.proximal_centers.y);
+          std::copy_n(workspace.vars.z, s_dim, workspace.proximal_centers.z);
+          no_dual_center_update = 0;
+          dual_center_update_rejections.reset();
         }
       }
       mu = new_complementarity;
