@@ -48,9 +48,25 @@ struct BarrierSettings {
   double mu_update_kappa = 10.0;
   // Use an affine predictor and second-order centering corrector direction.
   bool use_predictor_corrector = false;
-  // Force an accurately solved proximal-center update after this many
-  // consecutive update rejections without sufficient cumulative progress.
-  int max_consecutive_proximal_center_update_rejections = 8;
+  // Initialize the primal-dual variables from a regularized linearized model.
+  bool initialize_primal_dual_variables = false;
+};
+
+struct ProximalSettings {
+  // Center the primal regularization term at a persistent primal iterate.
+  bool use_primal_center = false;
+  // Center the dual regularization terms at persistent dual iterates and use
+  // the corresponding primal-dual augmented Lagrangian for globalization.
+  bool use_dual_center = false;
+  // Update enabled centers when their unregularized residuals make progress.
+  bool update_centers = true;
+  // Force an accurately solved center update after this many consecutive
+  // update rejections without sufficient cumulative progress.
+  int max_consecutive_center_update_rejections = 8;
+  // Temporarily keep enabled proximal regularization at least this large
+  // until the regularized residuals justify continuing toward their final
+  // configured limits.
+  double initial_continuation_regularization_floor = 1e-10;
 };
 
 struct PenaltySettings {
@@ -152,6 +168,8 @@ struct Settings {
   TerminationSettings termination;
   // Settings for inertia-correction x-regularization.
   RegularizationSettings regularization;
+  // Settings for primal and dual proximal centers.
+  ProximalSettings proximal;
   // Settings for fraction-to-boundary and merit line search.
   LineSearchSettings line_search;
   // Settings for logs and diagnostic checks.
@@ -396,7 +414,7 @@ struct Workspace {
   VariablesWorkspace next_vars;
   // The negative Newton-KKT RHS storage (for both primal and dual variables).
   VariablesWorkspace nrhs;
-  // Proximal centers used by the predictor-corrector QP method.
+  // Optional proximal centers.
   VariablesWorkspace proximal_centers;
   // Stores miscellaneous items.
   MiscellaneousWorkspace miscellaneous_workspace;
