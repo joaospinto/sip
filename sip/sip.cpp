@@ -1812,6 +1812,8 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
   int num_consecutive_stalled_iterations = 0;
   std::optional<double> previous_cost;
   workspace.filter.size = 0;
+  bool initial_penalties_active =
+      settings.penalty.initialize_from_linearized_constraint_reduction;
 
   for (int iteration = 0; iteration < settings.max_iterations; ++iteration) {
     bool regularization_at_continuation_floor = false;
@@ -1865,6 +1867,24 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
         squared_norm(workspace.miscellaneous_workspace.g_plus_s, s_dim);
 
     const double sq_constraint_violation_norm = ctc + gsetgse;
+
+    if (iteration > 0 && initial_penalties_active) {
+      const double max_violation =
+          settings.termination.max_constraint_violation;
+      const bool primal_feasibility_satisfied =
+          unscaled_max_abs(input.get_c(), input.residual_scaling.equality,
+                           y_dim) <= max_violation &&
+          unscaled_max_abs(workspace.miscellaneous_workspace.g_plus_s,
+                           input.residual_scaling.inequality,
+                           s_dim) <= max_violation;
+      if (primal_feasibility_satisfied) {
+        std::fill_n(workspace.penalties.y, y_dim,
+                    settings.penalty.initial_penalty_parameter);
+        std::fill_n(workspace.penalties.z, s_dim,
+                    settings.penalty.initial_penalty_parameter);
+        initial_penalties_active = false;
+      }
+    }
 
     auto search_direction =
         compute_search_direction(input, settings, mu, psi, tau, workspace);
@@ -2183,13 +2203,6 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
         }
       }
     } else {
-      if (iteration == 0 &&
-          settings.penalty.initialize_from_linearized_constraint_reduction) {
-        std::fill_n(workspace.penalties.y, y_dim,
-                    settings.penalty.initial_penalty_parameter);
-        std::fill_n(workspace.penalties.z, s_dim,
-                    settings.penalty.initial_penalty_parameter);
-      }
       const bool any_penalty_increased =
           update_penalty_parameters(input, settings, workspace);
       if (any_penalty_increased) {
