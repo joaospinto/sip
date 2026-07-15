@@ -73,6 +73,9 @@ struct PenaltySettings {
   double initial_penalty_parameter = 1e3;
   // Whether to preserve externally initialized penalty vectors in Workspace.
   bool warm_start_penalties = false;
+  // Increase initial penalties until the first linearized constraint
+  // violation achieves the configured reduction.
+  bool initialize_from_linearized_constraint_reduction = false;
   // Minimum acceptable constraint violation ratio for eta to not increase.
   double min_acceptable_constraint_violation_ratio = 0.25;
   // By what factor to increase eta.

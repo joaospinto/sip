@@ -431,6 +431,77 @@ auto update_penalty_parameters(const Input &input, const Settings &settings,
   return any_increased;
 }
 
+auto update_initial_penalties_for_linearized_constraint_violation(
+    const Input &input, const Settings &settings, Workspace &workspace)
+    -> bool {
+  const int s_dim = input.dimensions.s_dim;
+  const int y_dim = input.dimensions.y_dim;
+  const double min_ratio =
+      settings.penalty.min_acceptable_constraint_violation_ratio;
+  const double increase_factor =
+      settings.penalty.penalty_parameter_increase_factor;
+  const double max_penalty = settings.penalty.max_penalty_parameter;
+  const double max_violation = settings.termination.max_constraint_violation;
+  const bool currently_feasible =
+      unscaled_max_abs(input.get_c(), input.residual_scaling.equality, y_dim) <=
+          max_violation &&
+      unscaled_max_abs(workspace.miscellaneous_workspace.g_plus_s,
+                       input.residual_scaling.inequality,
+                       s_dim) <= max_violation;
+  if (currently_feasible) {
+    return false;
+  }
+
+  double *linearized_c = workspace.next_vars.y;
+  std::copy_n(input.get_c(), y_dim, linearized_c);
+  input.add_Cx_to_y(workspace.delta_vars.x, linearized_c);
+
+  double *linearized_gps = workspace.next_vars.s;
+  std::copy_n(workspace.miscellaneous_workspace.g_plus_s, s_dim,
+              linearized_gps);
+  input.add_Gx_to_y(workspace.delta_vars.x, linearized_gps);
+  for (int i = 0; i < s_dim; ++i) {
+    linearized_gps[i] += workspace.delta_vars.s[i];
+  }
+
+  const auto increase_if_needed = [&](const double current,
+                                      const double linearized,
+                                      const double acceptable_violation,
+                                      double &penalty) {
+    if (std::fabs(linearized) <= acceptable_violation) {
+      return false;
+    }
+    const double squared_current = current * current;
+    if (squared_current > acceptable_violation * acceptable_violation &&
+        linearized * linearized <= min_ratio * squared_current) {
+      return false;
+    }
+    const double increased = std::min(penalty * increase_factor, max_penalty);
+    const bool changed = increased > penalty;
+    penalty = increased;
+    return changed;
+  };
+
+  bool any_increased = false;
+  for (int i = 0; i < y_dim; ++i) {
+    const double scale = input.residual_scaling.equality == nullptr
+                             ? 1.0
+                             : input.residual_scaling.equality[i];
+    any_increased |=
+        increase_if_needed(input.get_c()[i], linearized_c[i],
+                           max_violation * scale, workspace.penalties.y[i]);
+  }
+  for (int i = 0; i < s_dim; ++i) {
+    const double scale = input.residual_scaling.inequality == nullptr
+                             ? 1.0
+                             : input.residual_scaling.inequality[i];
+    any_increased |= increase_if_needed(
+        workspace.miscellaneous_workspace.g_plus_s[i], linearized_gps[i],
+        max_violation * scale, workspace.penalties.z[i]);
+  }
+  return any_increased;
+}
+
 void decrease_dual_regularization(const Input &input, Workspace &workspace,
                                   const double max_penalty_parameter,
                                   const double reduction_factor) {
@@ -1763,11 +1834,20 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
 
     const double sq_constraint_violation_norm = ctc + gsetgse;
 
+    auto search_direction =
+        compute_search_direction(input, settings, mu, psi, tau, workspace);
+    while (iteration == 0 && std::get<0>(search_direction) &&
+           settings.penalty.initialize_from_linearized_constraint_reduction &&
+           update_initial_penalties_for_linearized_constraint_violation(
+               input, settings, workspace)) {
+      search_direction =
+          compute_search_direction(input, settings, mu, psi, tau, workspace);
+    }
     const auto [factorization_ok, dx, ds, dy, dz, stationarity_merit_slope,
                 merit_slope, alpha_s_max, dual_residual,
                 max_constraint_violation, max_complementarity, kkt_error,
                 duality_gap, lin_sys_error, num_regularization_increases] =
-        compute_search_direction(input, settings, mu, psi, tau, workspace);
+        search_direction;
 
     if (!factorization_ok) {
       return Output{
