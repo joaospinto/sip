@@ -222,11 +222,11 @@ void print_search_direction_log_header() {
 void print_line_search_log_header() {
   fmt::print(fmt::emphasis::bold | fg(fmt::color::yellow),
              // clang-format off
-             "{:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10}\n",
+             "{:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10}\n",
              // clang-format on
-             "", "ls_iteration", "alpha", "merit", "f", "|c|", "|g+s|", "dm",
-             "dm/alpha", "dm[f]", "dm[s]", "dm[c]", "dm[g]", "dm[aug]",
-             "dm[dual]");
+             "", "ls_iteration", "alpha", "alpha_s", "alpha_z", "merit", "f",
+             "|c|", "|g+s|", "dm", "dm/alpha", "dm[f]", "dm[s]", "dm[c]",
+             "dm[g]", "dm[aug]", "dm[dual]");
 }
 
 void print_derivative_check_log_header() {
@@ -1248,11 +1248,12 @@ auto do_line_search(const Input &input, const Settings &settings,
       fmt::print(
           fg(fmt::color::yellow),
           // clang-format off
-                       "{:^10} {:^+10} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g}\n",
+                       "{:^10} {:^+10} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g}\n",
           // clang-format on
-          "", total_ls_iterations, alpha, line_search_m, m_f,
-          std::sqrt(next_ctc), std::sqrt(next_gsetgse), merit_delta,
-          merit_delta / alpha, dm_f, dm_s, dm_c, dm_g, dm_aug, dm_dual);
+          "", total_ls_iterations, alpha, alpha_s_max, alpha_z_max,
+          line_search_m, m_f, std::sqrt(next_ctc), std::sqrt(next_gsetgse),
+          merit_delta, merit_delta / alpha, dm_f, dm_s, dm_c, dm_g, dm_aug,
+          dm_dual);
     }
 
     ++total_ls_iterations;
