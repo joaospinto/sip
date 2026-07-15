@@ -3,6 +3,7 @@
 #include <functional>
 #include <limits>
 #include <ostream>
+#include <span>
 
 namespace sip {
 
@@ -238,6 +239,8 @@ struct Input {
   ModelCallback model_callback;
   // Callback for (optionally) declaring a timeout. Return true for timeout.
   TimeoutCallback timeout_callback;
+  // Affine inequalities whose strict feasibility every primal step preserves.
+  std::span<const int> strictly_feasible_affine_inequalities;
   // The problem dimensions.
   Dimensions dimensions;
 };
