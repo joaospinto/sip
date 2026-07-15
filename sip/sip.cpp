@@ -125,6 +125,33 @@ auto merit_function(const Input &input, const Workspace &workspace,
                          merit);
 }
 
+auto centered_dual_term(const Input &input, const Settings &settings,
+                        const Workspace &workspace, const double *y,
+                        const double *z) -> double {
+  const int s_dim = input.dimensions.s_dim;
+  const int y_dim = input.dimensions.y_dim;
+  const double *current_c = workspace.nrhs.y;
+  const double *current_gps = workspace.nrhs.z;
+  const double weight = settings.line_search.primal_dual_merit_dual_weight;
+
+  double term = 0.0;
+  for (int i = 0; i < y_dim; ++i) {
+    const double inverse_curvature = workspace.penalties.y[i] / weight;
+    const double center =
+        workspace.vars.y[i] + inverse_curvature * current_c[i];
+    const double delta = y[i] - center;
+    term += 0.5 * delta * delta / inverse_curvature;
+  }
+  for (int i = 0; i < s_dim; ++i) {
+    const double inverse_curvature = workspace.penalties.z[i] / weight;
+    const double center =
+        workspace.vars.z[i] + inverse_curvature * current_gps[i];
+    const double delta = z[i] - center;
+    term += 0.5 * delta * delta / inverse_curvature;
+  }
+  return term;
+}
+
 auto filter_accepts(const FilterWorkspace &filter, const Settings &settings,
                     const double theta, const double f) -> bool {
   for (int i = 0; i < filter.size; ++i) {
@@ -201,10 +228,11 @@ void print_search_direction_log_header() {
 void print_line_search_log_header() {
   fmt::print(fmt::emphasis::bold | fg(fmt::color::yellow),
              // clang-format off
-             "{:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10}\n",
+             "{:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10} {:^10}\n",
              // clang-format on
              "", "ls_iteration", "alpha", "merit", "f", "|c|", "|g+s|", "dm",
-             "dm/alpha", "dm[f]", "dm[s]", "dm[c]", "dm[g]", "dm[aug]");
+             "dm/alpha", "dm[f]", "dm[s]", "dm[c]", "dm[g]", "dm[aug]",
+             "dm[dual]");
 }
 
 void print_derivative_check_log_header() {
@@ -438,6 +466,39 @@ void update_next_dual_vars(const Input &input, const Settings &settings,
       .new_z = true,
   };
   input.model_callback(mci);
+}
+
+void update_next_dual_vars(const Input &input, const double tau,
+                           Workspace &workspace, const double alpha_y,
+                           const double alpha_z) {
+  const int s_dim = input.dimensions.s_dim;
+  const int y_dim = input.dimensions.y_dim;
+
+  for (int i = 0; i < y_dim; ++i) {
+    workspace.next_vars.y[i] =
+        workspace.vars.y[i] + alpha_y * workspace.delta_vars.y[i];
+  }
+
+  for (int i = 0; i < s_dim; ++i) {
+    workspace.next_vars.z[i] =
+        std::max(workspace.vars.z[i] + alpha_z * workspace.delta_vars.z[i],
+                 (1.0 - tau) * workspace.vars.z[i]);
+  }
+
+  ModelCallbackInput mci{
+      .x = workspace.next_vars.x,
+      .y = workspace.next_vars.y,
+      .z = workspace.next_vars.z,
+      .new_x = false,
+      .new_y = true,
+      .new_z = true,
+  };
+  input.model_callback(mci);
+}
+
+void update_next_dual_vars(const Input &input, const double tau,
+                           Workspace &workspace, const double alpha) {
+  update_next_dual_vars(input, tau, workspace, alpha, alpha);
 }
 
 auto check_derivatives(const Input &input, const Settings &settings,
@@ -1083,17 +1144,30 @@ auto do_line_search(const Input &input, const Settings &settings,
   const auto [m0_f, m0_s, m0_c, m0_g, m0_aug, m0] =
       merit_function(input, workspace, workspace.vars.s, workspace.vars.y,
                      workspace.vars.z, mu);
+  const bool use_primal_dual_merit =
+      settings.line_search.use_primal_dual_merit && s_dim + y_dim > 0;
+  const double m0_dual =
+      use_primal_dual_merit
+          ? centered_dual_term(input, settings, workspace, workspace.vars.y,
+                               workspace.vars.z)
+          : 0.0;
+  const double line_search_m0 = m0 + m0_dual;
 
   bool ls_succeeded = false;
+  const double alpha_z_max = use_primal_dual_merit
+                                 ? get_alpha_s_max(s_dim, tau, workspace.vars.z,
+                                                   workspace.delta_vars.z)
+                                 : 1.0;
   double alpha =
       settings.line_search.start_ls_with_alpha_s_max ? alpha_s_max : 1.0;
+  alpha = std::min(alpha, alpha_s_max);
   double trial_alpha = alpha;
   double merit_delta = std::numeric_limits<double>::signaling_NaN();
   double constraint_violation_ratio =
       std::numeric_limits<double>::signaling_NaN();
   bool accepted_without_filter = false;
   const bool filter_active =
-      settings.line_search.use_filter_line_search &&
+      !use_primal_dual_merit && settings.line_search.use_filter_line_search &&
       total_ls_iterations >=
           settings.line_search.filter_min_total_line_search_iterations;
 
@@ -1104,25 +1178,35 @@ auto do_line_search(const Input &input, const Settings &settings,
   do {
     trial_alpha = alpha;
     update_next_primal_vars(input, tau, workspace, alpha, true, true);
+    if (use_primal_dual_merit) {
+      update_next_dual_vars(input, tau, workspace, alpha, alpha * alpha_z_max);
+    }
     const double next_ctc = squared_norm(input.get_c(), y_dim);
     const double next_gsetgse =
         squared_norm(workspace.miscellaneous_workspace.g_plus_s, s_dim);
     const double next_sq_constraint_violation_norm = next_ctc + next_gsetgse;
     const double next_theta = std::sqrt(next_sq_constraint_violation_norm);
 
-    // NOTE: the line search is only over the primal variables, so we cannot
-    // use next_vars.y and next_vars.z.
-    const auto [m_f, m_s, m_c, m_g, m_aug, m] =
-        merit_function(input, workspace, workspace.next_vars.s,
-                       workspace.vars.y, workspace.vars.z, mu);
+    const double *trial_y =
+        use_primal_dual_merit ? workspace.next_vars.y : workspace.vars.y;
+    const double *trial_z =
+        use_primal_dual_merit ? workspace.next_vars.z : workspace.vars.z;
+    const auto [m_f, m_s, m_c, m_g, m_aug, m] = merit_function(
+        input, workspace, workspace.next_vars.s, trial_y, trial_z, mu);
+    const double m_dual =
+        use_primal_dual_merit
+            ? centered_dual_term(input, settings, workspace, trial_y, trial_z)
+            : 0.0;
+    const double line_search_m = m + m_dual;
 
     const double dm_f = m_f - m0_f;
     const double dm_s = m_s - m0_s;
     const double dm_c = m_c - m0_c;
     const double dm_g = m_g - m0_g;
     const double dm_aug = m_aug - m0_aug;
+    const double dm_dual = m_dual - m0_dual;
 
-    merit_delta = dm_f + dm_s + dm_c + dm_g + dm_aug;
+    merit_delta = line_search_m - line_search_m0;
 
     constraint_violation_ratio = next_sq_constraint_violation_norm /
                                  std::max(sq_constraint_violation_norm, 1e-12);
@@ -1137,16 +1221,20 @@ auto do_line_search(const Input &input, const Settings &settings,
     if (settings.logging.print_line_search_logs) {
       fmt::print(fg(fmt::color::yellow),
                  // clang-format off
-                       "{:^10} {:^+10} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g}\n",
+                       "{:^10} {:^+10} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g}\n",
                  // clang-format on
-                 "", total_ls_iterations, alpha, m, m_f, std::sqrt(next_ctc),
-                 std::sqrt(next_gsetgse), merit_delta, merit_delta / alpha,
-                 dm_f, dm_s, dm_c, dm_g, dm_aug);
+                 "", total_ls_iterations, alpha, line_search_m, m_f,
+                 std::sqrt(next_ctc), std::sqrt(next_gsetgse), merit_delta,
+                 merit_delta / alpha, dm_f, dm_s, dm_c, dm_g, dm_aug, dm_dual);
     }
 
     ++total_ls_iterations;
 
-    if (settings.barrier.use_predictor_corrector) {
+    if (use_primal_dual_merit) {
+      accepted_without_filter =
+          merit_delta <
+          settings.line_search.armijo_factor * merit_slope * alpha;
+    } else if (settings.barrier.use_predictor_corrector) {
       const bool skip_line_search =
           merit_slope <= 0.0 && merit_slope >
                                      settings.line_search
@@ -1174,17 +1262,20 @@ auto do_line_search(const Input &input, const Settings &settings,
     alpha = trial_alpha;
   }
 
-  const double dual_step = settings.barrier.use_predictor_corrector
-                               ? std::min(alpha, alpha_z_max)
-                               : alpha;
-  update_next_dual_vars(input, settings, tau, workspace, dual_step);
+  if (!use_primal_dual_merit) {
+    const double dual_step = settings.barrier.use_predictor_corrector
+                                 ? std::min(alpha, alpha_z_max)
+                                 : alpha;
+    update_next_dual_vars(input, settings, tau, workspace, dual_step);
+  }
 
   if (ls_succeeded && filter_active && !accepted_without_filter) {
     add_filter_entry(filter, settings, std::sqrt(sq_constraint_violation_norm),
                      m0_f);
   }
 
-  return std::make_tuple(ls_succeeded, alpha, m0, constraint_violation_ratio);
+  return std::make_tuple(ls_succeeded, alpha, line_search_m0,
+                         constraint_violation_ratio);
 }
 
 auto check_settings(const Settings &settings) -> bool {
@@ -1219,6 +1310,13 @@ auto check_settings(const Settings &settings) -> bool {
   }
   if (!is_finite_positive(settings.line_search.tau) ||
       settings.line_search.tau > 1.0) {
+    return false;
+  }
+  if (!is_finite_positive(settings.line_search.primal_dual_merit_dual_weight)) {
+    return false;
+  }
+  if (settings.line_search.use_primal_dual_merit &&
+      settings.line_search.skip_line_search) {
     return false;
   }
   if (!is_finite_nonnegative(settings.barrier.initial_mu) ||
