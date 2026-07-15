@@ -1327,6 +1327,7 @@ auto do_line_search(const Input &input, const Settings &settings,
   double constraint_violation_ratio =
       std::numeric_limits<double>::signaling_NaN();
   bool accepted_without_filter = false;
+  const int line_search_iterations_at_start = total_ls_iterations;
   const bool filter_active =
       settings.line_search.use_filter_line_search &&
       total_ls_iterations >=
@@ -1374,7 +1375,9 @@ auto do_line_search(const Input &input, const Settings &settings,
             (1.0 - settings.line_search.filter_gamma_theta) * current_theta ||
         m_f <= m0_f - settings.line_search.filter_gamma_f * current_theta;
     const bool filter_accept =
-        filter_active && acceptable_to_current_iterate &&
+        filter_active &&
+        total_ls_iterations > line_search_iterations_at_start &&
+        acceptable_to_current_iterate &&
         filter_accepts(filter, settings, next_theta, m_f);
     if (settings.logging.print_line_search_logs) {
       fmt::print(fg(fmt::color::yellow),
