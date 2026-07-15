@@ -1308,7 +1308,7 @@ auto do_line_search(const Input &input, const Settings &settings,
                     const double merit_slope, const double alpha_s_max,
                     const double alpha_z_max, int &total_ls_iterations,
                     FilterWorkspace &filter, Workspace &workspace)
-    -> std::tuple<bool, double, double, double> {
+    -> std::tuple<bool, double, double, double, bool> {
   const int s_dim = input.dimensions.s_dim;
   const int y_dim = input.dimensions.y_dim;
 
@@ -1327,6 +1327,7 @@ auto do_line_search(const Input &input, const Settings &settings,
   double constraint_violation_ratio =
       std::numeric_limits<double>::signaling_NaN();
   bool accepted_without_filter = false;
+  bool trial_is_finite = false;
   const bool filter_active =
       settings.line_search.use_filter_line_search &&
       total_ls_iterations >=
@@ -1368,13 +1369,19 @@ auto do_line_search(const Input &input, const Settings &settings,
 
     constraint_violation_ratio = next_sq_constraint_violation_norm /
                                  std::max(sq_constraint_violation_norm, 1e-12);
+    trial_is_finite = std::isfinite(next_sq_constraint_violation_norm) &&
+                      std::isfinite(m_f) && std::isfinite(m_s) &&
+                      std::isfinite(m_c) && std::isfinite(m_g) &&
+                      std::isfinite(m_aug) && std::isfinite(m) &&
+                      std::isfinite(merit_delta) &&
+                      std::isfinite(constraint_violation_ratio);
     const double current_theta = std::sqrt(sq_constraint_violation_norm);
     const bool acceptable_to_current_iterate =
         next_theta <=
             (1.0 - settings.line_search.filter_gamma_theta) * current_theta ||
         m_f <= m0_f - settings.line_search.filter_gamma_f * current_theta;
     const bool filter_accept =
-        filter_active && acceptable_to_current_iterate &&
+        trial_is_finite && filter_active && acceptable_to_current_iterate &&
         filter_accepts(filter, settings, next_theta, m_f);
     if (settings.logging.print_line_search_logs) {
       fmt::print(fg(fmt::color::yellow),
@@ -1388,7 +1395,9 @@ auto do_line_search(const Input &input, const Settings &settings,
 
     ++total_ls_iterations;
 
-    if (settings.proximal.use_dual_center) {
+    if (!trial_is_finite) {
+      accepted_without_filter = false;
+    } else if (settings.proximal.use_dual_center) {
       const bool skip_line_search =
           merit_slope <= 0.0 &&
           merit_slope >
@@ -1411,7 +1420,9 @@ auto do_line_search(const Input &input, const Settings &settings,
     }
 
     alpha *= settings.line_search.line_search_factor;
-  } while (alpha > settings.line_search.line_search_min_step_size &&
+  } while (alpha > 0.0 &&
+           (alpha > settings.line_search.line_search_min_step_size ||
+            !trial_is_finite) &&
            total_ls_iterations < settings.line_search.max_iterations);
 
   if (!ls_succeeded) {
@@ -1425,12 +1436,26 @@ auto do_line_search(const Input &input, const Settings &settings,
                                       : alpha);
   update_next_dual_vars(input, settings, tau, workspace, dual_step);
 
+  if (!trial_is_finite) {
+    input.model_callback({
+        .x = workspace.vars.x,
+        .y = workspace.vars.y,
+        .z = workspace.vars.z,
+        .new_x = true,
+        .new_y = true,
+        .new_z = true,
+    });
+    add(input.get_g(), workspace.vars.s, s_dim,
+        workspace.miscellaneous_workspace.g_plus_s);
+  }
+
   if (ls_succeeded && filter_active && !accepted_without_filter) {
     add_filter_entry(filter, settings, std::sqrt(sq_constraint_violation_norm),
                      m0_f);
   }
 
-  return std::make_tuple(ls_succeeded, alpha, m0, constraint_violation_ratio);
+  return std::make_tuple(ls_succeeded, alpha, m0, constraint_violation_ratio,
+                         trial_is_finite);
 }
 
 auto check_settings(const Settings &settings) -> bool {
@@ -1979,6 +2004,7 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
     }
 
     bool ls_succeeded;
+    bool line_search_trial_is_finite = true;
     double alpha, m0;
 
     if (settings.line_search.skip_line_search) {
@@ -1990,10 +2016,12 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
       ls_succeeded = true;
       m0 = 0.0;
     } else {
-      std::tie(ls_succeeded, alpha, m0, std::ignore) = do_line_search(
-          input, settings, mu, psi, tau, sq_constraint_violation_norm,
-          merit_slope, alpha_s_max, alpha_z_max, total_ls_iterations,
-          workspace.filter, workspace);
+      std::tie(ls_succeeded, alpha, m0, std::ignore,
+               line_search_trial_is_finite) =
+          do_line_search(input, settings, mu, psi, tau,
+                         sq_constraint_violation_norm, merit_slope, alpha_s_max,
+                         alpha_z_max, total_ls_iterations, workspace.filter,
+                         workspace);
     }
 
     if (settings.logging.print_logs) {
@@ -2013,7 +2041,8 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
           dual_residual, kkt_error);
     }
 
-    if (settings.line_search.enable_line_search_failures && !ls_succeeded) {
+    if (!line_search_trial_is_finite ||
+        (settings.line_search.enable_line_search_failures && !ls_succeeded)) {
       return Output{
           .exit_status = Status::LINE_SEARCH_FAILURE,
           .num_iterations = iteration,
