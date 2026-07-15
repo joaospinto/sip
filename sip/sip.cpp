@@ -1138,6 +1138,18 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
   int num_consecutive_stalled_iterations = 0;
   std::optional<double> previous_cost;
   workspace.filter.size = 0;
+  const auto restore_current_model = [&]() {
+    input.model_callback({
+        .x = workspace.vars.x,
+        .y = workspace.vars.y,
+        .z = workspace.vars.z,
+        .new_x = true,
+        .new_y = true,
+        .new_z = true,
+    });
+    add(input.get_g(), workspace.vars.s, s_dim,
+        workspace.miscellaneous_workspace.g_plus_s);
+  };
 
   for (int iteration = 0; iteration < settings.max_iterations; ++iteration) {
     const double f0 = input.get_f();
@@ -1266,7 +1278,17 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
           dual_residual, kkt_error);
     }
 
-    if (settings.line_search.enable_line_search_failures && !ls_succeeded) {
+    if (!ls_succeeded &&
+        !settings.line_search.enable_line_search_failures) {
+      const double next_psi = increased_regularization(settings, psi);
+      if (next_psi > psi && next_psi <= settings.regularization.maximum) {
+        psi = next_psi;
+        restore_current_model();
+        continue;
+      }
+    }
+
+    if (!ls_succeeded) {
       return Output{
           .exit_status = Status::LINE_SEARCH_FAILURE,
           .num_iterations = iteration,
