@@ -148,25 +148,17 @@ auto merit_function(const Input &input, const Settings &settings,
   if (settings.proximal.use_dual_center) {
     for (int i = 0; i < y_dim; ++i) {
       const double eta = workspace.penalties.y[i];
-      const double regularized_residual =
-          c[i] - (y[i] - workspace.proximal_centers.y[i]) / eta;
       c_term += workspace.proximal_centers.y[i] * c[i];
-      aug_term += 0.5 * eta *
-                  (c[i] * c[i] + regularized_residual * regularized_residual);
+      aug_term += 0.5 * eta * c[i] * c[i];
     }
     for (int i = 0; i < s_dim; ++i) {
       const double eta = workspace.penalties.z[i];
       if (workspace.csd_workspace.r3[i] == 0.0) {
         g_term += z[i] * gps[i];
-        aug_term += 0.5 * eta * gps[i] * gps[i];
-        continue;
+      } else {
+        g_term += workspace.proximal_centers.z[i] * gps[i];
       }
-      const double regularized_residual =
-          gps[i] - (z[i] - workspace.proximal_centers.z[i]) / eta;
-      g_term += workspace.proximal_centers.z[i] * gps[i];
-      aug_term +=
-          0.5 * eta *
-          (gps[i] * gps[i] + regularized_residual * regularized_residual);
+      aug_term += 0.5 * eta * gps[i] * gps[i];
     }
   } else {
     c_term = dot(c, y, y_dim);
@@ -711,18 +703,12 @@ auto get_observed_merit_slope(const Input &input, const Settings &settings,
                               const double tau, Workspace &workspace)
     -> std::tuple<double, double, double> {
   const auto compute_empirical_merit_slope = [&](const bool update_x,
-                                                 const bool update_s,
-                                                 const bool update_dual) {
+                                                 const bool update_s) {
     const auto get_perturbed_merit = [&](const double beta) -> double {
       update_next_primal_vars(input, tau, workspace, beta, update_x, update_s);
-      if (update_dual) {
-        update_next_dual_vars(input, settings, tau, workspace, beta);
-      }
-      const double *y = update_dual ? workspace.next_vars.y : workspace.vars.y;
-      const double *z = update_dual ? workspace.next_vars.z : workspace.vars.z;
-      const auto [_mP_f, _mP_s, _mP_c, _mP_g, _mP_aug, mP] =
-          merit_function(input, settings, workspace, workspace.next_vars.x,
-                         workspace.next_vars.s, y, z, mu, psi);
+      const auto [_mP_f, _mP_s, _mP_c, _mP_g, _mP_aug, mP] = merit_function(
+          input, settings, workspace, workspace.next_vars.x,
+          workspace.next_vars.s, workspace.vars.y, workspace.vars.z, mu, psi);
       return mP;
     };
 
@@ -734,13 +720,11 @@ auto get_observed_merit_slope(const Input &input, const Settings &settings,
     return (mP - mM) / (2 * h);
   };
 
-  const double os_x = compute_empirical_merit_slope(true, false, false);
-  const double os_s = compute_empirical_merit_slope(false, true, false);
-  const double os = compute_empirical_merit_slope(
-      true, true, settings.proximal.use_dual_center);
+  const double os_x = compute_empirical_merit_slope(true, false);
+  const double os_s = compute_empirical_merit_slope(false, true);
+  const double os = compute_empirical_merit_slope(true, true);
 
   update_next_primal_vars(input, tau, workspace, 0.0, false, false);
-  update_next_dual_vars(input, settings, tau, workspace, 0.0);
 
   return std::make_tuple(os_x, os_s, os);
 }
@@ -748,14 +732,12 @@ auto get_observed_merit_slope(const Input &input, const Settings &settings,
 struct MeritSlope {
   double x;
   double s;
-  double dual;
   double total;
 };
 
 auto merit_slope(const Input &input, const Workspace &workspace,
                  const Settings &settings, const double psi, const double mu,
-                 const double *dx, const double *ds, const double *dy,
-                 const double *dz) -> MeritSlope {
+                 const double *dx, const double *ds) -> MeritSlope {
   const int x_dim = input.dimensions.x_dim;
   const int s_dim = input.dimensions.s_dim;
   const int y_dim = input.dimensions.y_dim;
@@ -768,28 +750,17 @@ auto merit_slope(const Input &input, const Workspace &workspace,
     double *multiplier_z = workspace.next_vars.z;
 
     std::copy_n(input.get_grad_f(), x_dim, gradient_x);
-    double dual_slope = 0.0;
     for (int i = 0; i < y_dim; ++i) {
       const double eta = workspace.penalties.y[i];
-      const double regularized_residual =
-          c[i] - (workspace.vars.y[i] - workspace.proximal_centers.y[i]) / eta;
-      multiplier_y[i] = 2.0 * (workspace.proximal_centers.y[i] + eta * c[i]) -
-                        workspace.vars.y[i];
-      dual_slope -= regularized_residual * dy[i];
+      multiplier_y[i] = workspace.proximal_centers.y[i] + eta * c[i];
     }
     for (int i = 0; i < s_dim; ++i) {
       const double eta = workspace.penalties.z[i];
       if (workspace.csd_workspace.r3[i] == 0.0) {
         multiplier_z[i] = workspace.vars.z[i] + eta * gps[i];
-        dual_slope += gps[i] * dz[i];
-        continue;
+      } else {
+        multiplier_z[i] = workspace.proximal_centers.z[i] + eta * gps[i];
       }
-      const double regularized_residual =
-          gps[i] -
-          (workspace.vars.z[i] - workspace.proximal_centers.z[i]) / eta;
-      multiplier_z[i] = 2.0 * (workspace.proximal_centers.z[i] + eta * gps[i]) -
-                        workspace.vars.z[i];
-      dual_slope -= regularized_residual * dz[i];
     }
     input.add_CTx_to_y(multiplier_y, gradient_x);
     input.add_GTx_to_y(multiplier_z, gradient_x);
@@ -805,10 +776,7 @@ auto merit_slope(const Input &input, const Workspace &workspace,
     for (int i = 0; i < s_dim; ++i) {
       s_slope += (multiplier_z[i] - mu / workspace.vars.s[i]) * ds[i];
     }
-    return {.x = x_slope,
-            .s = s_slope,
-            .dual = dual_slope,
-            .total = x_slope + s_slope + dual_slope};
+    return {.x = x_slope, .s = s_slope, .total = x_slope + s_slope};
   }
 
   double *tmp_y = workspace.next_vars.y;
@@ -835,7 +803,7 @@ auto merit_slope(const Input &input, const Workspace &workspace,
     s_slope += (workspace.vars.z[i] - mu / workspace.vars.s[i]) * ds[i];
   }
 
-  return {.x = x_slope, .s = s_slope, .dual = 0.0, .total = x_slope + s_slope};
+  return {.x = x_slope, .s = s_slope, .total = x_slope + s_slope};
 }
 
 auto quadratic_model_merit_slope(const Input &input, const Workspace &workspace,
@@ -1076,7 +1044,7 @@ auto compute_search_direction(const Input &input, const Settings &settings,
   if (settings.barrier.use_predictor_corrector && s_dim > 0) {
     solve_direction(mu, nullptr, nullptr);
     stationarity_merit_slope =
-        merit_slope(input, workspace, settings, psi, mu, dx, ds, dy, dz).total;
+        merit_slope(input, workspace, settings, psi, mu, dx, ds).total;
 
     solve_direction(0.0, nullptr, nullptr);
     double *affine_ds = workspace.next_vars.s;
@@ -1104,11 +1072,11 @@ auto compute_search_direction(const Input &input, const Settings &settings,
   } else {
     solve_direction(mu, nullptr, nullptr);
     stationarity_merit_slope =
-        merit_slope(input, workspace, settings, psi, mu, dx, ds, dy, dz).total;
+        merit_slope(input, workspace, settings, psi, mu, dx, ds).total;
   }
 
   const auto current_merit_slope =
-      merit_slope(input, workspace, settings, psi, mu, dx, ds, dy, dz);
+      merit_slope(input, workspace, settings, psi, mu, dx, ds);
 
   for (int i = 0; i < y_dim; ++i) {
     const double abs_c =
@@ -1237,9 +1205,6 @@ auto do_line_search(const Input &input, const Settings &settings,
   double alpha = std::min(
       alpha_strict_feasibility_max,
       settings.line_search.start_ls_with_alpha_s_max ? alpha_s_max : 1.0);
-  if (settings.proximal.use_dual_center) {
-    alpha = std::min(alpha, alpha_z_max);
-  }
   double trial_alpha = alpha;
   double merit_delta = std::numeric_limits<double>::signaling_NaN();
   double constraint_violation_ratio =
@@ -1257,24 +1222,15 @@ auto do_line_search(const Input &input, const Settings &settings,
   do {
     trial_alpha = alpha;
     update_next_primal_vars(input, tau, workspace, alpha, true, true);
-    if (settings.proximal.use_dual_center) {
-      update_next_dual_vars(input, settings, tau, workspace, alpha);
-    }
     const double next_ctc = squared_norm(input.get_c(), y_dim);
     const double next_gsetgse =
         squared_norm(workspace.miscellaneous_workspace.g_plus_s, s_dim);
     const double next_sq_constraint_violation_norm = next_ctc + next_gsetgse;
     const double next_theta = std::sqrt(next_sq_constraint_violation_norm);
 
-    const double *trial_y = settings.proximal.use_dual_center
-                                ? workspace.next_vars.y
-                                : workspace.vars.y;
-    const double *trial_z = settings.proximal.use_dual_center
-                                ? workspace.next_vars.z
-                                : workspace.vars.z;
-    const auto [m_f, m_s, m_c, m_g, m_aug, m] =
-        merit_function(input, settings, workspace, workspace.next_vars.x,
-                       workspace.next_vars.s, trial_y, trial_z, mu, psi);
+    const auto [m_f, m_s, m_c, m_g, m_aug, m] = merit_function(
+        input, settings, workspace, workspace.next_vars.x,
+        workspace.next_vars.s, workspace.vars.y, workspace.vars.z, mu, psi);
 
     const double dm_f = m_f - m0_f;
     const double dm_s = m_s - m0_s;
@@ -1306,23 +1262,10 @@ auto do_line_search(const Input &input, const Settings &settings,
 
     ++total_ls_iterations;
 
-    if (settings.proximal.use_dual_center) {
-      const bool skip_line_search =
-          merit_slope <= 0.0 &&
-          merit_slope >
-              settings.line_search.min_merit_slope_to_skip_line_search;
-      accepted_without_filter =
-          skip_line_search ||
-          (merit_slope < 0.0 &&
-           merit_delta <
-               settings.line_search.armijo_factor * merit_slope * alpha);
-    } else {
-      accepted_without_filter =
-          merit_slope >
-              settings.line_search.min_merit_slope_to_skip_line_search ||
-          merit_delta <
-              settings.line_search.armijo_factor * merit_slope * alpha;
-    }
+    accepted_without_filter =
+        merit_slope >
+            settings.line_search.min_merit_slope_to_skip_line_search ||
+        merit_delta < settings.line_search.armijo_factor * merit_slope * alpha;
     if (accepted_without_filter || filter_accept) {
       ls_succeeded = true;
       break;
@@ -1336,11 +1279,10 @@ auto do_line_search(const Input &input, const Settings &settings,
     alpha = trial_alpha;
   }
 
-  const double dual_step = settings.proximal.use_dual_center
-                               ? alpha
-                               : (settings.barrier.use_predictor_corrector
-                                      ? std::min(alpha, alpha_z_max)
-                                      : alpha);
+  const double dual_step = settings.barrier.use_predictor_corrector ||
+                                   settings.proximal.use_dual_center
+                               ? std::min(alpha, alpha_z_max)
+                               : alpha;
   update_next_dual_vars(input, settings, tau, workspace, dual_step);
 
   if (ls_succeeded && filter_active && !accepted_without_filter) {
@@ -1914,8 +1856,10 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
     if (settings.line_search.skip_line_search) {
       alpha = std::min(alpha_s_max, alpha_strict_feasibility_max);
       update_next_primal_vars(input, tau, workspace, alpha, true, true);
-      const double dual_step =
-          settings.barrier.use_predictor_corrector ? alpha_z_max : alpha;
+      const double dual_step = settings.barrier.use_predictor_corrector ||
+                                       settings.proximal.use_dual_center
+                                   ? std::min(alpha, alpha_z_max)
+                                   : alpha;
       update_next_dual_vars(input, settings, tau, workspace, dual_step);
       ls_succeeded = true;
       m0 = 0.0;
