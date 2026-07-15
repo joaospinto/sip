@@ -3,6 +3,7 @@
 #include <functional>
 #include <limits>
 #include <ostream>
+#include <span>
 
 namespace sip {
 
@@ -256,6 +257,10 @@ struct Input {
   TimeoutCallback timeout_callback;
   // Multipliers applied to model residuals by an external equilibration.
   ResidualScaling residual_scaling;
+  // Indices of affine inequalities whose strict feasibility must be preserved
+  // by every primal step. This is useful when the inequalities bound the
+  // domain on which the model callbacks are defined.
+  std::span<const int> strictly_feasible_affine_inequalities;
   // The problem dimensions.
   Dimensions dimensions;
 };

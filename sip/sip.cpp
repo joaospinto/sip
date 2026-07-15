@@ -178,6 +178,18 @@ auto get_fraction_to_boundary_step(const int dim, const double tau,
   return alpha;
 }
 
+auto get_strict_feasibility_step(const Input &input, const double tau,
+                                 const Workspace &workspace) -> double {
+  double alpha = 1.0;
+  for (const int index : input.strictly_feasible_affine_inequalities) {
+    if (workspace.delta_vars.s[index] < 0.0) {
+      alpha = std::min(alpha, tau * workspace.vars.s[index] /
+                                  -workspace.delta_vars.s[index]);
+    }
+  }
+  return alpha;
+}
+
 void print_log_header() {
   fmt::print(fmt::emphasis::bold | fg(fmt::color::red),
              // clang-format off
@@ -404,7 +416,12 @@ void update_next_primal_vars(const Input &input, const double tau,
     std::copy_n(workspace.vars.s, s_dim, workspace.next_vars.s);
   }
 
-  add(input.get_g(), workspace.next_vars.s, s_dim,
+  const double *g = input.get_g();
+  for (const int index : input.strictly_feasible_affine_inequalities) {
+    workspace.next_vars.s[index] = -g[index];
+  }
+
+  add(g, workspace.next_vars.s, s_dim,
       workspace.miscellaneous_workspace.g_plus_s);
 }
 
@@ -784,6 +801,9 @@ auto compute_search_direction(const Input &input, const Settings &settings,
     r3[i] = use_predictor_corrector ? proximal_delta
                                     : 1.0 / workspace.penalties.z[i];
   }
+  for (const int index : input.strictly_feasible_affine_inequalities) {
+    r3[index] = 0.0;
+  }
 
   int num_regularization_increases = 0;
   bool factorization_ok = false;
@@ -1074,6 +1094,7 @@ auto do_line_search(const Input &input, const Settings &settings,
                     const double mu, const double tau,
                     const double sq_constraint_violation_norm,
                     const double merit_slope, const double alpha_s_max,
+                    const double alpha_strict_feasibility_max,
                     const double alpha_z_max, int &total_ls_iterations,
                     FilterWorkspace &filter, Workspace &workspace)
     -> std::tuple<bool, double, double, double> {
@@ -1085,8 +1106,9 @@ auto do_line_search(const Input &input, const Settings &settings,
                      workspace.vars.z, mu);
 
   bool ls_succeeded = false;
-  double alpha =
-      settings.line_search.start_ls_with_alpha_s_max ? alpha_s_max : 1.0;
+  double alpha = std::min(
+      alpha_strict_feasibility_max,
+      settings.line_search.start_ls_with_alpha_s_max ? alpha_s_max : 1.0);
   double trial_alpha = alpha;
   double merit_delta = std::numeric_limits<double>::signaling_NaN();
   double constraint_violation_ratio =
@@ -1279,6 +1301,21 @@ auto check_settings(const Settings &settings) -> bool {
   return true;
 }
 
+auto check_input(const Input &input, const Workspace &workspace) -> bool {
+  const int s_dim = input.dimensions.s_dim;
+  const double *g = input.get_g();
+  for (const int index : input.strictly_feasible_affine_inequalities) {
+    if (index < 0 || index >= s_dim || !std::isfinite(g[index]) ||
+        !std::isfinite(workspace.vars.s[index]) || g[index] >= 0.0 ||
+        std::fabs(g[index] + workspace.vars.s[index]) >
+            1e-12 * std::max({1.0, std::fabs(g[index]),
+                              std::fabs(workspace.vars.s[index])})) {
+      return false;
+    }
+  }
+  return true;
+}
+
 auto initialize_predictor_corrector(const Input &input,
                                     const Settings &settings,
                                     Workspace &workspace) -> bool {
@@ -1381,6 +1418,25 @@ auto initialize_predictor_corrector(const Input &input,
       .new_y = true,
       .new_z = true,
   });
+  const double *initialized_g = input.get_g();
+  for (const int index : input.strictly_feasible_affine_inequalities) {
+    if (!std::isfinite(initialized_g[index]) || initialized_g[index] >= 0.0) {
+      return false;
+    }
+    workspace.vars.s[index] = -initialized_g[index];
+    workspace.vars.z[index] =
+        settings.barrier.initial_mu / workspace.vars.s[index];
+  }
+  if (!input.strictly_feasible_affine_inequalities.empty()) {
+    input.model_callback({
+        .x = workspace.vars.x,
+        .y = workspace.vars.y,
+        .z = workspace.vars.z,
+        .new_x = false,
+        .new_y = false,
+        .new_z = true,
+    });
+  }
   return true;
 }
 
@@ -1401,9 +1457,9 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
     input.model_callback(mci);
   }
 
-  if (!check_settings(settings)) {
+  if (!check_settings(settings) || !check_input(input, workspace)) {
     if (settings.assert_checks_pass) {
-      assert(false && "check_settings returned false.");
+      assert(false && "check_settings or check_input returned false.");
     } else {
       return Output{
           .exit_status = Status::FAILED_CHECK,
@@ -1657,9 +1713,11 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
 
     bool ls_succeeded;
     double alpha, m0;
+    const double alpha_strict_feasibility_max =
+        get_strict_feasibility_step(input, tau, workspace);
 
     if (settings.line_search.skip_line_search) {
-      alpha = alpha_s_max;
+      alpha = std::min(alpha_s_max, alpha_strict_feasibility_max);
       update_next_primal_vars(input, tau, workspace, alpha, true, true);
       update_next_dual_vars(
           input, settings, tau, workspace,
@@ -1669,8 +1727,9 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
     } else {
       std::tie(ls_succeeded, alpha, m0, std::ignore) =
           do_line_search(input, settings, mu, tau, sq_constraint_violation_norm,
-                         merit_slope, alpha_s_max, alpha_z_max,
-                         total_ls_iterations, workspace.filter, workspace);
+                         merit_slope, alpha_s_max, alpha_strict_feasibility_max,
+                         alpha_z_max, total_ls_iterations, workspace.filter,
+                         workspace);
     }
 
     if (settings.logging.print_logs) {
