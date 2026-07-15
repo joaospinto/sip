@@ -865,6 +865,11 @@ auto compute_search_direction(const Input &input, const Settings &settings,
         settings.num_iterative_refinement_steps;
     for (int j = 0; j < num_iterative_refinement_steps; ++j) {
       input.solve(residual, u);
+      if (use_predictor_corrector &&
+          max_abs_or_inf(u, dim_3x3) >
+              10.0 * std::max(1.0, max_abs_or_inf(v, dim_3x3))) {
+        break;
+      }
       for (int i = 0; i < dim_3x3; ++i) {
         v[i] -= u[i];
       }
