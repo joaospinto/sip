@@ -771,21 +771,9 @@ auto quadratic_model_merit_slope(const Input &input, const Workspace &workspace,
          weighted_squared_norm(tmp_s, workspace.penalties.z, s_dim);
 }
 
-struct PrimalDualMeritSlope {
-  double primal;
-  double equality_dual;
-  double inequality_dual;
-
-  auto along(const double primal_scale, const double equality_dual_scale,
-             const double inequality_dual_scale) const -> double {
-    return primal_scale * primal + equality_dual_scale * equality_dual +
-           inequality_dual_scale * inequality_dual;
-  }
-};
-
 auto primal_dual_merit_slope(const Input &input, Workspace &workspace,
                              const double fixed_dual_slope, const double weight)
-    -> PrimalDualMeritSlope {
+    -> double {
   const int s_dim = input.dimensions.s_dim;
   const int y_dim = input.dimensions.y_dim;
   const double *c = input.get_c();
@@ -798,22 +786,16 @@ auto primal_dual_merit_slope(const Input &input, Workspace &workspace,
   std::copy_n(workspace.delta_vars.s, s_dim, gdx_plus_ds);
   input.add_Gx_to_y(workspace.delta_vars.x, gdx_plus_ds);
 
-  double primal_slope = fixed_dual_slope;
-  double equality_dual_slope = 0.0;
-  double inequality_dual_slope = 0.0;
+  double slope = fixed_dual_slope;
   for (int i = 0; i < y_dim; ++i) {
-    primal_slope += weight * workspace.penalties.y[i] * c[i] * cdx[i];
-    equality_dual_slope -= weight * c[i] * workspace.delta_vars.y[i];
+    slope += weight * (workspace.penalties.y[i] * c[i] * cdx[i] -
+                       c[i] * workspace.delta_vars.y[i]);
   }
   for (int i = 0; i < s_dim; ++i) {
-    primal_slope += weight * workspace.penalties.z[i] * gps[i] * gdx_plus_ds[i];
-    inequality_dual_slope -= weight * gps[i] * workspace.delta_vars.z[i];
+    slope += weight * (workspace.penalties.z[i] * gps[i] * gdx_plus_ds[i] -
+                       gps[i] * workspace.delta_vars.z[i]);
   }
-  return {
-      .primal = primal_slope,
-      .equality_dual = equality_dual_slope,
-      .inequality_dual = inequality_dual_slope,
-  };
+  return slope;
 }
 
 auto compute_search_direction(const Input &input, const Settings &settings,
@@ -1192,57 +1174,12 @@ auto do_line_search(const Input &input, const Settings &settings,
                              workspace.vars.z,
                              settings.line_search.primal_dual_merit_weight)
           : 0.0;
-  const double alpha_z_max = use_primal_dual_merit
-                                 ? get_alpha_s_max(s_dim, tau, workspace.vars.z,
-                                                   workspace.delta_vars.z)
-                                 : 1.0;
   const double line_search_m0 = m0 + m0_dual;
-
-  const double independent_primal_step_scale = alpha_s_max;
-  const double independent_equality_dual_step_scale = 1.0;
-  const double independent_inequality_dual_step_scale = alpha_z_max;
-  double primal_step_scale = independent_primal_step_scale;
-  double equality_dual_step_scale = independent_equality_dual_step_scale;
-  double inequality_dual_step_scale = independent_inequality_dual_step_scale;
-  double line_search_merit_slope = merit_slope;
-  PrimalDualMeritSlope slope{};
-  double common_scale = 1.0;
-  double interpolation = 0.0;
-  const auto update_primal_dual_ray = [&]() {
-    primal_step_scale =
-        common_scale +
-        interpolation * (independent_primal_step_scale - common_scale);
-    equality_dual_step_scale =
-        common_scale +
-        interpolation * (independent_equality_dual_step_scale - common_scale);
-    inequality_dual_step_scale =
-        common_scale +
-        interpolation * (independent_inequality_dual_step_scale - common_scale);
-    line_search_merit_slope =
-        slope.along(primal_step_scale, equality_dual_step_scale,
-                    inequality_dual_step_scale);
-  };
-  if (use_primal_dual_merit) {
-    slope =
-        primal_dual_merit_slope(input, workspace, merit_slope,
-                                settings.line_search.primal_dual_merit_weight);
-    common_scale = std::min(alpha_s_max, alpha_z_max);
-    const double common_slope =
-        slope.along(common_scale, common_scale, common_scale);
-    const double independent_slope =
-        slope.along(primal_step_scale, equality_dual_step_scale,
-                    inequality_dual_step_scale);
-
-    interpolation = 1.0;
-    const double slope_margin = 0.5 * common_slope;
-    if (independent_slope > slope_margin) {
-      interpolation =
-          (slope_margin - common_slope) / (independent_slope - common_slope);
-      interpolation = std::clamp(interpolation, 0.0, 1.0);
-    }
-
-    update_primal_dual_ray();
-  }
+  const double line_search_merit_slope =
+      use_primal_dual_merit ? primal_dual_merit_slope(
+                                  input, workspace, merit_slope,
+                                  settings.line_search.primal_dual_merit_weight)
+                            : merit_slope;
 
   bool ls_succeeded = false;
   double alpha =
@@ -1266,13 +1203,9 @@ auto do_line_search(const Input &input, const Settings &settings,
 
   do {
     trial_alpha = alpha;
-    const double primal_alpha =
-        use_primal_dual_merit ? alpha * primal_step_scale : alpha;
-    update_next_primal_vars(input, tau, workspace, primal_alpha, true, true);
+    update_next_primal_vars(input, tau, workspace, alpha, true, true);
     if (use_primal_dual_merit) {
-      update_next_dual_vars(input, tau, workspace,
-                            alpha * equality_dual_step_scale,
-                            alpha * inequality_dual_step_scale);
+      update_next_dual_vars(input, tau, workspace, alpha);
     }
     const double next_ctc = squared_norm(input.get_c(), y_dim);
     const double next_gsetgse =
@@ -1350,14 +1283,7 @@ auto do_line_search(const Input &input, const Settings &settings,
       break;
     }
 
-    if (use_primal_dual_merit && interpolation > 0.0) {
-      interpolation = interpolation > settings.line_search.line_search_factor
-                          ? settings.line_search.line_search_factor
-                          : 0.0;
-      update_primal_dual_ray();
-    } else {
-      alpha *= settings.line_search.line_search_factor;
-    }
+    alpha *= settings.line_search.line_search_factor;
   } while (alpha > settings.line_search.line_search_min_step_size &&
            total_ls_iterations < settings.line_search.max_iterations);
 
