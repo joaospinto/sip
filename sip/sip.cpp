@@ -952,8 +952,7 @@ auto compute_search_direction(const Input &input, const Settings &settings,
     if (factorization_ok) {
       break;
     }
-    if (use_predictor_corrector || settings.proximal.use_primal_center ||
-        settings.proximal.use_dual_center) {
+    if (use_predictor_corrector) {
       numerical_regularization = numerical_regularization == 0.0
                                      ? 1e-14
                                      : 10.0 * numerical_regularization;
