@@ -1433,7 +1433,8 @@ auto check_settings(const Settings &settings) -> bool {
 
 auto initialize_primal_dual_variables(const Input &input,
                                       const Settings &settings,
-                                      Workspace &workspace) -> bool {
+                                      Workspace &workspace)
+    -> std::optional<double> {
   const int x_dim = input.dimensions.x_dim;
   const int s_dim = input.dimensions.s_dim;
   const int y_dim = input.dimensions.y_dim;
@@ -1493,7 +1494,7 @@ auto initialize_primal_dual_variables(const Input &input,
     initialization_psi = next_psi;
   }
   if (!factorization_ok) {
-    return false;
+    return std::nullopt;
   }
 
   for (int i = 0; i < x_dim; ++i) {
@@ -1537,7 +1538,7 @@ auto initialize_primal_dual_variables(const Input &input,
       .new_y = true,
       .new_z = true,
   });
-  return true;
+  return initialization_psi;
 }
 
 } // namespace
@@ -1655,7 +1656,9 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
     std::copy_n(workspace.vars.s, s_dim, workspace.next_vars.s);
     std::copy_n(workspace.vars.y, y_dim, workspace.next_vars.y);
     std::copy_n(workspace.vars.z, s_dim, workspace.next_vars.z);
-    if (!initialize_primal_dual_variables(input, settings, workspace)) {
+    const auto initialization_psi =
+        initialize_primal_dual_variables(input, settings, workspace);
+    if (!initialization_psi.has_value()) {
       return Output{
           .exit_status = Status::FACTORIZATION_FAILURE,
           .num_iterations = 0,
@@ -1666,9 +1669,10 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
     }
     add(input.get_g(), workspace.vars.s, s_dim,
         workspace.miscellaneous_workspace.g_plus_s);
-    const auto initialized_residuals =
-        unregularized_residuals(input, workspace);
-    if (std::max(initialized_residuals.first, initialized_residuals.second) >=
+    const double proximal_residual = unscaled_max_regularized_difference(
+        workspace.vars.x, workspace.next_vars.x, *initialization_psi,
+        input.residual_scaling.dual, x_dim);
+    if (proximal_residual >
         std::max(initial_residuals.first, initial_residuals.second)) {
       std::copy_n(workspace.next_vars.x, x_dim, workspace.vars.x);
       std::copy_n(workspace.next_vars.s, s_dim, workspace.vars.s);
