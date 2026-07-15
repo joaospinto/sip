@@ -768,13 +768,10 @@ auto compute_search_direction(const Input &input, const Settings &settings,
   double numerical_regularization = 0.0;
   for (int attempt = 0; attempt < settings.regularization.max_attempts;
        ++attempt) {
-    if (use_predictor_corrector) {
-      std::fill_n(r2, y_dim, proximal_delta + numerical_regularization);
-      std::fill_n(r3, s_dim, proximal_delta + numerical_regularization);
-    }
     const double x_regularization =
-        use_predictor_corrector ? proximal_rho + numerical_regularization : psi;
-    factorization_ok = input.factor(w, x_regularization, r2, r3);
+        use_predictor_corrector ? proximal_rho : psi;
+    factorization_ok =
+        input.factor(w, x_regularization, r2, r3, numerical_regularization);
     if (factorization_ok) {
       break;
     }
@@ -801,11 +798,6 @@ auto compute_search_direction(const Input &input, const Settings &settings,
                            std::numeric_limits<double>::infinity(), 0.0,
                            lin_sys_error, num_regularization_increases);
   }
-  if (use_predictor_corrector) {
-    std::fill_n(r2, y_dim, proximal_delta);
-    std::fill_n(r3, s_dim, proximal_delta);
-  }
-
   std::copy_n(grad_f, x_dim, rx);
 
   input.add_CTx_to_y(y, rx);
@@ -1307,7 +1299,7 @@ auto initialize_predictor_corrector(const Input &input,
   bool factorization_ok = false;
   for (int attempt = 0; attempt < settings.regularization.max_attempts;
        ++attempt) {
-    factorization_ok = input.factor(w, initialization_psi, r2, r3);
+    factorization_ok = input.factor(w, initialization_psi, r2, r3, 0.0);
     if (factorization_ok) {
       break;
     }
