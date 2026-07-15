@@ -56,6 +56,27 @@ struct BarrierSettings {
   double mu_update_kappa = 10.0;
 };
 
+struct ProximalQpSettings {
+  // Use the proximal predictor-corrector method for quadratic programs. This
+  // reconstructs the affine QP data and replaces the supplied warm start.
+  bool enabled = false;
+  // Initial regularization of the primal variables.
+  double initial_primal_regularization = 1e-6;
+  // Initial regularization of the constraint multipliers.
+  double initial_dual_regularization = 1e-4;
+  // Initial lower bound on primal and dual regularization.
+  double initial_minimum_regularization = 1e-10;
+  // Final lower bound on primal and dual regularization.
+  double minimum_regularization = 1e-13;
+  // First diagonal perturbation used solely to stabilize a factorization.
+  double first_factorization_regularization = 1e-14;
+  // Refine the regularization floor after this many center-update rejections.
+  int max_center_update_rejections_before_regularization_refinement = 8;
+  // Force an accurately solved center update after this many consecutive
+  // rejections without sufficient progress.
+  int max_consecutive_center_update_rejections = 8;
+};
+
 struct PenaltySettings {
   // The initial penalty parameter of the Augmented Lagrangian.
   double initial_penalty_parameter = 1e3;
@@ -151,6 +172,8 @@ struct Settings {
   bool assert_checks_pass = false;
   // Settings for barrier parameter updates.
   BarrierSettings barrier;
+  // Settings for the proximal predictor-corrector QP method.
+  ProximalQpSettings proximal_qp;
   // Settings for penalty parameter updates.
   PenaltySettings penalty;
   // Settings for termination and status classification.
@@ -186,16 +209,21 @@ struct Input {
   // NOTE: the factor/solve callbacks should solve Kv = b, where:
   // 1. K = [ H + r1 I_x       C.T          G.T    ]
   //        [     C        -diag(r2)         0     ]
-  //        [     G             0       -diag(r3)  ]
-  // 2. r1, r2, r3 are non-negative regularization parameters;
+  //        [     G             0       -W - diag(r3) ]
+  // 2. W = diag(w), and r1, r2, r3 are non-negative regularization
+  //    parameters;
   //    r2 has length y_dim and r3 has length s_dim;
-  // 3. the callback should return whether the factorization succeeded and the
+  // 3. factorization_regularization is a non-negative scalar that may be added
+  //    to the three diagonal blocks, with the same signs as r1, r2, and r3,
+  //    solely to stabilize the factorization. It is not part of K;
+  // 4. the callback should return whether the factorization succeeded and the
   //    KKT matrix has the desired inertia.
   //
   // NOTE: the user is responsible for storing H, C, G on their side.
 
   using FactorCallback = std::function<bool(
-      const double *w, const double r1, const double *r2, const double *r3)>;
+      const double *w, const double r1, const double *r2, const double *r3,
+      double factorization_regularization)>;
 
   using SolveCallback = std::function<void(const double *b, double *v)>;
 
@@ -291,6 +319,25 @@ struct VariablesWorkspace {
   // For knowing how much memory to pre-allocate.
   static constexpr auto num_bytes(int x_dim, int s_dim, int y_dim) -> int {
     return (x_dim + y_dim + 2 * s_dim) * sizeof(double);
+  }
+};
+
+struct ProximalCenterWorkspace {
+  // Center for the primal variables.
+  double *x;
+  // Center for the equality-constraint multipliers.
+  double *y;
+  // Center for the inequality-constraint multipliers.
+  double *z;
+
+  void reserve(int x_dim, int s_dim, int y_dim);
+  void free();
+
+  auto mem_assign(int x_dim, int s_dim, int y_dim, unsigned char *mem_ptr)
+      -> int;
+
+  static constexpr auto num_bytes(int x_dim, int s_dim, int y_dim) -> int {
+    return (x_dim + y_dim + s_dim) * sizeof(double);
   }
 };
 
@@ -392,6 +439,8 @@ struct Workspace {
   VariablesWorkspace next_vars;
   // The negative Newton-KKT RHS storage (for both primal and dual variables).
   VariablesWorkspace nrhs;
+  // Proximal centers used by the predictor-corrector QP method.
+  ProximalCenterWorkspace proximal_centers;
   // Stores miscellaneous items.
   MiscellaneousWorkspace miscellaneous_workspace;
   // Stores the workspace used in compute_search_direction.
@@ -414,8 +463,12 @@ struct Workspace {
                                   const Settings &settings) -> int {
     const int kkt_dim = x_dim + s_dim + y_dim;
     const int full_dim = kkt_dim + s_dim;
+    const int proximal_centers_bytes =
+        settings.proximal_qp.enabled
+            ? ProximalCenterWorkspace::num_bytes(x_dim, s_dim, y_dim)
+            : 0;
     return 4 * VariablesWorkspace::num_bytes(x_dim, s_dim, y_dim) +
-           MiscellaneousWorkspace::num_bytes(s_dim) +
+           proximal_centers_bytes + MiscellaneousWorkspace::num_bytes(s_dim) +
            ComputeSearchDirectionWorkspace::num_bytes(s_dim, y_dim, kkt_dim,
                                                       full_dim) +
            PenaltyParameterWorkspace::num_bytes(s_dim, y_dim) +
