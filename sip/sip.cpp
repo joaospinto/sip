@@ -1615,7 +1615,6 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
   constexpr double kResidualReductionFactor = 0.95;
   constexpr double kProximalResidualThreshold = 0.9;
   constexpr double kInexactProximalResidualRatio = 0.1;
-  ProximalCenterUpdateRejections primal_center_update_rejections;
   ProximalCenterUpdateRejections dual_center_update_rejections;
   const double tau = settings.line_search.tau;
   const bool use_primal_center = settings.proximal.use_primal_center;
@@ -1934,50 +1933,8 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
                                      new_complementarity}));
 
     if (use_primal_center) {
-      for (int i = 0; i < x_dim; ++i) {
-        workspace.nrhs.x[i] +=
-            psi * (workspace.vars.x[i] - workspace.proximal_centers.x[i]);
-      }
-      const double regularized_dual_residual = unscaled_max_abs(
-          workspace.nrhs.x, input.residual_scaling.dual, x_dim);
-      const double new_dual_proximal_residual =
-          unscaled_max_regularized_difference(
-              workspace.vars.x, workspace.proximal_centers.x, psi,
-              input.residual_scaling.dual, x_dim);
-
-      if (!settings.proximal.update_centers) {
-        psi = std::max(primal_regularization_floor,
-                       settings.regularization.decrease_factor * psi);
-      } else if (new_dual_residual < kResidualReductionFactor * dual_residual ||
-                 new_dual_residual < settings.termination.max_dual_residual ||
-                 (psi == primal_regularization_floor &&
-                  new_dual_proximal_residual < kProximalResidualThreshold)) {
-        std::copy_n(workspace.vars.x, x_dim, workspace.proximal_centers.x);
-        primal_center_update_rejections.reset();
-        psi = std::max(primal_regularization_floor,
-                       (1.0 - proximal_regularization_reduction) * psi);
-      } else {
-        primal_center_update_rejections.reject(dual_residual);
-        if (iteration < 5 ||
-            new_dual_proximal_residual < kProximalResidualThreshold) {
-          psi =
-              std::max(primal_regularization_floor,
-                       (1.0 - 0.666 * proximal_regularization_reduction) * psi);
-        }
-        if (primal_center_update_rejections.has_reduced_residual(
-                new_dual_residual, kResidualReductionFactor)) {
-          primal_center_update_rejections.reset();
-        } else if (primal_center_update_rejections.count >=
-                       settings.proximal
-                           .max_consecutive_center_update_rejections &&
-                   regularized_dual_residual <
-                       std::max(settings.termination.max_dual_residual,
-                                kInexactProximalResidualRatio *
-                                    new_dual_residual)) {
-          std::copy_n(workspace.vars.x, x_dim, workspace.proximal_centers.x);
-          primal_center_update_rejections.reset();
-        }
-      }
+      std::copy_n(workspace.vars.x, x_dim, workspace.proximal_centers.x);
+      psi = decreased_regularization(settings, psi);
     } else {
       psi = decreased_regularization(settings, psi);
     }
