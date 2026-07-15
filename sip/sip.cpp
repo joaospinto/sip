@@ -1521,6 +1521,12 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
   int num_consecutive_stalled_iterations = 0;
   std::optional<double> previous_cost;
   workspace.filter.size = 0;
+  const auto set_barrier_parameter = [&](const double next_mu) {
+    if (next_mu != mu) {
+      workspace.filter.size = 0;
+    }
+    mu = next_mu;
+  };
 
   for (int iteration = 0; iteration < settings.max_iterations; ++iteration) {
     if (settings.proximal_qp.enabled) {
@@ -1541,7 +1547,7 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
             .new_y = false,
             .new_z = true,
         });
-        mu = mean_complementarity(workspace, s_dim);
+        set_barrier_parameter(mean_complementarity(workspace, s_dim));
       }
     }
 
@@ -1662,7 +1668,7 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
       const double next_mu = std::max(mu * settings.barrier.mu_update_factor,
                                       settings.barrier.mu_min);
       if (next_mu < mu) {
-        mu = next_mu;
+        set_barrier_parameter(next_mu);
         continue;
       }
     }
@@ -1783,7 +1789,6 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
               ? std::max(0.0, (previous_complementarity - new_complementarity) /
                                   previous_complementarity)
               : 0.0;
-
       if (new_dual_residual < kResidualReductionFactor * dual_residual ||
           new_dual_residual < settings.termination.max_dual_residual ||
           (proximal_rho == settings.proximal_qp.minimum_regularization &&
@@ -1860,11 +1865,11 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
           dual_center_update_rejections.reset();
         }
       }
-      mu = new_complementarity;
+      set_barrier_parameter(new_complementarity);
     } else {
       if (kkt_error <= settings.barrier.mu_update_kappa * mu) {
-        mu = std::max(mu * settings.barrier.mu_update_factor,
-                      settings.barrier.mu_min);
+        set_barrier_parameter(std::max(mu * settings.barrier.mu_update_factor,
+                                       settings.barrier.mu_min));
       }
       psi = decreased_regularization(settings, psi);
 
