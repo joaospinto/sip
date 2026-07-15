@@ -125,29 +125,23 @@ auto merit_function(const Input &input, const Workspace &workspace,
                          merit);
 }
 
-auto centered_dual_term(const Input &input, const Settings &settings,
-                        const Workspace &workspace, const double *y,
-                        const double *z) -> double {
+auto primal_dual_term(const Input &input, const Workspace &workspace,
+                      const double *y, const double *z) -> double {
   const int s_dim = input.dimensions.s_dim;
   const int y_dim = input.dimensions.y_dim;
-  const double *current_c = workspace.nrhs.y;
-  const double *current_gps = workspace.nrhs.z;
-  const double weight = settings.line_search.primal_dual_merit_dual_weight;
+  const double *c = input.get_c();
+  const double *gps = workspace.miscellaneous_workspace.g_plus_s;
 
   double term = 0.0;
   for (int i = 0; i < y_dim; ++i) {
-    const double inverse_curvature = workspace.penalties.y[i] / weight;
-    const double center =
-        workspace.vars.y[i] + inverse_curvature * current_c[i];
-    const double delta = y[i] - center;
-    term += 0.5 * delta * delta / inverse_curvature;
+    const double eta = workspace.penalties.y[i];
+    const double residual = y[i] - workspace.vars.y[i] - eta * c[i];
+    term += 0.5 * residual * residual / eta;
   }
   for (int i = 0; i < s_dim; ++i) {
-    const double inverse_curvature = workspace.penalties.z[i] / weight;
-    const double center =
-        workspace.vars.z[i] + inverse_curvature * current_gps[i];
-    const double delta = z[i] - center;
-    term += 0.5 * delta * delta / inverse_curvature;
+    const double eta = workspace.penalties.z[i];
+    const double residual = z[i] - workspace.vars.z[i] - eta * gps[i];
+    term += 0.5 * residual * residual / eta;
   }
   return term;
 }
@@ -776,6 +770,33 @@ auto quadratic_model_merit_slope(const Input &input, const Workspace &workspace,
          weighted_squared_norm(tmp_s, workspace.penalties.z, s_dim);
 }
 
+auto primal_dual_merit_slope(const Input &input, Workspace &workspace,
+                             const double fixed_dual_slope,
+                             const double z_direction_scale) -> double {
+  const int s_dim = input.dimensions.s_dim;
+  const int y_dim = input.dimensions.y_dim;
+  const double *c = input.get_c();
+  const double *gps = workspace.miscellaneous_workspace.g_plus_s;
+
+  double *cdx = workspace.next_vars.y;
+  double *gdx_plus_ds = workspace.next_vars.s;
+  std::fill_n(cdx, y_dim, 0.0);
+  input.add_Cx_to_y(workspace.delta_vars.x, cdx);
+  std::copy_n(workspace.delta_vars.s, s_dim, gdx_plus_ds);
+  input.add_Gx_to_y(workspace.delta_vars.x, gdx_plus_ds);
+
+  double slope = fixed_dual_slope;
+  for (int i = 0; i < y_dim; ++i) {
+    slope -= c[i] * workspace.delta_vars.y[i];
+    slope += workspace.penalties.y[i] * c[i] * cdx[i];
+  }
+  for (int i = 0; i < s_dim; ++i) {
+    slope -= gps[i] * z_direction_scale * workspace.delta_vars.z[i];
+    slope += workspace.penalties.z[i] * gps[i] * gdx_plus_ds[i];
+  }
+  return slope;
+}
+
 auto compute_search_direction(const Input &input, const Settings &settings,
                               const double mu, double &psi,
                               double &proximal_rho, double &proximal_delta,
@@ -1148,16 +1169,20 @@ auto do_line_search(const Input &input, const Settings &settings,
       settings.line_search.use_primal_dual_merit && s_dim + y_dim > 0;
   const double m0_dual =
       use_primal_dual_merit
-          ? centered_dual_term(input, settings, workspace, workspace.vars.y,
-                               workspace.vars.z)
+          ? primal_dual_term(input, workspace, workspace.vars.y,
+                             workspace.vars.z)
           : 0.0;
-  const double line_search_m0 = m0 + m0_dual;
-
-  bool ls_succeeded = false;
   const double alpha_z_max = use_primal_dual_merit
                                  ? get_alpha_s_max(s_dim, tau, workspace.vars.z,
                                                    workspace.delta_vars.z)
                                  : 1.0;
+  const double line_search_m0 = m0 + m0_dual;
+  const double line_search_merit_slope =
+      use_primal_dual_merit
+          ? primal_dual_merit_slope(input, workspace, merit_slope, alpha_z_max)
+          : merit_slope;
+
+  bool ls_succeeded = false;
   double alpha =
       settings.line_search.start_ls_with_alpha_s_max ? alpha_s_max : 1.0;
   alpha = std::min(alpha, alpha_s_max);
@@ -1191,11 +1216,12 @@ auto do_line_search(const Input &input, const Settings &settings,
         use_primal_dual_merit ? workspace.next_vars.y : workspace.vars.y;
     const double *trial_z =
         use_primal_dual_merit ? workspace.next_vars.z : workspace.vars.z;
-    const auto [m_f, m_s, m_c, m_g, m_aug, m] = merit_function(
-        input, workspace, workspace.next_vars.s, trial_y, trial_z, mu);
+    const auto [m_f, m_s, m_c, m_g, m_aug, m] =
+        merit_function(input, workspace, workspace.next_vars.s,
+                       workspace.vars.y, workspace.vars.z, mu);
     const double m_dual =
         use_primal_dual_merit
-            ? centered_dual_term(input, settings, workspace, trial_y, trial_z)
+            ? primal_dual_term(input, workspace, trial_y, trial_z)
             : 0.0;
     const double line_search_m = m + m_dual;
 
@@ -1233,7 +1259,7 @@ auto do_line_search(const Input &input, const Settings &settings,
     if (use_primal_dual_merit) {
       accepted_without_filter =
           merit_delta <
-          settings.line_search.armijo_factor * merit_slope * alpha;
+          settings.line_search.armijo_factor * line_search_merit_slope * alpha;
     } else if (settings.barrier.use_predictor_corrector) {
       const bool skip_line_search =
           merit_slope <= 0.0 && merit_slope >
@@ -1310,9 +1336,6 @@ auto check_settings(const Settings &settings) -> bool {
   }
   if (!is_finite_positive(settings.line_search.tau) ||
       settings.line_search.tau > 1.0) {
-    return false;
-  }
-  if (!is_finite_positive(settings.line_search.primal_dual_merit_dual_weight)) {
     return false;
   }
   if (settings.line_search.use_primal_dual_merit &&
