@@ -1138,6 +1138,12 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
   int num_consecutive_stalled_iterations = 0;
   std::optional<double> previous_cost;
   workspace.filter.size = 0;
+  const auto set_barrier_parameter = [&](const double next_mu) {
+    if (next_mu != mu) {
+      workspace.filter.size = 0;
+    }
+    mu = next_mu;
+  };
 
   for (int iteration = 0; iteration < settings.max_iterations; ++iteration) {
     const double f0 = input.get_f();
@@ -1219,7 +1225,7 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
       const double next_mu = std::max(mu * settings.barrier.mu_update_factor,
                                       settings.barrier.mu_min);
       if (next_mu < mu) {
-        mu = next_mu;
+        set_barrier_parameter(next_mu);
         continue;
       }
     }
@@ -1290,8 +1296,8 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
     }
 
     if (kkt_error <= settings.barrier.mu_update_kappa * mu) {
-      mu = std::max(mu * settings.barrier.mu_update_factor,
-                    settings.barrier.mu_min);
+      set_barrier_parameter(std::max(mu * settings.barrier.mu_update_factor,
+                                     settings.barrier.mu_min));
     }
     psi = decreased_regularization(settings, psi);
 
