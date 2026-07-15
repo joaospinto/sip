@@ -420,6 +420,8 @@ struct Workspace {
   ComputeSearchDirectionWorkspace csd_workspace;
   // Stores equality and inequality penalty parameters.
   PenaltyParameterWorkspace penalties;
+  // Stores the preceding penalty parameters while selecting initial penalties.
+  PenaltyParameterWorkspace previous_penalties;
   // Stores the line-search filter entries.
   FilterWorkspace filter;
 
@@ -440,7 +442,7 @@ struct Workspace {
            MiscellaneousWorkspace::num_bytes(s_dim) +
            ComputeSearchDirectionWorkspace::num_bytes(s_dim, y_dim, kkt_dim,
                                                       full_dim) +
-           PenaltyParameterWorkspace::num_bytes(s_dim, y_dim) +
+           2 * PenaltyParameterWorkspace::num_bytes(s_dim, y_dim) +
            FilterWorkspace::num_bytes(filter_capacity(settings));
   }
 

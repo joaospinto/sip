@@ -195,6 +195,7 @@ void Workspace::reserve(int x_dim, int s_dim, int y_dim,
   const int full_dim = kkt_dim + s_dim;
   csd_workspace.reserve(s_dim, y_dim, kkt_dim, full_dim);
   penalties.reserve(s_dim, y_dim);
+  previous_penalties.reserve(s_dim, y_dim);
   filter.reserve(filter_capacity(settings));
 }
 
@@ -207,6 +208,7 @@ void Workspace::free() {
   miscellaneous_workspace.free();
   csd_workspace.free();
   penalties.free();
+  previous_penalties.free();
   filter.free();
 }
 
@@ -227,6 +229,7 @@ auto Workspace::mem_assign(int x_dim, int s_dim, int y_dim,
   cum_size += csd_workspace.mem_assign(s_dim, y_dim, kkt_dim, full_dim,
                                        mem_ptr + cum_size);
   cum_size += penalties.mem_assign(s_dim, y_dim, mem_ptr + cum_size);
+  cum_size += previous_penalties.mem_assign(s_dim, y_dim, mem_ptr + cum_size);
   cum_size += filter.mem_assign(filter_capacity(settings), mem_ptr + cum_size);
 
   return cum_size;

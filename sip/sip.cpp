@@ -431,9 +431,12 @@ auto update_penalty_parameters(const Input &input, const Settings &settings,
   return any_increased;
 }
 
+enum class InitialPenaltyUpdate { NO_CHANGE, INCREASED, RESTORED_PREVIOUS };
+
 auto update_initial_penalties_for_linearized_constraint_violation(
     const Input &input, const Settings &settings,
-    double &previous_linearized_violation_ratio, Workspace &workspace) -> bool {
+    double &previous_linearized_violation_ratio, Workspace &workspace)
+    -> InitialPenaltyUpdate {
   const int s_dim = input.dimensions.s_dim;
   const int y_dim = input.dimensions.y_dim;
   const double min_ratio =
@@ -449,7 +452,7 @@ auto update_initial_penalties_for_linearized_constraint_violation(
                        input.residual_scaling.inequality,
                        s_dim) <= max_violation;
   if (currently_feasible) {
-    return false;
+    return InitialPenaltyUpdate::NO_CHANGE;
   }
 
   double *linearized_c = workspace.next_vars.y;
@@ -510,9 +513,14 @@ auto update_initial_penalties_for_linearized_constraint_violation(
                                  linearized_gps[i], max_violation * scale));
   }
   if (max_linearized_violation_ratio >= previous_linearized_violation_ratio) {
-    return false;
+    std::copy_n(workspace.previous_penalties.y, y_dim, workspace.penalties.y);
+    std::copy_n(workspace.previous_penalties.z, s_dim, workspace.penalties.z);
+    return InitialPenaltyUpdate::RESTORED_PREVIOUS;
   }
   previous_linearized_violation_ratio = max_linearized_violation_ratio;
+
+  std::copy_n(workspace.penalties.y, y_dim, workspace.previous_penalties.y);
+  std::copy_n(workspace.penalties.z, s_dim, workspace.previous_penalties.z);
 
   bool any_increased = false;
   for (int i = 0; i < y_dim; ++i) {
@@ -531,7 +539,8 @@ auto update_initial_penalties_for_linearized_constraint_violation(
         workspace.miscellaneous_workspace.g_plus_s[i], linearized_gps[i],
         max_violation * scale, workspace.penalties.z[i]);
   }
-  return any_increased;
+  return any_increased ? InitialPenaltyUpdate::INCREASED
+                       : InitialPenaltyUpdate::NO_CHANGE;
 }
 
 void decrease_dual_regularization(const Input &input, Workspace &workspace,
@@ -1870,13 +1879,32 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
         compute_search_direction(input, settings, mu, psi, tau, workspace);
     double previous_linearized_violation_ratio =
         std::numeric_limits<double>::infinity();
-    while (
-        iteration == 0 && std::get<0>(search_direction) &&
-        settings.penalty.initialize_from_linearized_constraint_reduction &&
-        update_initial_penalties_for_linearized_constraint_violation(
-            input, settings, previous_linearized_violation_ratio, workspace)) {
-      search_direction =
-          compute_search_direction(input, settings, mu, psi, tau, workspace);
+    if (iteration == 0 &&
+        settings.penalty.initialize_from_linearized_constraint_reduction) {
+      bool preceding_penalties_available = false;
+      while (std::get<0>(search_direction)) {
+        const InitialPenaltyUpdate update =
+            update_initial_penalties_for_linearized_constraint_violation(
+                input, settings, previous_linearized_violation_ratio,
+                workspace);
+        if (update == InitialPenaltyUpdate::NO_CHANGE) {
+          break;
+        }
+        search_direction =
+            compute_search_direction(input, settings, mu, psi, tau, workspace);
+        if (update == InitialPenaltyUpdate::RESTORED_PREVIOUS) {
+          break;
+        }
+        preceding_penalties_available = true;
+      }
+      if (!std::get<0>(search_direction) && preceding_penalties_available) {
+        std::copy_n(workspace.previous_penalties.y, y_dim,
+                    workspace.penalties.y);
+        std::copy_n(workspace.previous_penalties.z, s_dim,
+                    workspace.penalties.z);
+        search_direction =
+            compute_search_direction(input, settings, mu, psi, tau, workspace);
+      }
     }
     const auto [factorization_ok, dx, ds, dy, dz, stationarity_merit_slope,
                 merit_slope, alpha_s_max, dual_residual,
