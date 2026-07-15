@@ -2183,6 +2183,13 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
         }
       }
     } else {
+      if (iteration == 0 &&
+          settings.penalty.initialize_from_linearized_constraint_reduction) {
+        std::fill_n(workspace.penalties.y, y_dim,
+                    settings.penalty.initial_penalty_parameter);
+        std::fill_n(workspace.penalties.z, s_dim,
+                    settings.penalty.initial_penalty_parameter);
+      }
       const bool any_penalty_increased =
           update_penalty_parameters(input, settings, workspace);
       if (any_penalty_increased) {
