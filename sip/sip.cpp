@@ -1672,8 +1672,11 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
     const double proximal_residual = unscaled_max_regularized_difference(
         workspace.vars.x, workspace.next_vars.x, *initialization_psi,
         input.residual_scaling.dual, x_dim);
-    if (proximal_residual >
-        std::max(initial_residuals.first, initial_residuals.second)) {
+    const bool primal_residual_dominates =
+        initial_residuals.first > initial_residuals.second;
+    if (primal_residual_dominates ||
+        proximal_residual >
+            std::max(initial_residuals.first, initial_residuals.second)) {
       std::copy_n(workspace.next_vars.x, x_dim, workspace.vars.x);
       std::copy_n(workspace.next_vars.s, s_dim, workspace.vars.s);
       std::copy_n(workspace.next_vars.y, y_dim, workspace.vars.y);
