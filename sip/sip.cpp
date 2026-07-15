@@ -1468,8 +1468,8 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
   constexpr double kResidualReductionFactor = 0.95;
   constexpr double kProximalResidualThreshold = 0.9;
   constexpr double kInexactProximalResidualRatio = 0.1;
-  int no_primal_center_update = 0;
-  int no_dual_center_update = 0;
+  int consecutive_primal_center_update_rejections = 0;
+  int consecutive_dual_center_update_rejections = 0;
   ProximalCenterUpdateRejections primal_center_update_rejections;
   ProximalCenterUpdateRejections dual_center_update_rejections;
   const double tau = settings.line_search.tau;
@@ -1536,19 +1536,19 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
                 workspace.vars.z, workspace.proximal_centers.z,
                 input.residual_scaling.inequality, s_dim));
     if (settings.barrier.use_predictor_corrector &&
-        ((no_primal_center_update >=
+        ((consecutive_primal_center_update_rejections >=
               settings.barrier
                   .max_consecutive_proximal_center_update_rejections &&
           proximal_rho == proximal_regularization_limit) ||
-         (no_dual_center_update >=
+         (consecutive_dual_center_update_rejections >=
               settings.barrier
                   .max_consecutive_proximal_center_update_rejections &&
           proximal_delta == proximal_regularization_limit)) &&
         dual_proximal_residual < kProximalResidualThreshold &&
         primal_proximal_residual < kProximalResidualThreshold) {
       proximal_regularization_limit = 1e-13;
-      no_primal_center_update = 0;
-      no_dual_center_update = 0;
+      consecutive_primal_center_update_rejections = 0;
+      consecutive_dual_center_update_rejections = 0;
     }
 
     const double f0 = input.get_f();
@@ -1769,12 +1769,13 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
           (proximal_rho == 1e-13 &&
            new_dual_proximal_residual < kProximalResidualThreshold)) {
         std::copy_n(workspace.vars.x, x_dim, workspace.proximal_centers.x);
+        consecutive_primal_center_update_rejections = 0;
         primal_center_update_rejections.reset();
         proximal_rho =
             std::max(proximal_regularization_limit,
                      (1.0 - complementarity_reduction) * proximal_rho);
       } else {
-        ++no_primal_center_update;
+        ++consecutive_primal_center_update_rejections;
         primal_center_update_rejections.reject(dual_residual);
         if (iteration < 5 ||
             new_dual_proximal_residual < kProximalResidualThreshold) {
@@ -1794,7 +1795,7 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
                                 kInexactProximalResidualRatio *
                                     new_dual_residual)) {
           std::copy_n(workspace.vars.x, x_dim, workspace.proximal_centers.x);
-          no_primal_center_update = 0;
+          consecutive_primal_center_update_rejections = 0;
           primal_center_update_rejections.reset();
         }
       }
@@ -1806,12 +1807,13 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
            new_primal_proximal_residual < kProximalResidualThreshold)) {
         std::copy_n(workspace.vars.y, y_dim, workspace.proximal_centers.y);
         std::copy_n(workspace.vars.z, s_dim, workspace.proximal_centers.z);
+        consecutive_dual_center_update_rejections = 0;
         dual_center_update_rejections.reset();
         proximal_delta =
             std::max(proximal_regularization_limit,
                      (1.0 - complementarity_reduction) * proximal_delta);
       } else {
-        ++no_dual_center_update;
+        ++consecutive_dual_center_update_rejections;
         dual_center_update_rejections.reject(max_constraint_violation);
         if (iteration < 5 ||
             new_primal_proximal_residual < kProximalResidualThreshold) {
@@ -1832,7 +1834,7 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
                                     new_primal_residual)) {
           std::copy_n(workspace.vars.y, y_dim, workspace.proximal_centers.y);
           std::copy_n(workspace.vars.z, s_dim, workspace.proximal_centers.z);
-          no_dual_center_update = 0;
+          consecutive_dual_center_update_rejections = 0;
           dual_center_update_rejections.reset();
         }
       }
