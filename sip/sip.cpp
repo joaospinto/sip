@@ -1180,11 +1180,15 @@ auto do_line_search(const Input &input, const Settings &settings,
                                   input, workspace, merit_slope,
                                   settings.line_search.primal_dual_merit_weight)
                             : merit_slope;
+  const double alpha_z_max = use_primal_dual_merit
+                                 ? get_alpha_s_max(s_dim, tau, workspace.vars.z,
+                                                   workspace.delta_vars.z)
+                                 : 1.0;
 
   bool ls_succeeded = false;
   double alpha =
       use_primal_dual_merit
-          ? 1.0
+          ? std::min(alpha_s_max, alpha_z_max)
           : (settings.line_search.start_ls_with_alpha_s_max ? alpha_s_max
                                                             : 1.0);
   double trial_alpha = alpha;
