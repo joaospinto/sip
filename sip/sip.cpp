@@ -432,8 +432,8 @@ auto update_penalty_parameters(const Input &input, const Settings &settings,
 }
 
 auto update_initial_penalties_for_linearized_constraint_violation(
-    const Input &input, const Settings &settings, Workspace &workspace)
-    -> bool {
+    const Input &input, const Settings &settings,
+    double &previous_linearized_violation_ratio, Workspace &workspace) -> bool {
   const int s_dim = input.dimensions.s_dim;
   const int y_dim = input.dimensions.y_dim;
   const double min_ratio =
@@ -464,17 +464,18 @@ auto update_initial_penalties_for_linearized_constraint_violation(
     linearized_gps[i] += workspace.delta_vars.s[i];
   }
 
-  double max_linearized_violation_ratio = 0.0;
+  const auto violation_ratio = [](const double current, const double linearized,
+                                  const double acceptable_violation) {
+    const double reference = std::max(std::fabs(current), acceptable_violation);
+    if (reference > 0.0) {
+      return std::fabs(linearized) / reference;
+    }
+    return linearized == 0.0 ? 0.0 : std::numeric_limits<double>::infinity();
+  };
   const auto increase_if_needed = [&](const double current,
                                       const double linearized,
                                       const double acceptable_violation,
                                       double &penalty) {
-    const double reference = std::max(std::fabs(current), acceptable_violation);
-    const double ratio = reference > 0.0
-                             ? std::fabs(linearized) / reference
-                             : std::numeric_limits<double>::infinity();
-    max_linearized_violation_ratio =
-        std::max(max_linearized_violation_ratio, ratio);
     if (std::fabs(linearized) <= acceptable_violation) {
       return false;
     }
@@ -488,6 +489,30 @@ auto update_initial_penalties_for_linearized_constraint_violation(
     penalty = increased;
     return changed;
   };
+
+  double max_linearized_violation_ratio = 0.0;
+  for (int i = 0; i < y_dim; ++i) {
+    const double scale = input.residual_scaling.equality == nullptr
+                             ? 1.0
+                             : input.residual_scaling.equality[i];
+    max_linearized_violation_ratio =
+        std::max(max_linearized_violation_ratio,
+                 violation_ratio(input.get_c()[i], linearized_c[i],
+                                 max_violation * scale));
+  }
+  for (int i = 0; i < s_dim; ++i) {
+    const double scale = input.residual_scaling.inequality == nullptr
+                             ? 1.0
+                             : input.residual_scaling.inequality[i];
+    max_linearized_violation_ratio =
+        std::max(max_linearized_violation_ratio,
+                 violation_ratio(workspace.miscellaneous_workspace.g_plus_s[i],
+                                 linearized_gps[i], max_violation * scale));
+  }
+  if (max_linearized_violation_ratio >= previous_linearized_violation_ratio) {
+    return false;
+  }
+  previous_linearized_violation_ratio = max_linearized_violation_ratio;
 
   bool any_increased = false;
   for (int i = 0; i < y_dim; ++i) {
@@ -505,11 +530,6 @@ auto update_initial_penalties_for_linearized_constraint_violation(
     any_increased |= increase_if_needed(
         workspace.miscellaneous_workspace.g_plus_s[i], linearized_gps[i],
         max_violation * scale, workspace.penalties.z[i]);
-  }
-  if (settings.logging.print_logs) {
-    fmt::print("initial penalty eta={} linearized violation ratio={}\n",
-               mean_penalty_parameter(workspace, s_dim, y_dim),
-               max_linearized_violation_ratio);
   }
   return any_increased;
 }
@@ -1848,10 +1868,13 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
 
     auto search_direction =
         compute_search_direction(input, settings, mu, psi, tau, workspace);
-    while (iteration == 0 && std::get<0>(search_direction) &&
-           settings.penalty.initialize_from_linearized_constraint_reduction &&
-           update_initial_penalties_for_linearized_constraint_violation(
-               input, settings, workspace)) {
+    double previous_linearized_violation_ratio =
+        std::numeric_limits<double>::infinity();
+    while (
+        iteration == 0 && std::get<0>(search_direction) &&
+        settings.penalty.initialize_from_linearized_constraint_reduction &&
+        update_initial_penalties_for_linearized_constraint_violation(
+            input, settings, previous_linearized_violation_ratio, workspace)) {
       search_direction =
           compute_search_direction(input, settings, mu, psi, tau, workspace);
     }
