@@ -75,19 +75,6 @@ auto mean_complementarity(const Workspace &workspace, const int s_dim)
 }
 
 auto unscaled_max_regularized_difference(const double *lhs, const double *rhs,
-                                         const double *regularization,
-                                         const double *scaling, const int size)
-    -> double {
-  double result = 0.0;
-  for (int i = 0; i < size; ++i) {
-    const double value = regularization[i] * (lhs[i] - rhs[i]);
-    result = std::max(
-        result, std::fabs(scaling == nullptr ? value : value / scaling[i]));
-  }
-  return result;
-}
-
-auto unscaled_max_regularized_difference(const double *lhs, const double *rhs,
                                          const double regularization,
                                          const double *scaling, const int size)
     -> double {
@@ -307,28 +294,6 @@ struct TerminationChecks {
   bool solved;
   bool stalled;
   bool advance_barrier;
-};
-
-struct ProximalCenterUpdateRejections {
-  void reject(const double current_residual) {
-    if (count == 0) {
-      residual_at_start = current_residual;
-    }
-    ++count;
-  }
-
-  void reset() {
-    count = 0;
-    residual_at_start = std::numeric_limits<double>::infinity();
-  }
-
-  auto has_reduced_residual(const double residual,
-                            const double reduction_factor) const -> bool {
-    return residual < reduction_factor * residual_at_start;
-  }
-
-  int count{0};
-  double residual_at_start{std::numeric_limits<double>::infinity()};
 };
 
 auto cost_change_satisfied(const Settings &settings,
@@ -1612,10 +1577,7 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
 
   double mu = settings.barrier.initial_mu;
   double psi = settings.regularization.initial;
-  constexpr double kResidualReductionFactor = 0.95;
   constexpr double kProximalResidualThreshold = 0.9;
-  constexpr double kInexactProximalResidualRatio = 0.1;
-  ProximalCenterUpdateRejections dual_center_update_rejections;
   const double tau = settings.line_search.tau;
   const bool use_primal_center = settings.proximal.use_primal_center;
   const bool use_dual_center = settings.proximal.use_dual_center;
@@ -1940,79 +1902,10 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
     }
 
     if (use_dual_center) {
-      const double *new_c = input.get_c();
-      double *r2 = workspace.csd_workspace.r2;
-      double *r3 = workspace.csd_workspace.r3;
-      for (int i = 0; i < y_dim; ++i) {
-        workspace.nrhs.y[i] =
-            new_c[i] +
-            r2[i] * (workspace.proximal_centers.y[i] - workspace.vars.y[i]);
-      }
-      for (int i = 0; i < s_dim; ++i) {
-        workspace.nrhs.z[i] =
-            workspace.miscellaneous_workspace.g_plus_s[i] +
-            r3[i] * (workspace.proximal_centers.z[i] - workspace.vars.z[i]);
-      }
-      const double regularized_primal_residual =
-          std::max(unscaled_max_abs(workspace.nrhs.y,
-                                    input.residual_scaling.equality, y_dim),
-                   unscaled_max_abs(workspace.nrhs.z,
-                                    input.residual_scaling.inequality, s_dim));
-      const double new_primal_proximal_residual =
-          std::max(unscaled_max_regularized_difference(
-                       workspace.vars.y, workspace.proximal_centers.y, r2,
-                       input.residual_scaling.equality, y_dim),
-                   unscaled_max_regularized_difference(
-                       workspace.vars.z, workspace.proximal_centers.z, r3,
-                       input.residual_scaling.inequality, s_dim));
-      bool dual_regularization_at_minimum = true;
-      for (int i = 0; i < y_dim; ++i) {
-        dual_regularization_at_minimum &=
-            workspace.penalties.y[i] == dual_penalty_limit;
-      }
-      for (int i = 0; i < s_dim; ++i) {
-        dual_regularization_at_minimum &=
-            workspace.penalties.z[i] == dual_penalty_limit;
-      }
-
-      if (!settings.proximal.update_centers) {
-        decrease_dual_regularization(
-            input, workspace, dual_penalty_limit,
-            1.0 / settings.penalty.penalty_parameter_increase_factor);
-      } else if (new_primal_residual <
-                     kResidualReductionFactor * max_constraint_violation ||
-                 new_primal_residual <
-                     settings.termination.max_constraint_violation ||
-                 (dual_regularization_at_minimum &&
-                  new_primal_proximal_residual < kProximalResidualThreshold)) {
-        std::copy_n(workspace.vars.y, y_dim, workspace.proximal_centers.y);
-        std::copy_n(workspace.vars.z, s_dim, workspace.proximal_centers.z);
-        dual_center_update_rejections.reset();
-        decrease_dual_regularization(input, workspace, dual_penalty_limit,
-                                     1.0 - proximal_regularization_reduction);
-      } else {
-        dual_center_update_rejections.reject(max_constraint_violation);
-        if (iteration < 5 ||
-            new_primal_proximal_residual < kProximalResidualThreshold) {
-          decrease_dual_regularization(
-              input, workspace, dual_penalty_limit,
-              1.0 - 0.666 * proximal_regularization_reduction);
-        }
-        if (dual_center_update_rejections.has_reduced_residual(
-                new_primal_residual, kResidualReductionFactor)) {
-          dual_center_update_rejections.reset();
-        } else if (dual_center_update_rejections.count >=
-                       settings.proximal
-                           .max_consecutive_center_update_rejections &&
-                   regularized_primal_residual <
-                       std::max(settings.termination.max_constraint_violation,
-                                kInexactProximalResidualRatio *
-                                    new_primal_residual)) {
-          std::copy_n(workspace.vars.y, y_dim, workspace.proximal_centers.y);
-          std::copy_n(workspace.vars.z, s_dim, workspace.proximal_centers.z);
-          dual_center_update_rejections.reset();
-        }
-      }
+      std::copy_n(workspace.vars.y, y_dim, workspace.proximal_centers.y);
+      std::copy_n(workspace.vars.z, s_dim, workspace.proximal_centers.z);
+      decrease_dual_regularization(input, workspace, dual_penalty_limit,
+                                   1.0 - proximal_regularization_reduction);
     } else {
       const bool any_penalty_increased =
           update_penalty_parameters(input, settings, workspace);
