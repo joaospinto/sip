@@ -18,6 +18,15 @@ enum class Status {
   FACTORIZATION_FAILURE = 8,
 };
 
+enum class Mode {
+  // Use regularization only to obtain a suitable Newton-KKT system.
+  REGULARIZED_IPM = 0,
+  // Interpret primal regularization as a centered proximal term.
+  PRIMAL_PROXIMAL_IPM = 1,
+  // Interpret primal and dual regularization as centered proximal terms.
+  PRIMAL_DUAL_PROXIMAL_IPM = 2,
+};
+
 // For nicer googletest outputs.
 auto operator<<(std::ostream &os, Status const &status) -> std::ostream &;
 
@@ -132,6 +141,8 @@ struct LoggingSettings {
 };
 
 struct Settings {
+  // The interior-point method formulation.
+  Mode mode = Mode::REGULARIZED_IPM;
   // The maximum number of iterations the solver can do.
   int max_iterations = 100;
   // The number of iterative refinement steps.
