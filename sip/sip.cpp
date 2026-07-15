@@ -777,13 +777,25 @@ auto primal_dual_merit_slope(const Input &input, const Workspace &workspace,
   const int y_dim = input.dimensions.y_dim;
   const double *c = input.get_c();
   const double *gps = workspace.miscellaneous_workspace.g_plus_s;
+  const double *dx = workspace.delta_vars.x;
+  const double *ds = workspace.delta_vars.s;
+  const double *dy = workspace.delta_vars.y;
+  const double *dz = workspace.delta_vars.z;
+
+  double *dc = workspace.next_vars.y;
+  std::fill_n(dc, y_dim, 0.0);
+  input.add_Cx_to_y(dx, dc);
+
+  double *dgps = workspace.next_vars.s;
+  std::copy_n(ds, s_dim, dgps);
+  input.add_Gx_to_y(dx, dgps);
 
   double slope = fixed_dual_slope;
   for (int i = 0; i < y_dim; ++i) {
-    slope -= weight * c[i] * workspace.delta_vars.y[i];
+    slope += weight * c[i] * (workspace.penalties.y[i] * dc[i] - dy[i]);
   }
   for (int i = 0; i < s_dim; ++i) {
-    slope -= weight * gps[i] * workspace.delta_vars.z[i];
+    slope += weight * gps[i] * (workspace.penalties.z[i] * dgps[i] - dz[i]);
   }
   return slope;
 }
@@ -1164,11 +1176,7 @@ auto do_line_search(const Input &input, const Settings &settings,
                              workspace.vars.z,
                              settings.line_search.primal_dual_merit_weight)
           : 0.0;
-  const double primal_dual_merit_weight =
-      use_primal_dual_merit ? settings.line_search.primal_dual_merit_weight
-                            : 0.0;
-  const double line_search_m0 =
-      m0 - primal_dual_merit_weight * m0_aug + m0_dual;
+  const double line_search_m0 = m0 + m0_dual;
   const double line_search_merit_slope =
       use_primal_dual_merit ? primal_dual_merit_slope(
                                   input, workspace, merit_slope,
@@ -1218,16 +1226,14 @@ auto do_line_search(const Input &input, const Settings &settings,
             ? primal_dual_term(input, workspace, trial_y, trial_z,
                                settings.line_search.primal_dual_merit_weight)
             : 0.0;
-    const double line_search_m = m - primal_dual_merit_weight * m_aug + m_dual;
+    const double line_search_m = m + m_dual;
 
     const double dm_f = m_f - m0_f;
     const double dm_s = m_s - m0_s;
     const double dm_c = m_c - m0_c;
     const double dm_g = m_g - m0_g;
     const double dm_aug = m_aug - m0_aug;
-    const double dm_aug_contribution =
-        use_primal_dual_merit ? (1.0 - primal_dual_merit_weight) * dm_aug
-                              : dm_aug;
+    const double dm_aug_contribution = dm_aug;
     const double dm_dual = m_dual - m0_dual;
 
     merit_delta = line_search_m - line_search_m0;
