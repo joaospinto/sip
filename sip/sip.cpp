@@ -1127,13 +1127,17 @@ auto do_line_search(const Input &input, const Settings &settings,
     constraint_violation_ratio = next_sq_constraint_violation_norm /
                                  std::max(sq_constraint_violation_norm, 1e-12);
     const double current_theta = std::sqrt(sq_constraint_violation_norm);
+    const double current_filter_objective = m0_f + m0_s;
+    const double filter_objective = m_f + m_s;
     const bool acceptable_to_current_iterate =
         next_theta <=
             (1.0 - settings.line_search.filter_gamma_theta) * current_theta ||
-        m_f <= m0_f - settings.line_search.filter_gamma_f * current_theta;
+        filter_objective <=
+            current_filter_objective -
+                settings.line_search.filter_gamma_f * current_theta;
     const bool filter_accept =
         filter_active && acceptable_to_current_iterate &&
-        filter_accepts(filter, settings, next_theta, m_f);
+        filter_accepts(filter, settings, next_theta, filter_objective);
     if (settings.logging.print_line_search_logs) {
       fmt::print(fg(fmt::color::yellow),
                  // clang-format off
@@ -1181,7 +1185,7 @@ auto do_line_search(const Input &input, const Settings &settings,
 
   if (ls_succeeded && filter_active && !accepted_without_filter) {
     add_filter_entry(filter, settings, std::sqrt(sq_constraint_violation_norm),
-                     m0_f);
+                     m0_f + m0_s);
   }
 
   return std::make_tuple(ls_succeeded, alpha, m0, constraint_violation_ratio);
