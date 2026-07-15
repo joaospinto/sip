@@ -112,6 +112,8 @@ struct LineSearchSettings {
   // Globalize primal and dual variables together using a centered
   // primal-dual augmented-Lagrangian merit function.
   bool use_primal_dual_merit = false;
+  // The positive weight of the shifted primal-dual residual.
+  double primal_dual_merit_weight = 1.0;
   // When true, accept a trial step if it passes Armijo, sufficiently reduces
   // primal violation, or sufficiently reduces the objective.
   bool use_filter_line_search = false;
