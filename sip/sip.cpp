@@ -464,10 +464,17 @@ auto update_initial_penalties_for_linearized_constraint_violation(
     linearized_gps[i] += workspace.delta_vars.s[i];
   }
 
+  double max_linearized_violation_ratio = 0.0;
   const auto increase_if_needed = [&](const double current,
                                       const double linearized,
                                       const double acceptable_violation,
                                       double &penalty) {
+    const double reference = std::max(std::fabs(current), acceptable_violation);
+    const double ratio = reference > 0.0
+                             ? std::fabs(linearized) / reference
+                             : std::numeric_limits<double>::infinity();
+    max_linearized_violation_ratio =
+        std::max(max_linearized_violation_ratio, ratio);
     if (std::fabs(linearized) <= acceptable_violation) {
       return false;
     }
@@ -498,6 +505,11 @@ auto update_initial_penalties_for_linearized_constraint_violation(
     any_increased |= increase_if_needed(
         workspace.miscellaneous_workspace.g_plus_s[i], linearized_gps[i],
         max_violation * scale, workspace.penalties.z[i]);
+  }
+  if (settings.logging.print_logs) {
+    fmt::print("initial penalty eta={} linearized violation ratio={}\n",
+               mean_penalty_parameter(workspace, s_dim, y_dim),
+               max_linearized_violation_ratio);
   }
   return any_increased;
 }
