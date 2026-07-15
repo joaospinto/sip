@@ -97,7 +97,7 @@ struct LineSearchSettings {
   // A parameter of the fraction-to-the-boundary rule.
   double tau = 0.995;
   // Determines whether we start with alpha=alpha_s_max or alpha=1.
-  bool start_ls_with_alpha_s_max = false;
+  bool start_ls_with_alpha_s_max = true;
   // Determines when we accept a line search step, by the merit decrease and
   // slope.
   double armijo_factor = 1e-4;
