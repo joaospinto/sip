@@ -1496,6 +1496,9 @@ auto initialize_primal_dual_variables(const Input &input,
     return false;
   }
 
+  for (int i = 0; i < x_dim; ++i) {
+    bx[i] += initialization_psi * workspace.vars.x[i];
+  }
   input.solve(b, v);
   std::copy_n(v, x_dim, workspace.vars.x);
   std::copy_n(v + x_dim, y_dim, workspace.vars.y);
@@ -1647,6 +1650,11 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
   }
 
   if (settings.barrier.initialize_primal_dual_variables) {
+    const auto initial_residuals = unregularized_residuals(input, workspace);
+    std::copy_n(workspace.vars.x, x_dim, workspace.next_vars.x);
+    std::copy_n(workspace.vars.s, s_dim, workspace.next_vars.s);
+    std::copy_n(workspace.vars.y, y_dim, workspace.next_vars.y);
+    std::copy_n(workspace.vars.z, s_dim, workspace.next_vars.z);
     if (!initialize_primal_dual_variables(input, settings, workspace)) {
       return Output{
           .exit_status = Status::FACTORIZATION_FAILURE,
@@ -1658,6 +1666,25 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
     }
     add(input.get_g(), workspace.vars.s, s_dim,
         workspace.miscellaneous_workspace.g_plus_s);
+    const auto initialized_residuals =
+        unregularized_residuals(input, workspace);
+    if (std::max(initialized_residuals.first, initialized_residuals.second) >=
+        std::max(initial_residuals.first, initial_residuals.second)) {
+      std::copy_n(workspace.next_vars.x, x_dim, workspace.vars.x);
+      std::copy_n(workspace.next_vars.s, s_dim, workspace.vars.s);
+      std::copy_n(workspace.next_vars.y, y_dim, workspace.vars.y);
+      std::copy_n(workspace.next_vars.z, s_dim, workspace.vars.z);
+      input.model_callback({
+          .x = workspace.vars.x,
+          .y = workspace.vars.y,
+          .z = workspace.vars.z,
+          .new_x = true,
+          .new_y = true,
+          .new_z = true,
+      });
+      add(input.get_g(), workspace.vars.s, s_dim,
+          workspace.miscellaneous_workspace.g_plus_s);
+    }
   }
   if (use_primal_center) {
     std::copy_n(workspace.vars.x, x_dim, workspace.proximal_centers.x);
@@ -1677,28 +1704,6 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
   workspace.filter.size = 0;
 
   for (int iteration = 0; iteration < settings.max_iterations; ++iteration) {
-    if (settings.barrier.use_predictor_corrector || use_dual_center) {
-      const double epsilon = std::numeric_limits<double>::epsilon();
-      bool shifted_from_boundary = false;
-      for (int i = 0; i < s_dim; ++i) {
-        if (workspace.vars.z[i] < epsilon) {
-          workspace.vars.z[i] += epsilon;
-          shifted_from_boundary = true;
-        }
-      }
-      if (shifted_from_boundary) {
-        input.model_callback({
-            .x = workspace.vars.x,
-            .y = workspace.vars.y,
-            .z = workspace.vars.z,
-            .new_x = false,
-            .new_y = false,
-            .new_z = true,
-        });
-        mu = mean_complementarity(workspace, s_dim);
-      }
-    }
-
     bool regularization_at_continuation_floor = false;
     if (continuation_floor_active) {
       const double dual_proximal_residual =
