@@ -62,8 +62,8 @@ auto max_primal_violation(const Input &input) -> double {
   const int y_dim = input.dimensions.y_dim;
   return std::max(
       unscaled_max_abs(input.get_c(), input.residual_scaling.equality, y_dim),
-      unscaled_max_positive(input.get_g(),
-                            input.residual_scaling.inequality, s_dim));
+      unscaled_max_positive(input.get_g(), input.residual_scaling.inequality,
+                            s_dim));
 }
 
 auto mean_complementarity(const Workspace &workspace, const int s_dim)
@@ -80,8 +80,8 @@ auto unscaled_max_difference(const double *lhs, const double *rhs,
   for (int i = 0; i < size; ++i) {
     const double difference = lhs[i] - rhs[i];
     result = std::max(
-        result, std::fabs(scaling == nullptr ? difference
-                                             : scaling[i] * difference));
+        result,
+        std::fabs(scaling == nullptr ? difference : scaling[i] * difference));
   }
   return result;
 }
@@ -101,8 +101,7 @@ auto unregularized_residuals(const Input &input, Workspace &workspace)
       unscaled_max_abs(input.get_c(), input.residual_scaling.equality, y_dim),
       unscaled_max_abs(workspace.miscellaneous_workspace.g_plus_s,
                        input.residual_scaling.inequality, s_dim));
-  return {primal,
-          unscaled_max_abs(dual, input.residual_scaling.dual, x_dim)};
+  return {primal, unscaled_max_abs(dual, input.residual_scaling.dual, x_dim)};
 }
 
 auto merit_function(const Input &input, const Workspace &workspace,
@@ -445,10 +444,10 @@ void update_next_dual_vars(const Input &input, const Settings &settings,
   for (int i = 0; i < s_dim; ++i) {
     const double next_z =
         workspace.vars.z[i] + dual_step * workspace.delta_vars.z[i];
-    workspace.next_vars.z[i] = settings.barrier.use_predictor_corrector
-                                   ? next_z
-                                   : std::max(next_z, (1.0 - tau) *
-                                                          workspace.vars.z[i]);
+    workspace.next_vars.z[i] =
+        settings.barrier.use_predictor_corrector
+            ? next_z
+            : std::max(next_z, (1.0 - tau) * workspace.vars.z[i]);
     assert(workspace.next_vars.z[i] > 0.0);
   }
 
@@ -1051,17 +1050,17 @@ auto compute_search_direction(const Input &input, const Settings &settings,
         std::fabs(c[i] / (input.residual_scaling.equality == nullptr
                               ? 1.0
                               : input.residual_scaling.equality[i]));
-    max_constraint_violation =
-        std::isnan(abs_c) ? std::numeric_limits<double>::infinity()
-                          : std::max(max_constraint_violation, abs_c);
+    max_constraint_violation = std::isnan(abs_c)
+                                   ? std::numeric_limits<double>::infinity()
+                                   : std::max(max_constraint_violation, abs_c);
   }
 
   for (int i = 0; i < s_dim; ++i) {
-    const double abs_gps = std::fabs(
-        workspace.miscellaneous_workspace.g_plus_s[i] /
-        (input.residual_scaling.inequality == nullptr
-             ? 1.0
-             : input.residual_scaling.inequality[i]));
+    const double abs_gps =
+        std::fabs(workspace.miscellaneous_workspace.g_plus_s[i] /
+                  (input.residual_scaling.inequality == nullptr
+                       ? 1.0
+                       : input.residual_scaling.inequality[i]));
     max_constraint_violation =
         std::isnan(abs_gps) ? std::numeric_limits<double>::infinity()
                             : std::max(max_constraint_violation, abs_gps);
@@ -1246,13 +1245,14 @@ auto do_line_search(const Input &input, const Settings &settings,
         filter_active && acceptable_to_current_iterate &&
         filter_accepts(filter, settings, next_theta, m_f);
     if (settings.logging.print_line_search_logs) {
-      fmt::print(fg(fmt::color::yellow),
-                 // clang-format off
+      fmt::print(
+          fg(fmt::color::yellow),
+          // clang-format off
                        "{:^10} {:^+10} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g}\n",
-                 // clang-format on
-                 "", total_ls_iterations, alpha, line_search_m, m_f,
-                 std::sqrt(next_ctc), std::sqrt(next_gsetgse), merit_delta,
-                 merit_delta / alpha, dm_f, dm_s, dm_c, dm_g, dm_aug, dm_dual);
+          // clang-format on
+          "", total_ls_iterations, alpha, line_search_m, m_f,
+          std::sqrt(next_ctc), std::sqrt(next_gsetgse), merit_delta,
+          merit_delta / alpha, dm_f, dm_s, dm_c, dm_g, dm_aug, dm_dual);
     }
 
     ++total_ls_iterations;
@@ -1264,12 +1264,12 @@ auto do_line_search(const Input &input, const Settings &settings,
                             line_search_merit_slope * alpha;
     } else if (settings.barrier.use_predictor_corrector) {
       const bool skip_line_search =
-          merit_slope <= 0.0 && merit_slope >
-                                     settings.line_search
-                                         .min_merit_slope_to_skip_line_search;
+          merit_slope <= 0.0 &&
+          merit_slope >
+              settings.line_search.min_merit_slope_to_skip_line_search;
       accepted_without_filter =
           skip_line_search || merit_delta < settings.line_search.armijo_factor *
-                                                 merit_slope * alpha;
+                                                merit_slope * alpha;
     } else {
       accepted_without_filter =
           merit_slope >
@@ -1649,18 +1649,17 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
     }
 
     const double dual_proximal_residual =
-        proximal_rho * unscaled_max_difference(
-                           workspace.vars.x, workspace.proximal_centers.x,
-                           input.residual_scaling.dual, x_dim);
+        proximal_rho *
+        unscaled_max_difference(workspace.vars.x, workspace.proximal_centers.x,
+                                input.residual_scaling.dual, x_dim);
     const double primal_proximal_residual =
         proximal_delta *
-        std::max(
-            unscaled_max_difference(
-                workspace.vars.y, workspace.proximal_centers.y,
-                input.residual_scaling.equality, y_dim),
-            unscaled_max_difference(
-                workspace.vars.z, workspace.proximal_centers.z,
-                input.residual_scaling.inequality, s_dim));
+        std::max(unscaled_max_difference(
+                     workspace.vars.y, workspace.proximal_centers.y,
+                     input.residual_scaling.equality, y_dim),
+                 unscaled_max_difference(
+                     workspace.vars.z, workspace.proximal_centers.z,
+                     input.residual_scaling.inequality, s_dim));
     if (settings.barrier.use_predictor_corrector &&
         ((consecutive_primal_center_update_rejections >=
               settings.barrier
@@ -1734,8 +1733,7 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
           kkt_error);
     }
 
-    if (termination.stalled &&
-        !settings.barrier.use_predictor_corrector) {
+    if (termination.stalled && !settings.barrier.use_predictor_corrector) {
       ++num_consecutive_stalled_iterations;
     } else {
       num_consecutive_stalled_iterations = 0;
