@@ -322,25 +322,6 @@ struct VariablesWorkspace {
   }
 };
 
-struct ProximalCenterWorkspace {
-  // Center for the primal variables.
-  double *x;
-  // Center for the equality-constraint multipliers.
-  double *y;
-  // Center for the inequality-constraint multipliers.
-  double *z;
-
-  void reserve(int x_dim, int s_dim, int y_dim);
-  void free();
-
-  auto mem_assign(int x_dim, int s_dim, int y_dim, unsigned char *mem_ptr)
-      -> int;
-
-  static constexpr auto num_bytes(int x_dim, int s_dim, int y_dim) -> int {
-    return (x_dim + y_dim + s_dim) * sizeof(double);
-  }
-};
-
 struct MiscellaneousWorkspace {
   // Stores g(x) + s.
   double *g_plus_s;
@@ -440,7 +421,7 @@ struct Workspace {
   // The negative Newton-KKT RHS storage (for both primal and dual variables).
   VariablesWorkspace nrhs;
   // Proximal centers used by the predictor-corrector QP method.
-  ProximalCenterWorkspace proximal_centers;
+  VariablesWorkspace proximal_centers;
   // Stores miscellaneous items.
   MiscellaneousWorkspace miscellaneous_workspace;
   // Stores the workspace used in compute_search_direction.
@@ -465,7 +446,7 @@ struct Workspace {
     const int full_dim = kkt_dim + s_dim;
     const int proximal_centers_bytes =
         settings.proximal_qp.enabled
-            ? ProximalCenterWorkspace::num_bytes(x_dim, s_dim, y_dim)
+            ? VariablesWorkspace::num_bytes(x_dim, s_dim, y_dim)
             : 0;
     return 4 * VariablesWorkspace::num_bytes(x_dim, s_dim, y_dim) +
            proximal_centers_bytes + MiscellaneousWorkspace::num_bytes(s_dim) +
