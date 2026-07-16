@@ -874,12 +874,12 @@ auto compute_search_direction(const Input &input, const Settings &settings,
   double *bound_rs = workspace.nrhs.bound_s;
   double *bound_rz = workspace.nrhs.bound_z;
 
+  double *r1 = workspace.csd_workspace.r1;
   double *w = workspace.csd_workspace.w;
   double *r2 = workspace.csd_workspace.r2;
   double *r3 = workspace.csd_workspace.r3;
   double *bound_w = workspace.csd_workspace.bound_w;
   double *bound_r3 = workspace.csd_workspace.bound_r3;
-  double *bound_diagonal = workspace.csd_workspace.bound_diagonal;
   double *b = workspace.csd_workspace.rhs_block_3x3;
   double *residual = workspace.csd_workspace.residual;
   double *v = workspace.csd_workspace.sol_block_3x3;
@@ -903,9 +903,7 @@ auto compute_search_direction(const Input &input, const Settings &settings,
   for (int i = 0; i < s_dim; ++i) {
     r3[i] = 1.0 / workspace.penalties.z[i];
   }
-  if (num_bound_sides > 0) {
-    std::fill_n(bound_diagonal, x_dim, 0.0);
-  }
+  std::fill_n(r1, x_dim, psi);
   for_each_bound_side(
       input, workspace.bound_sides, num_bound_sides,
       [&](const int side_index, const int variable_index, const double,
@@ -915,7 +913,7 @@ auto compute_search_direction(const Input &input, const Settings &settings,
         bound_r3[side_index] = 1.0 / workspace.penalties.bound_z[side_index];
         bound_rs[side_index] = bound_z[side_index] - mu / bound_s[side_index];
         bound_rz[side_index] = bound_gps[side_index];
-        bound_diagonal[variable_index] +=
+        r1[variable_index] +=
             1.0 / (bound_w[side_index] + bound_r3[side_index]);
       });
 
@@ -923,13 +921,17 @@ auto compute_search_direction(const Input &input, const Settings &settings,
   bool factorization_ok = false;
   for (int attempt = 0; attempt < settings.regularization.max_attempts;
        ++attempt) {
-    factorization_ok = input.factor(w, psi, r2, r3, bound_diagonal);
+    factorization_ok = input.factor(w, r1, r2, r3);
     if (factorization_ok) {
       break;
     }
     const double next_psi = increased_regularization(settings, psi);
     if (next_psi <= psi || next_psi > settings.regularization.maximum) {
       break;
+    }
+    const double increase = next_psi - psi;
+    for (int i = 0; i < x_dim; ++i) {
+      r1[i] += increase;
     }
     psi = next_psi;
     ++num_regularization_increases;
@@ -1013,8 +1015,7 @@ auto compute_search_direction(const Input &input, const Settings &settings,
       residual[i] = -b[i];
     }
 
-    input.add_Kx_to_y(w, psi, r2, r3, bound_diagonal, vx, vy, vz, res_x, res_y,
-                      res_z);
+    input.add_Kx_to_y(w, r1, r2, r3, vx, vy, vz, res_x, res_y, res_z);
 
     input.solve(residual, u);
 
@@ -1127,8 +1128,7 @@ auto compute_search_direction(const Input &input, const Settings &settings,
       res_z[i] = -bz[i];
     }
 
-    input.add_Kx_to_y(w, psi, r2, r3, bound_diagonal, dx, dy, dz, res_x, res_y,
-                      res_z);
+    input.add_Kx_to_y(w, r1, r2, r3, dx, dy, dz, res_x, res_y, res_z);
 
     for (int i = 0; i < s_dim; ++i) {
       res_s[i] = ds[i] / w[i] + dz[i] + rs[i];

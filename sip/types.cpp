@@ -135,12 +135,12 @@ auto MiscellaneousWorkspace::mem_assign(int s_dim, int num_bound_sides,
 void ComputeSearchDirectionWorkspace::reserve(int x_dim, int s_dim, int y_dim,
                                               int num_bound_sides, int kkt_dim,
                                               int full_dim) {
+  r1 = new double[x_dim];
   w = new double[s_dim];
   r2 = new double[y_dim];
   r3 = new double[s_dim];
   bound_w = num_bound_sides > 0 ? new double[num_bound_sides] : nullptr;
   bound_r3 = num_bound_sides > 0 ? new double[num_bound_sides] : nullptr;
-  bound_diagonal = num_bound_sides > 0 ? new double[x_dim] : nullptr;
   rhs_block_3x3 = new double[kkt_dim];
   sol_block_3x3 = new double[kkt_dim];
   iterative_refinement_error_sol = new double[kkt_dim];
@@ -148,12 +148,12 @@ void ComputeSearchDirectionWorkspace::reserve(int x_dim, int s_dim, int y_dim,
 }
 
 void ComputeSearchDirectionWorkspace::free() {
+  delete[] r1;
   delete[] w;
   delete[] r2;
   delete[] r3;
   delete[] bound_w;
   delete[] bound_r3;
-  delete[] bound_diagonal;
   delete[] rhs_block_3x3;
   delete[] sol_block_3x3;
   delete[] iterative_refinement_error_sol;
@@ -167,6 +167,8 @@ auto ComputeSearchDirectionWorkspace::mem_assign(int x_dim, int s_dim,
     -> int {
   int cum_size = 0;
 
+  r1 = reinterpret_cast<decltype(r1)>(mem_ptr + cum_size);
+  cum_size += x_dim * sizeof(double);
   w = reinterpret_cast<decltype(w)>(mem_ptr + cum_size);
   cum_size += s_dim * sizeof(double);
   r2 = reinterpret_cast<decltype(r2)>(mem_ptr + cum_size);
@@ -181,11 +183,6 @@ auto ComputeSearchDirectionWorkspace::mem_assign(int x_dim, int s_dim,
                  ? reinterpret_cast<decltype(bound_r3)>(mem_ptr + cum_size)
                  : nullptr;
   cum_size += num_bound_sides * sizeof(double);
-  bound_diagonal =
-      num_bound_sides > 0
-          ? reinterpret_cast<decltype(bound_diagonal)>(mem_ptr + cum_size)
-          : nullptr;
-  cum_size += (num_bound_sides > 0 ? x_dim : 0) * sizeof(double);
   rhs_block_3x3 = reinterpret_cast<decltype(rhs_block_3x3)>(mem_ptr + cum_size);
   cum_size += kkt_dim * sizeof(double);
   sol_block_3x3 = reinterpret_cast<decltype(sol_block_3x3)>(mem_ptr + cum_size);

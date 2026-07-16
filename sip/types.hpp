@@ -187,29 +187,26 @@ struct Input {
   //       them as lambdas and wrapping them with std::cref.
 
   // NOTE: the factor/solve callbacks should solve Kv = b, where:
-  // 1. K = [ H + r1 I_x + diag(d)       C.T              G.T       ]
-  //        [           C            -diag(r2)             0        ]
-  //        [           G                 0       -diag(w + r3)     ]
+  // 1. K = [ H + diag(r1)      C.T             G.T     ]
+  //        [       C        -diag(r2)           0      ]
+  //        [       G             0       -diag(w + r3) ]
   // 2. w has s_dim positive entries;
-  // 3. r1, r2, r3 are non-negative regularization parameters;
-  //    r2 has length y_dim and r3 has length s_dim;
-  // 4. d contains diagonal contributions from eliminated variable bounds and
-  //    has length x_dim, or is null when there are no finite bound sides;
-  // 5. the callback should return whether the factorization succeeded and the
+  // 3. r1, r2, r3 contain non-negative diagonal shifts and have lengths x_dim,
+  //    y_dim, and s_dim, respectively;
+  // 4. the callback should return whether the factorization succeeded and the
   //    KKT matrix has the desired inertia.
   //
   // NOTE: the user is responsible for storing H, C, G on their side.
 
-  using FactorCallback =
-      std::function<bool(const double *w, const double r1, const double *r2,
-                         const double *r3, const double *bound_diagonal)>;
+  using FactorCallback = std::function<bool(
+      const double *w, const double *r1, const double *r2, const double *r3)>;
 
   using SolveCallback = std::function<void(const double *b, double *v)>;
 
   using Block3x3KKTProductCallback = std::function<void(
-      const double *w, const double r1, const double *r2, const double *r3,
-      const double *bound_diagonal, const double *x_x, const double *x_y,
-      const double *x_z, double *y_x, double *y_y, double *y_z)>;
+      const double *w, const double *r1, const double *r2, const double *r3,
+      const double *x_x, const double *x_y, const double *x_z, double *y_x,
+      double *y_y, double *y_z)>;
 
   using MatrixVectorMultiplicationCallback =
       std::function<void(const double *x, double *y)>;
@@ -325,6 +322,8 @@ struct MiscellaneousWorkspace {
 };
 
 struct ComputeSearchDirectionWorkspace {
+  // Stores the primal diagonal shifts.
+  double *r1;
   // Stores positive inequality-row diagonal values.
   double *w;
   // Stores the equality-constraint inverse penalty parameters.
@@ -335,8 +334,6 @@ struct ComputeSearchDirectionWorkspace {
   double *bound_w;
   // Stores the variable-bound inverse penalty parameters.
   double *bound_r3;
-  // Stores the diagonal contribution from eliminated variable bounds.
-  double *bound_diagonal;
   // The RHS of the reduced block-3x3 Newton-KKT system.
   double *rhs_block_3x3;
   // The solution of the reduced block-3x3 Newton-KKT system.
@@ -359,8 +356,8 @@ struct ComputeSearchDirectionWorkspace {
   static constexpr auto num_bytes(int x_dim, int s_dim, int y_dim,
                                   int num_bound_sides, int kkt_dim,
                                   int full_dim) -> int {
-    return ((num_bound_sides > 0 ? x_dim : 0) + 2 * s_dim + y_dim +
-            2 * num_bound_sides + 3 * kkt_dim + full_dim) *
+    return (x_dim + 2 * s_dim + y_dim + 2 * num_bound_sides + 3 * kkt_dim +
+            full_dim) *
            sizeof(double);
   }
 };
