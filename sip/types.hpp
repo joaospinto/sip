@@ -46,6 +46,9 @@ struct RegularizationSettings {
 };
 
 struct BarrierSettings {
+  // Use a Mehrotra predictor-corrector direction. This requires line searches
+  // to be disabled.
+  bool use_predictor_corrector = false;
   // A parameter of the merit function and descent direction computation.
   double initial_mu = 1e-3;
   // Determines how much mu decreases per iteration.

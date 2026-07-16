@@ -372,6 +372,7 @@ auto check_termination(const Settings &settings,
   const bool complementarity_satisfied =
       max_complementarity < settings.termination.max_complementarity_gap;
   const bool merit_slope_too_small =
+      !settings.barrier.use_predictor_corrector &&
       merit_slope > -settings.termination.max_merit_slope;
   const bool cost_change_ok =
       cost_change_satisfied(settings, previous_cost, current_cost);
@@ -944,7 +945,6 @@ auto compute_search_direction(const Input &input, const Settings &settings,
         bound_w[side_index] =
             std::clamp(bound_s[side_index] / bound_z[side_index], 1e-18, 1e18);
         bound_r3[side_index] = 1.0 / workspace.penalties.bound_z[side_index];
-        bound_rs[side_index] = bound_z[side_index] - mu / bound_s[side_index];
         bound_rz[side_index] = bound_gps[side_index];
         r1[variable_index] +=
             1.0 / (bound_w[side_index] + bound_r3[side_index]);
@@ -1010,79 +1010,123 @@ auto compute_search_direction(const Input &input, const Settings &settings,
   std::copy_n(c, y_dim, ry);
   std::copy_n(gps, s_dim, rz);
 
-  std::copy_n(rx, x_dim, bx);
-  std::copy_n(c, y_dim, by);
-
-  for (int i = 0; i < s_dim; ++i) {
-    rs[i] = z[i] - mu / s[i];
-    bz[i] = rz[i] - w[i] * rs[i];
-  }
-  for_each_bound_side(input, workspace.bound_sides, num_bound_sides,
-                      [&](const int side_index, const int variable_index,
-                          const double, const double jacobian) {
-                        const double denominator =
-                            bound_w[side_index] + bound_r3[side_index];
-                        bx[variable_index] +=
-                            jacobian *
-                            (bound_rz[side_index] -
-                             bound_w[side_index] * bound_rs[side_index]) /
-                            denominator;
-                      });
-
-  for (int i = 0; i < dim_3x3; ++i) {
-    b[i] = -b[i];
-  }
-
-  input.solve(b, v);
-
-  for (int j = 0; j < settings.num_iterative_refinement_steps; ++j) {
-    // We do an iterative refinement step:
-    // res = Kv - b
-    // Ku = res => Ku = Kv - b => K(v - u) = b
-
-    double *res_x = residual;
-    double *res_y = res_x + x_dim;
-    double *res_z = res_y + y_dim;
-
+  const auto solve_direction = [&](const double target_mu,
+                                   const double *affine_ds,
+                                   const double *affine_dz,
+                                   const double *affine_bound_ds,
+                                   const double *affine_bound_dz) {
+    std::copy_n(rx, x_dim, bx);
+    std::copy_n(c, y_dim, by);
+    for (int i = 0; i < s_dim; ++i) {
+      const double second_order =
+          affine_ds == nullptr ? 0.0 : affine_ds[i] * affine_dz[i];
+      rs[i] = z[i] - target_mu / s[i] + second_order / s[i];
+      bz[i] = rz[i] - w[i] * rs[i];
+    }
+    for_each_bound_side(
+        input, workspace.bound_sides, num_bound_sides,
+        [&](const int side_index, const int variable_index, const double,
+            const double jacobian) {
+          const double second_order =
+              affine_bound_ds == nullptr
+                  ? 0.0
+                  : affine_bound_ds[side_index] * affine_bound_dz[side_index];
+          bound_rs[side_index] = bound_z[side_index] -
+                                 target_mu / bound_s[side_index] +
+                                 second_order / bound_s[side_index];
+          const double denominator = bound_w[side_index] + bound_r3[side_index];
+          bx[variable_index] += jacobian *
+                                (bound_rz[side_index] -
+                                 bound_w[side_index] * bound_rs[side_index]) /
+                                denominator;
+        });
     for (int i = 0; i < dim_3x3; ++i) {
-      residual[i] = -b[i];
+      b[i] = -b[i];
+    }
+    input.solve(b, v);
+
+    for (int j = 0; j < settings.num_iterative_refinement_steps; ++j) {
+      // res = Kv - b; Ku = res; K(v - u) = b.
+      double *res_x = residual;
+      double *res_y = res_x + x_dim;
+      double *res_z = res_y + y_dim;
+      for (int i = 0; i < dim_3x3; ++i) {
+        residual[i] = -b[i];
+      }
+      input.add_Kx_to_y(w, r1, r2, r3, vx, vy, vz, res_x, res_y, res_z);
+      input.solve(residual, u);
+      for (int i = 0; i < dim_3x3; ++i) {
+        v[i] -= u[i];
+      }
     }
 
-    input.add_Kx_to_y(w, r1, r2, r3, vx, vy, vz, res_x, res_y, res_z);
+    auto solution = v;
+    std::copy_n(solution, x_dim, dx);
+    solution += x_dim;
+    std::copy_n(solution, y_dim, dy);
+    solution += y_dim;
+    std::copy_n(solution, s_dim, dz);
 
-    input.solve(residual, u);
-
-    for (int i = 0; i < dim_3x3; ++i) {
-      v[i] -= u[i];
+    for (int i = 0; i < s_dim; ++i) {
+      ds[i] = -w[i] * (dz[i] + rs[i]);
     }
-  }
+    for_each_bound_side(
+        input, workspace.bound_sides, num_bound_sides,
+        [&](const int side_index, const int variable_index, const double,
+            const double jacobian) {
+          const double denominator = bound_w[side_index] + bound_r3[side_index];
+          bound_dz[side_index] =
+              (jacobian * dx[variable_index] + bound_rz[side_index] -
+               bound_w[side_index] * bound_rs[side_index]) /
+              denominator;
+          bound_ds[side_index] = -bound_w[side_index] *
+                                 (bound_dz[side_index] + bound_rs[side_index]);
+        });
+  };
 
-  {
-    auto ptr = v;
-    std::copy_n(ptr, x_dim, dx);
-    ptr += x_dim;
-    std::copy_n(ptr, y_dim, dy);
-    ptr += y_dim;
-    std::copy_n(ptr, s_dim, dz);
-    ptr += s_dim;
-  }
+  const int complementarity_dim = s_dim + num_bound_sides;
+  if (settings.barrier.use_predictor_corrector && complementarity_dim > 0) {
+    solve_direction(0.0, nullptr, nullptr, nullptr, nullptr);
+    double *affine_ds = workspace.next_vars.s;
+    double *affine_dz = workspace.next_vars.z;
+    double *affine_bound_ds = workspace.next_vars.bound_s;
+    double *affine_bound_dz = workspace.next_vars.bound_z;
+    std::copy_n(ds, s_dim, affine_ds);
+    std::copy_n(dz, s_dim, affine_dz);
+    if (num_bound_sides > 0) {
+      std::copy_n(bound_ds, num_bound_sides, affine_bound_ds);
+      std::copy_n(bound_dz, num_bound_sides, affine_bound_dz);
+    }
 
-  for (int i = 0; i < s_dim; ++i) {
-    ds[i] = -w[i] * (dz[i] + rs[i]);
+    const double affine_alpha_s =
+        std::min(get_fraction_to_boundary_step(s_dim, 1.0, s, affine_ds),
+                 get_fraction_to_boundary_step(num_bound_sides, 1.0, bound_s,
+                                               affine_bound_ds));
+    const double affine_alpha_z =
+        std::min(get_fraction_to_boundary_step(s_dim, 1.0, z, affine_dz),
+                 get_fraction_to_boundary_step(num_bound_sides, 1.0, bound_z,
+                                               affine_bound_dz));
+    double current_mu =
+        dot(s, z, s_dim) + dot(bound_s, bound_z, num_bound_sides);
+    double affine_mu = 0.0;
+    for (int i = 0; i < s_dim; ++i) {
+      affine_mu += (s[i] + affine_alpha_s * affine_ds[i]) *
+                   (z[i] + affine_alpha_z * affine_dz[i]);
+    }
+    for (int i = 0; i < num_bound_sides; ++i) {
+      affine_mu += (bound_s[i] + affine_alpha_s * affine_bound_ds[i]) *
+                   (bound_z[i] + affine_alpha_z * affine_bound_dz[i]);
+    }
+    current_mu /= complementarity_dim;
+    affine_mu /= complementarity_dim;
+    const double ratio =
+        current_mu > 0.0 ? std::clamp(affine_mu / current_mu, 0.0, 1.0) : 0.0;
+    const double sigma = ratio * ratio * ratio;
+    solve_direction(sigma * current_mu, affine_ds, affine_dz, affine_bound_ds,
+                    affine_bound_dz);
+  } else {
+    solve_direction(mu, nullptr, nullptr, nullptr, nullptr);
   }
-  for_each_bound_side(
-      input, workspace.bound_sides, num_bound_sides,
-      [&](const int side_index, const int variable_index, const double,
-          const double jacobian) {
-        const double denominator = bound_w[side_index] + bound_r3[side_index];
-        bound_dz[side_index] =
-            (jacobian * dx[variable_index] + bound_rz[side_index] -
-             bound_w[side_index] * bound_rs[side_index]) /
-            denominator;
-        bound_ds[side_index] = -bound_w[side_index] *
-                               (bound_dz[side_index] + bound_rs[side_index]);
-      });
-
   const auto current_merit_slope =
       merit_slope(input, settings, workspace, mu, dx, ds, dy, dz);
 
@@ -1426,6 +1470,10 @@ auto check_settings(const Settings &settings) -> bool {
   if (uses_primal_center(settings.mode) && settings.line_search.tau == 1.0) {
     return false;
   }
+  if (settings.barrier.use_predictor_corrector &&
+      !settings.line_search.skip_line_search) {
+    return false;
+  }
   if (!is_finite_nonnegative(settings.barrier.initial_mu) ||
       !is_finite_nonnegative(settings.barrier.mu_update_factor) ||
       settings.barrier.mu_update_factor > 1.0 ||
@@ -1743,11 +1791,17 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
     bool ls_succeeded;
     double alpha, m0;
     if (settings.line_search.skip_line_search) {
-      alpha = uses_dual_center(settings.mode)
-                  ? std::min(alpha_s_max, alpha_z_max)
-                  : alpha_s_max;
-      update_next_primal_vars(input, tau, workspace, alpha, true, true);
-      update_next_dual_vars(input, tau, workspace, alpha, true, true);
+      if (settings.barrier.use_predictor_corrector) {
+        alpha = alpha_s_max;
+        update_next_primal_vars(input, tau, workspace, alpha_s_max, true, true);
+        update_next_dual_vars(input, tau, workspace, alpha_z_max, true, true);
+      } else {
+        alpha = uses_dual_center(settings.mode)
+                    ? std::min(alpha_s_max, alpha_z_max)
+                    : alpha_s_max;
+        update_next_primal_vars(input, tau, workspace, alpha, true, true);
+        update_next_dual_vars(input, tau, workspace, alpha, true, true);
+      }
       ls_succeeded = true;
       m0 = 0.0;
     } else {
