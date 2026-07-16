@@ -71,6 +71,17 @@ struct PenaltySettings {
   double max_penalty_parameter = 1e9;
 };
 
+struct DualRegularizationSettings {
+  // The initial regularization coefficient on the dual KKT blocks.
+  double initial = 1e-3;
+  // Whether to preserve externally initialized regularization vectors.
+  bool warm_start = false;
+  // The smallest regularization coefficient used by the proximal mode.
+  double minimum = 1e-12;
+  // The multiplicative decrease when the corresponding AL penalty increases.
+  double decrease_factor = 0.5;
+};
+
 struct TerminationSettings {
   // The maximum allowed dual optimality residual.
   double max_dual_residual = 1e-8;
@@ -153,6 +164,8 @@ struct Settings {
   BarrierSettings barrier;
   // Settings for penalty parameter updates.
   PenaltySettings penalty;
+  // Settings for centered dual-proximal regularization.
+  DualRegularizationSettings dual_regularization;
   // Settings for termination and status classification.
   TerminationSettings termination;
   // Settings for inertia-correction x-regularization.
@@ -334,10 +347,10 @@ struct ComputeSearchDirectionWorkspace {
   }
 };
 
-struct PenaltyParameterWorkspace {
-  // Equality-constraint penalty parameters.
+struct ConstraintVectorWorkspace {
+  // Entries associated with equality constraints.
   double *y;
-  // Inequality-constraint penalty parameters.
+  // Entries associated with inequality constraints.
   double *z;
 
   // To dynamically allocate the required memory.
@@ -389,7 +402,9 @@ struct Workspace {
   // Stores the workspace used in compute_search_direction.
   ComputeSearchDirectionWorkspace csd_workspace;
   // Stores equality and inequality penalty parameters.
-  PenaltyParameterWorkspace penalties;
+  ConstraintVectorWorkspace penalties;
+  // Stores equality and inequality dual regularization coefficients.
+  ConstraintVectorWorkspace dual_regularization;
   // Stores the line-search filter entries.
   FilterWorkspace filter;
 
@@ -410,7 +425,7 @@ struct Workspace {
            MiscellaneousWorkspace::num_bytes(s_dim) +
            ComputeSearchDirectionWorkspace::num_bytes(s_dim, y_dim, kkt_dim,
                                                       full_dim) +
-           PenaltyParameterWorkspace::num_bytes(s_dim, y_dim) +
+           2 * ConstraintVectorWorkspace::num_bytes(s_dim, y_dim) +
            FilterWorkspace::num_bytes(filter_capacity(settings));
   }
 
