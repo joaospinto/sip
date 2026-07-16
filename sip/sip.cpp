@@ -145,20 +145,21 @@ auto merit_function(const Input &input, const Settings &settings,
     aug_term = 0.0;
     for (int i = 0; i < y_dim; ++i) {
       const double eta = workspace.penalties.y[i];
+      const double delta = workspace.dual_regularization.y[i];
       const double regularized_residual =
-          c[i] - (y[i] - workspace.vars.y[i]) / eta;
+          c[i] - delta * (y[i] - workspace.vars.y[i]);
       c_term += workspace.vars.y[i] * c[i];
-      aug_term += 0.5 * eta *
-                  (c[i] * c[i] + regularized_residual * regularized_residual);
+      aug_term += 0.5 * (c[i] * c[i] / delta +
+                         eta * regularized_residual * regularized_residual);
     }
     for (int i = 0; i < s_dim; ++i) {
       const double eta = workspace.penalties.z[i];
+      const double delta = workspace.dual_regularization.z[i];
       const double regularized_residual =
-          g_plus_s[i] - (z[i] - workspace.vars.z[i]) / eta;
+          g_plus_s[i] - delta * (z[i] - workspace.vars.z[i]);
       g_term += workspace.vars.z[i] * g_plus_s[i];
-      aug_term += 0.5 * eta *
-                  (g_plus_s[i] * g_plus_s[i] +
-                   regularized_residual * regularized_residual);
+      aug_term += 0.5 * (g_plus_s[i] * g_plus_s[i] / delta +
+                         eta * regularized_residual * regularized_residual);
     }
   } else {
     c_term = dot(c, y, y_dim);
@@ -395,6 +396,12 @@ auto update_penalty_parameters(const Input &input, const Settings &settings,
           std::min(workspace.penalties.y[i] *
                        settings.penalty.penalty_parameter_increase_factor,
                    settings.penalty.max_penalty_parameter);
+      if (uses_dual_center(settings.mode)) {
+        workspace.dual_regularization.y[i] =
+            std::max(workspace.dual_regularization.y[i] *
+                         settings.dual_regularization.decrease_factor,
+                     settings.dual_regularization.minimum);
+      }
       any_increased = true;
     } else {
       workspace.penalties.y[i] =
@@ -412,6 +419,12 @@ auto update_penalty_parameters(const Input &input, const Settings &settings,
           std::min(workspace.penalties.z[i] *
                        settings.penalty.penalty_parameter_increase_factor,
                    settings.penalty.max_penalty_parameter);
+      if (uses_dual_center(settings.mode)) {
+        workspace.dual_regularization.z[i] =
+            std::max(workspace.dual_regularization.z[i] *
+                         settings.dual_regularization.decrease_factor,
+                     settings.dual_regularization.minimum);
+      }
       any_increased = true;
     } else {
       workspace.penalties.z[i] =
@@ -750,14 +763,16 @@ auto merit_slope(const Input &input, const Settings &settings,
     double y_slope = 0.0;
     for (int i = 0; i < y_dim; ++i) {
       const double eta = workspace.penalties.y[i];
-      multiplier_y[i] = workspace.vars.y[i] + 2.0 * eta * c[i];
-      y_slope -= c[i] * dy[i];
+      const double delta = workspace.dual_regularization.y[i];
+      multiplier_y[i] = workspace.vars.y[i] + (1.0 / delta + eta) * c[i];
+      y_slope -= eta * delta * c[i] * dy[i];
     }
     double z_slope = 0.0;
     for (int i = 0; i < s_dim; ++i) {
       const double eta = workspace.penalties.z[i];
-      multiplier_z[i] = workspace.vars.z[i] + 2.0 * eta * gps[i];
-      z_slope -= gps[i] * dz[i];
+      const double delta = workspace.dual_regularization.z[i];
+      multiplier_z[i] = workspace.vars.z[i] + (1.0 / delta + eta) * gps[i];
+      z_slope -= eta * delta * gps[i] * dz[i];
     }
     input.add_CTx_to_y(multiplier_y, gradient_x);
     input.add_GTx_to_y(multiplier_z, gradient_x);
@@ -855,10 +870,16 @@ auto compute_search_direction(const Input &input, const Settings &settings,
     w[i] = use_proximal_qp ? s[i] / z[i] : std::clamp(s[i] / z[i], 1e-18, 1e18);
   }
   for (int i = 0; i < y_dim; ++i) {
-    r2[i] = use_proximal_qp ? proximal_delta : 1.0 / workspace.penalties.y[i];
+    r2[i] = use_proximal_qp ? proximal_delta
+                            : (uses_dual_center(settings.mode)
+                                   ? workspace.dual_regularization.y[i]
+                                   : 1.0 / workspace.penalties.y[i]);
   }
   for (int i = 0; i < s_dim; ++i) {
-    r3[i] = use_proximal_qp ? proximal_delta : 1.0 / workspace.penalties.z[i];
+    r3[i] = use_proximal_qp ? proximal_delta
+                            : (uses_dual_center(settings.mode)
+                                   ? workspace.dual_regularization.z[i]
+                                   : 1.0 / workspace.penalties.z[i]);
   }
 
   int num_regularization_increases = 0;
@@ -1344,8 +1365,7 @@ auto check_settings(const Settings &settings) -> bool {
       settings.line_search.tau > 1.0) {
     return false;
   }
-  if (uses_proximal_center(settings.mode) &&
-      settings.line_search.tau == 1.0) {
+  if (uses_proximal_center(settings.mode) && settings.line_search.tau == 1.0) {
     return false;
   }
   if (uses_proximal_qp(settings.mode) &&
@@ -1384,6 +1404,14 @@ auto check_settings(const Settings &settings) -> bool {
       !is_finite_positive(settings.penalty.max_penalty_parameter) ||
       settings.penalty.max_penalty_parameter <
           settings.penalty.initial_penalty_parameter) {
+    return false;
+  }
+  if (!is_finite_positive(settings.dual_regularization.initial) ||
+      !is_finite_positive(settings.dual_regularization.minimum) ||
+      settings.dual_regularization.minimum >
+          settings.dual_regularization.initial ||
+      !is_finite_positive(settings.dual_regularization.decrease_factor) ||
+      settings.dual_regularization.decrease_factor > 1.0) {
     return false;
   }
   if (!is_finite_nonnegative(settings.line_search.armijo_factor) ||
@@ -1609,6 +1637,12 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
                 settings.penalty.initial_penalty_parameter);
     std::fill_n(workspace.penalties.z, s_dim,
                 settings.penalty.initial_penalty_parameter);
+  }
+  if (!settings.dual_regularization.warm_start) {
+    std::fill_n(workspace.dual_regularization.y, y_dim,
+                settings.dual_regularization.initial);
+    std::fill_n(workspace.dual_regularization.z, s_dim,
+                settings.dual_regularization.initial);
   }
 
   double mu = settings.barrier.initial_mu;
