@@ -24,8 +24,62 @@ constexpr auto uses_dual_center(const Mode mode) -> bool {
   return mode == Mode::PRIMAL_DUAL_PROXIMAL_IPM;
 }
 
+template <typename Callback>
+void for_each_bound_side(const Input &input, const int *bound_sides,
+                         const int num_bound_sides, Callback &&callback) {
+  for (int side_index = 0; side_index < num_bound_sides; ++side_index) {
+    const int encoded_side = bound_sides[side_index];
+    const int variable_index = encoded_side / 2;
+    const bool is_upper = encoded_side % 2 != 0;
+    const double endpoint = is_upper ? input.upper_bounds[variable_index]
+                                     : input.lower_bounds[variable_index];
+    const double jacobian = is_upper ? 1.0 : -1.0;
+    callback(side_index, variable_index, endpoint, jacobian);
+  }
+}
+
+auto initialize_bound_sides(const Input &input, int *bound_sides) -> int {
+  if (input.lower_bounds == nullptr && input.upper_bounds == nullptr) {
+    return 0;
+  }
+  int side_index = 0;
+  for (int variable_index = 0; variable_index < input.dimensions.x_dim;
+       ++variable_index) {
+    if (input.lower_bounds != nullptr &&
+        std::isfinite(input.lower_bounds[variable_index])) {
+      bound_sides[side_index] = 2 * variable_index;
+      ++side_index;
+    }
+    if (input.upper_bounds != nullptr &&
+        std::isfinite(input.upper_bounds[variable_index])) {
+      bound_sides[side_index] = 2 * variable_index + 1;
+      ++side_index;
+    }
+  }
+  return side_index;
+}
+
+auto bound_constraint_value(const double x, const double endpoint,
+                            const double jacobian) -> double {
+  return jacobian * (x - endpoint);
+}
+
+void set_bound_residuals(const Input &input, const double *x,
+                         const double *bound_s, const int *bound_sides,
+                         const int num_bound_sides, double *bound_g_plus_s) {
+  for_each_bound_side(input, bound_sides, num_bound_sides,
+                      [&](const int side_index, const int variable_index,
+                          const double endpoint, const double jacobian) {
+                        bound_g_plus_s[side_index] =
+                            bound_constraint_value(x[variable_index], endpoint,
+                                                   jacobian) +
+                            bound_s[side_index];
+                      });
+}
+
 auto mean_penalty_parameter(const Workspace &workspace, const int s_dim,
-                            const int y_dim) -> double {
+                            const int y_dim, const int num_bound_sides)
+    -> double {
   double sum = 0.0;
   for (int i = 0; i < y_dim; ++i) {
     sum += workspace.penalties.y[i];
@@ -33,27 +87,45 @@ auto mean_penalty_parameter(const Workspace &workspace, const int s_dim,
   for (int i = 0; i < s_dim; ++i) {
     sum += workspace.penalties.z[i];
   }
-  const int dim = s_dim + y_dim;
+  for (int i = 0; i < num_bound_sides; ++i) {
+    sum += workspace.penalties.bound_z[i];
+  }
+  const int dim = s_dim + y_dim + num_bound_sides;
   return dim == 0 ? 0.0 : sum / dim;
 }
 
-auto max_primal_violation(const Input &input) -> double {
+auto max_primal_violation(const Input &input, const Workspace &workspace,
+                          const int num_bound_sides, const double *x)
+    -> double {
   const int s_dim = input.dimensions.s_dim;
   const int y_dim = input.dimensions.y_dim;
-  return std::max(max_abs_or_inf(input.get_c(), y_dim),
-                  max_positive_or_inf(input.get_g(), s_dim));
+  double result = std::max(max_abs_or_inf(input.get_c(), y_dim),
+                           max_positive_or_inf(input.get_g(), s_dim));
+  for_each_bound_side(input, workspace.bound_sides, num_bound_sides,
+                      [&](const int, const int variable_index,
+                          const double endpoint, const double jacobian) {
+                        const double violation = bound_constraint_value(
+                            x[variable_index], endpoint, jacobian);
+                        result = std::isnan(violation)
+                                     ? std::numeric_limits<double>::infinity()
+                                     : std::max(result, violation);
+                      });
+  return result;
 }
 
 auto merit_function(const Input &input, const Settings &settings,
                     const Workspace &workspace, const double *x,
                     const double *s, const double *y, const double *z,
-                    const double *g_plus_s, const double mu, const double psi)
+                    const double *bound_s, const double *bound_z,
+                    const double *g_plus_s, const double *bound_g_plus_s,
+                    const double mu, const double psi)
     -> std::tuple<double, double, double, double, double, double> {
   const int x_dim = input.dimensions.x_dim;
   const int s_dim = input.dimensions.s_dim;
   const int y_dim = input.dimensions.y_dim;
+  const int num_bound_sides = workspace.num_bound_sides;
   const double *c = input.get_c();
-  const double s_term = -mu * sum_of_logs(s, s_dim);
+  double s_term = -mu * sum_of_logs(s, s_dim);
   double c_term;
   double g_term;
   double aug_term;
@@ -81,12 +153,25 @@ auto merit_function(const Input &input, const Settings &settings,
                   (g_plus_s[i] * g_plus_s[i] +
                    regularized_residual * regularized_residual);
     }
+    for (int i = 0; i < num_bound_sides; ++i) {
+      const double eta = workspace.penalties.bound_z[i];
+      const double regularized_residual =
+          bound_g_plus_s[i] - (bound_z[i] - workspace.vars.bound_z[i]) / eta;
+      g_term += workspace.vars.bound_z[i] * bound_g_plus_s[i];
+      aug_term += 0.5 * eta *
+                  (bound_g_plus_s[i] * bound_g_plus_s[i] +
+                   regularized_residual * regularized_residual);
+    }
   } else {
     c_term = dot(c, y, y_dim);
     g_term = dot(g_plus_s, z, s_dim);
     aug_term =
         0.5 * (weighted_squared_norm(c, workspace.penalties.y, y_dim) +
                weighted_squared_norm(g_plus_s, workspace.penalties.z, s_dim));
+    g_term += dot(bound_g_plus_s, bound_z, num_bound_sides);
+    aug_term +=
+        0.5 * weighted_squared_norm(bound_g_plus_s, workspace.penalties.bound_z,
+                                    num_bound_sides);
   }
 
   if (uses_primal_center(settings.mode)) {
@@ -95,6 +180,8 @@ auto merit_function(const Input &input, const Settings &settings,
       aug_term += 0.5 * psi * displacement * displacement;
     }
   }
+
+  s_term -= mu * sum_of_logs(bound_s, num_bound_sides);
 
   const double barrier_lagrangian = input.get_f() + s_term + c_term + g_term;
   const double merit = barrier_lagrangian + aug_term;
@@ -277,48 +364,39 @@ auto update_penalty_parameters(const Input &input, const Settings &settings,
                                Workspace &workspace) -> bool {
   const int s_dim = input.dimensions.s_dim;
   const int y_dim = input.dimensions.y_dim;
+  const int num_bound_sides = workspace.num_bound_sides;
   bool any_increased = false;
 
   const double *old_c = workspace.nrhs.y;
   const double *old_gps = workspace.nrhs.z;
+  const double *old_bound_gps = workspace.nrhs.bound_z;
   const double *new_c = input.get_c();
   const double *new_gps = workspace.miscellaneous_workspace.g_plus_s;
+  const double *new_bound_gps =
+      workspace.miscellaneous_workspace.bound_g_plus_s;
   const double min_ratio =
       settings.penalty.min_acceptable_constraint_violation_ratio;
 
-  for (int i = 0; i < y_dim; ++i) {
-    const double improvement_ratio =
-        new_c[i] * new_c[i] / std::max(old_c[i] * old_c[i], 1e-12);
-    if (improvement_ratio > min_ratio) {
-      workspace.penalties.y[i] =
-          std::min(workspace.penalties.y[i] *
-                       settings.penalty.penalty_parameter_increase_factor,
-                   settings.penalty.max_penalty_parameter);
-      any_increased = true;
-    } else {
-      workspace.penalties.y[i] =
-          std::min(workspace.penalties.y[i] *
-                       settings.penalty.penalty_parameter_decrease_factor,
-                   settings.penalty.max_penalty_parameter);
+  const auto update = [&](const double *old_residual,
+                          const double *new_residual, double *penalty,
+                          const int size) {
+    for (int i = 0; i < size; ++i) {
+      const double improvement_ratio =
+          new_residual[i] * new_residual[i] /
+          std::max(old_residual[i] * old_residual[i], 1e-12);
+      const double factor =
+          improvement_ratio > min_ratio
+              ? settings.penalty.penalty_parameter_increase_factor
+              : settings.penalty.penalty_parameter_decrease_factor;
+      penalty[i] =
+          std::min(penalty[i] * factor, settings.penalty.max_penalty_parameter);
+      any_increased |= improvement_ratio > min_ratio;
     }
-  }
-
-  for (int i = 0; i < s_dim; ++i) {
-    const double improvement_ratio =
-        new_gps[i] * new_gps[i] / std::max(old_gps[i] * old_gps[i], 1e-12);
-    if (improvement_ratio > min_ratio) {
-      workspace.penalties.z[i] =
-          std::min(workspace.penalties.z[i] *
-                       settings.penalty.penalty_parameter_increase_factor,
-                   settings.penalty.max_penalty_parameter);
-      any_increased = true;
-    } else {
-      workspace.penalties.z[i] =
-          std::min(workspace.penalties.z[i] *
-                       settings.penalty.penalty_parameter_decrease_factor,
-                   settings.penalty.max_penalty_parameter);
-    }
-  }
+  };
+  update(old_c, new_c, workspace.penalties.y, y_dim);
+  update(old_gps, new_gps, workspace.penalties.z, s_dim);
+  update(old_bound_gps, new_bound_gps, workspace.penalties.bound_z,
+         num_bound_sides);
 
   return any_increased;
 }
@@ -328,6 +406,7 @@ void update_next_primal_vars(const Input &input, const double tau,
                              const bool update_x, const bool update_s) {
   const int x_dim = input.dimensions.x_dim;
   const int s_dim = input.dimensions.s_dim;
+  const int num_bound_sides = workspace.num_bound_sides;
 
   if (update_x) {
     for (int i = 0; i < x_dim; ++i) {
@@ -354,12 +433,24 @@ void update_next_primal_vars(const Input &input, const double tau,
           std::max(workspace.vars.s[i] + alpha * workspace.delta_vars.s[i],
                    (1.0 - tau) * workspace.vars.s[i]);
     }
+    for (int i = 0; i < num_bound_sides; ++i) {
+      workspace.next_vars.bound_s[i] = std::max(
+          workspace.vars.bound_s[i] + alpha * workspace.delta_vars.bound_s[i],
+          (1.0 - tau) * workspace.vars.bound_s[i]);
+    }
   } else {
     std::copy_n(workspace.vars.s, s_dim, workspace.next_vars.s);
+    if (num_bound_sides > 0) {
+      std::copy_n(workspace.vars.bound_s, num_bound_sides,
+                  workspace.next_vars.bound_s);
+    }
   }
 
   add(input.get_g(), workspace.next_vars.s, s_dim,
       workspace.miscellaneous_workspace.g_plus_s);
+  set_bound_residuals(input, workspace.next_vars.x, workspace.next_vars.bound_s,
+                      workspace.bound_sides, num_bound_sides,
+                      workspace.miscellaneous_workspace.bound_g_plus_s);
 }
 
 void update_next_dual_vars(const Input &input, const double tau,
@@ -367,6 +458,7 @@ void update_next_dual_vars(const Input &input, const double tau,
                            const bool update_y, const bool update_z) {
   const int s_dim = input.dimensions.s_dim;
   const int y_dim = input.dimensions.y_dim;
+  const int num_bound_sides = workspace.num_bound_sides;
 
   if (update_y) {
     for (int i = 0; i < y_dim; ++i) {
@@ -384,8 +476,18 @@ void update_next_dual_vars(const Input &input, const double tau,
       workspace.next_vars.z[i] =
           std::max(next_z, (1.0 - tau) * workspace.vars.z[i]);
     }
+    for (int i = 0; i < num_bound_sides; ++i) {
+      const double next_bound_z =
+          workspace.vars.bound_z[i] + alpha * workspace.delta_vars.bound_z[i];
+      workspace.next_vars.bound_z[i] =
+          std::max(next_bound_z, (1.0 - tau) * workspace.vars.bound_z[i]);
+    }
   } else {
     std::copy_n(workspace.vars.z, s_dim, workspace.next_vars.z);
+    if (num_bound_sides > 0) {
+      std::copy_n(workspace.vars.bound_z, num_bound_sides,
+                  workspace.next_vars.bound_z);
+    }
   }
 
   ModelCallbackInput mci{
@@ -554,7 +656,7 @@ auto check_derivatives(const Input &input, const Settings &settings,
     check_direction(std::nullopt);
   } else {
     VariablesWorkspace delta_vars_tmp;
-    delta_vars_tmp.reserve(x_dim, s_dim, y_dim);
+    delta_vars_tmp.reserve(x_dim, s_dim, y_dim, workspace.num_bound_sides);
     std::swap(delta_vars_tmp, workspace.delta_vars);
     std::fill_n(workspace.delta_vars.x, x_dim, 0.0);
     for (int jj = 0; jj < x_dim; ++jj) {
@@ -590,10 +692,13 @@ auto get_observed_merit_slope(const Input &input, const Settings &settings,
       }
       const double *y = update_y ? workspace.next_vars.y : workspace.vars.y;
       const double *z = update_z ? workspace.next_vars.z : workspace.vars.z;
-      const auto [_mP_f, _mP_s, _mP_c, _mP_g, _mP_aug, mP] =
-          merit_function(input, settings, workspace, workspace.next_vars.x,
-                         workspace.next_vars.s, y, z,
-                         workspace.miscellaneous_workspace.g_plus_s, mu, psi);
+      const double *bound_z =
+          update_z ? workspace.next_vars.bound_z : workspace.vars.bound_z;
+      const auto [_mP_f, _mP_s, _mP_c, _mP_g, _mP_aug, mP] = merit_function(
+          input, settings, workspace, workspace.next_vars.x,
+          workspace.next_vars.s, y, z, workspace.next_vars.bound_s, bound_z,
+          workspace.miscellaneous_workspace.g_plus_s,
+          workspace.miscellaneous_workspace.bound_g_plus_s, mu, psi);
       return mP;
     };
 
@@ -632,13 +737,18 @@ auto merit_slope(const Input &input, const Settings &settings,
   const int x_dim = input.dimensions.x_dim;
   const int s_dim = input.dimensions.s_dim;
   const int y_dim = input.dimensions.y_dim;
+  const int num_bound_sides = workspace.num_bound_sides;
   const double *c = input.get_c();
   const double *gps = workspace.miscellaneous_workspace.g_plus_s;
+  const double *bound_gps = workspace.miscellaneous_workspace.bound_g_plus_s;
+  const double *bound_ds = workspace.delta_vars.bound_s;
+  const double *bound_dz = workspace.delta_vars.bound_z;
 
   if (uses_dual_center(settings.mode)) {
     double *gradient_x = workspace.next_vars.x;
     double *multiplier_y = workspace.next_vars.y;
     double *multiplier_z = workspace.next_vars.z;
+    double *multiplier_bound_z = workspace.next_vars.bound_z;
 
     std::copy_n(input.get_grad_f(), x_dim, gradient_x);
     double y_slope = 0.0;
@@ -653,13 +763,29 @@ auto merit_slope(const Input &input, const Settings &settings,
       multiplier_z[i] = workspace.vars.z[i] + 2.0 * eta * gps[i];
       z_slope -= gps[i] * dz[i];
     }
+    for (int i = 0; i < num_bound_sides; ++i) {
+      const double eta = workspace.penalties.bound_z[i];
+      multiplier_bound_z[i] =
+          workspace.vars.bound_z[i] + 2.0 * eta * bound_gps[i];
+      z_slope -= bound_gps[i] * bound_dz[i];
+    }
     input.add_CTx_to_y(multiplier_y, gradient_x);
     input.add_GTx_to_y(multiplier_z, gradient_x);
+    for_each_bound_side(input, workspace.bound_sides, num_bound_sides,
+                        [&](const int side_index, const int variable_index,
+                            const double, const double jacobian) {
+                          gradient_x[variable_index] +=
+                              jacobian * multiplier_bound_z[side_index];
+                        });
 
     const double x_slope = dot(gradient_x, dx, x_dim);
     double s_slope = 0.0;
     for (int i = 0; i < s_dim; ++i) {
       s_slope += (multiplier_z[i] - mu / workspace.vars.s[i]) * ds[i];
+    }
+    for (int i = 0; i < num_bound_sides; ++i) {
+      s_slope += (multiplier_bound_z[i] - mu / workspace.vars.bound_s[i]) *
+                 bound_ds[i];
     }
     return {.x = x_slope,
             .s = s_slope,
@@ -670,6 +796,7 @@ auto merit_slope(const Input &input, const Settings &settings,
 
   double *tmp_y = workspace.next_vars.y;
   double *tmp_s = workspace.next_vars.s;
+  double *tmp_bound_s = workspace.next_vars.bound_s;
 
   std::fill_n(tmp_y, y_dim, 0.0);
   input.add_Cx_to_y(dx, tmp_y);
@@ -677,11 +804,23 @@ auto merit_slope(const Input &input, const Settings &settings,
   std::fill_n(tmp_s, s_dim, 0.0);
   input.add_Gx_to_y(dx, tmp_s);
 
+  for_each_bound_side(input, workspace.bound_sides, num_bound_sides,
+                      [&](const int side_index, const int variable_index,
+                          const double, const double jacobian) {
+                        tmp_bound_s[side_index] = jacobian * dx[variable_index];
+                      });
+
   double x_slope = dot(workspace.nrhs.x, dx, x_dim) +
                    weighted_dot(c, workspace.penalties.y, tmp_y, y_dim) +
-                   weighted_dot(gps, workspace.penalties.z, tmp_s, s_dim);
-  const double s_slope = dot(workspace.nrhs.s, ds, s_dim) +
-                         weighted_dot(gps, workspace.penalties.z, ds, s_dim);
+                   weighted_dot(gps, workspace.penalties.z, tmp_s, s_dim) +
+                   weighted_dot(bound_gps, workspace.penalties.bound_z,
+                                tmp_bound_s, num_bound_sides);
+  const double s_slope =
+      dot(workspace.nrhs.s, ds, s_dim) +
+      weighted_dot(gps, workspace.penalties.z, ds, s_dim) +
+      dot(workspace.nrhs.bound_s, bound_ds, num_bound_sides) +
+      weighted_dot(bound_gps, workspace.penalties.bound_z, bound_ds,
+                   num_bound_sides);
 
   return {.x = x_slope,
           .s = s_slope,
@@ -699,6 +838,7 @@ auto compute_search_direction(const Input &input, const Settings &settings,
   const int x_dim = input.dimensions.x_dim;
   const int s_dim = input.dimensions.s_dim;
   const int y_dim = input.dimensions.y_dim;
+  const int num_bound_sides = workspace.num_bound_sides;
   const int dim_3x3 = x_dim + s_dim + y_dim;
 
   double dual_residual = 0.0;
@@ -711,25 +851,35 @@ auto compute_search_direction(const Input &input, const Settings &settings,
   const double *s = workspace.vars.s;
   const double *y = workspace.vars.y;
   const double *z = workspace.vars.z;
+  const double *bound_s = workspace.vars.bound_s;
+  const double *bound_z = workspace.vars.bound_z;
 
   const double *grad_f = input.get_grad_f();
 
   const double *c = input.get_c();
   const double *gps = workspace.miscellaneous_workspace.g_plus_s;
+  const double *bound_gps = workspace.miscellaneous_workspace.bound_g_plus_s;
 
   double *dx = workspace.delta_vars.x;
   double *ds = workspace.delta_vars.s;
   double *dy = workspace.delta_vars.y;
   double *dz = workspace.delta_vars.z;
+  double *bound_ds = workspace.delta_vars.bound_s;
+  double *bound_dz = workspace.delta_vars.bound_z;
 
   double *rx = workspace.nrhs.x;
   double *rs = workspace.nrhs.s;
   double *ry = workspace.nrhs.y;
   double *rz = workspace.nrhs.z;
+  double *bound_rs = workspace.nrhs.bound_s;
+  double *bound_rz = workspace.nrhs.bound_z;
 
   double *w = workspace.csd_workspace.w;
   double *r2 = workspace.csd_workspace.r2;
   double *r3 = workspace.csd_workspace.r3;
+  double *bound_w = workspace.csd_workspace.bound_w;
+  double *bound_r3 = workspace.csd_workspace.bound_r3;
+  double *bound_diagonal = workspace.csd_workspace.bound_diagonal;
   double *b = workspace.csd_workspace.rhs_block_3x3;
   double *residual = workspace.csd_workspace.residual;
   double *v = workspace.csd_workspace.sol_block_3x3;
@@ -753,12 +903,27 @@ auto compute_search_direction(const Input &input, const Settings &settings,
   for (int i = 0; i < s_dim; ++i) {
     r3[i] = 1.0 / workspace.penalties.z[i];
   }
+  if (num_bound_sides > 0) {
+    std::fill_n(bound_diagonal, x_dim, 0.0);
+  }
+  for_each_bound_side(
+      input, workspace.bound_sides, num_bound_sides,
+      [&](const int side_index, const int variable_index, const double,
+          const double) {
+        bound_w[side_index] =
+            std::clamp(bound_s[side_index] / bound_z[side_index], 1e-18, 1e18);
+        bound_r3[side_index] = 1.0 / workspace.penalties.bound_z[side_index];
+        bound_rs[side_index] = bound_z[side_index] - mu / bound_s[side_index];
+        bound_rz[side_index] = bound_gps[side_index];
+        bound_diagonal[variable_index] +=
+            1.0 / (bound_w[side_index] + bound_r3[side_index]);
+      });
 
   int num_regularization_increases = 0;
   bool factorization_ok = false;
   for (int attempt = 0; attempt < settings.regularization.max_attempts;
        ++attempt) {
-    factorization_ok = input.factor(w, psi, r2, r3);
+    factorization_ok = input.factor(w, psi, r2, r3, bound_diagonal);
     if (factorization_ok) {
       break;
     }
@@ -783,11 +948,24 @@ auto compute_search_direction(const Input &input, const Settings &settings,
 
   input.add_CTx_to_y(y, rx);
   input.add_GTx_to_y(z, rx);
+  for_each_bound_side(input, workspace.bound_sides, num_bound_sides,
+                      [&](const int side_index, const int variable_index,
+                          const double, const double jacobian) {
+                        rx[variable_index] += jacobian * bound_z[side_index];
+                      });
 
   if (std::isfinite(settings.termination.max_duality_gap)) {
     const double *g = input.get_g();
     duality_gap =
         dot(workspace.vars.x, rx, x_dim) - dot(c, y, y_dim) - dot(g, z, s_dim);
+    for_each_bound_side(input, workspace.bound_sides, num_bound_sides,
+                        [&](const int side_index, const int variable_index,
+                            const double endpoint, const double jacobian) {
+                          duality_gap -= bound_constraint_value(
+                                             workspace.vars.x[variable_index],
+                                             endpoint, jacobian) *
+                                         bound_z[side_index];
+                        });
     duality_gap = std::fabs(duality_gap);
     if (std::isnan(duality_gap)) {
       duality_gap = std::numeric_limits<double>::infinity();
@@ -804,6 +982,17 @@ auto compute_search_direction(const Input &input, const Settings &settings,
     rs[i] = z[i] - mu / s[i];
     bz[i] = rz[i] - w[i] * rs[i];
   }
+  for_each_bound_side(input, workspace.bound_sides, num_bound_sides,
+                      [&](const int side_index, const int variable_index,
+                          const double, const double jacobian) {
+                        const double denominator =
+                            bound_w[side_index] + bound_r3[side_index];
+                        bx[variable_index] +=
+                            jacobian *
+                            (bound_rz[side_index] -
+                             bound_w[side_index] * bound_rs[side_index]) /
+                            denominator;
+                      });
 
   for (int i = 0; i < dim_3x3; ++i) {
     b[i] = -b[i];
@@ -824,7 +1013,8 @@ auto compute_search_direction(const Input &input, const Settings &settings,
       residual[i] = -b[i];
     }
 
-    input.add_Kx_to_y(w, psi, r2, r3, vx, vy, vz, res_x, res_y, res_z);
+    input.add_Kx_to_y(w, psi, r2, r3, bound_diagonal, vx, vy, vz, res_x, res_y,
+                      res_z);
 
     input.solve(residual, u);
 
@@ -846,6 +1036,18 @@ auto compute_search_direction(const Input &input, const Settings &settings,
   for (int i = 0; i < s_dim; ++i) {
     ds[i] = -w[i] * (dz[i] + rs[i]);
   }
+  for_each_bound_side(
+      input, workspace.bound_sides, num_bound_sides,
+      [&](const int side_index, const int variable_index, const double,
+          const double jacobian) {
+        const double denominator = bound_w[side_index] + bound_r3[side_index];
+        bound_dz[side_index] =
+            (jacobian * dx[variable_index] + bound_rz[side_index] -
+             bound_w[side_index] * bound_rs[side_index]) /
+            denominator;
+        bound_ds[side_index] = -bound_w[side_index] *
+                               (bound_dz[side_index] + bound_rs[side_index]);
+      });
 
   const auto current_merit_slope =
       merit_slope(input, settings, workspace, mu, dx, ds, dy, dz);
@@ -866,6 +1068,18 @@ auto compute_search_direction(const Input &input, const Settings &settings,
                               ? std::numeric_limits<double>::infinity()
                               : std::max(max_complementarity, sz);
   }
+  for_each_bound_side(
+      input, workspace.bound_sides, num_bound_sides,
+      [&](const int side_index, const int, const double, const double) {
+        const double abs_gps = std::fabs(bound_gps[side_index]);
+        max_constraint_violation =
+            std::isnan(abs_gps) ? std::numeric_limits<double>::infinity()
+                                : std::max(max_constraint_violation, abs_gps);
+        const double sz = bound_s[side_index] * bound_z[side_index];
+        max_complementarity = std::isnan(sz)
+                                  ? std::numeric_limits<double>::infinity()
+                                  : std::max(max_complementarity, sz);
+      });
 
   for (int i = 0; i < x_dim; ++i) {
     const double abs_rx = std::fabs(rx[i]);
@@ -880,16 +1094,26 @@ auto compute_search_direction(const Input &input, const Settings &settings,
     kkt_error = std::numeric_limits<double>::infinity();
   }
 
-  const auto alpha_s_max = get_fraction_to_boundary_step(
-      s_dim, tau, workspace.vars.s, workspace.delta_vars.s);
-  const double alpha_z_max = get_fraction_to_boundary_step(
-      s_dim, tau, workspace.vars.z, workspace.delta_vars.z);
+  const auto alpha_s_max =
+      std::min(get_fraction_to_boundary_step(s_dim, tau, workspace.vars.s,
+                                             workspace.delta_vars.s),
+               get_fraction_to_boundary_step(num_bound_sides, tau,
+                                             workspace.vars.bound_s,
+                                             workspace.delta_vars.bound_s));
+  const double alpha_z_max =
+      std::min(get_fraction_to_boundary_step(s_dim, tau, workspace.vars.z,
+                                             workspace.delta_vars.z),
+               get_fraction_to_boundary_step(num_bound_sides, tau,
+                                             workspace.vars.bound_z,
+                                             workspace.delta_vars.bound_z));
 
   if (settings.logging.print_search_direction_logs) {
     double *res_x = residual;
     double *res_s = res_x + x_dim;
     double *res_y = res_s + s_dim;
     double *res_z = res_y + y_dim;
+    double *res_bound_reduced = res_z + s_dim;
+    double *res_bound_complementarity = res_bound_reduced + num_bound_sides;
 
     for (int i = 0; i < x_dim; ++i) {
       res_x[i] = -bx[i];
@@ -903,15 +1127,29 @@ auto compute_search_direction(const Input &input, const Settings &settings,
       res_z[i] = -bz[i];
     }
 
-    input.add_Kx_to_y(w, psi, r2, r3, dx, dy, dz, res_x, res_y, res_z);
+    input.add_Kx_to_y(w, psi, r2, r3, bound_diagonal, dx, dy, dz, res_x, res_y,
+                      res_z);
 
     for (int i = 0; i < s_dim; ++i) {
       res_s[i] = ds[i] / w[i] + dz[i] + rs[i];
     }
+    for_each_bound_side(input, workspace.bound_sides, num_bound_sides,
+                        [&](const int side_index, const int variable_index,
+                            const double, const double jacobian) {
+                          res_bound_reduced[side_index] =
+                              jacobian * dx[variable_index] -
+                              (bound_w[side_index] + bound_r3[side_index]) *
+                                  bound_dz[side_index] -
+                              bound_w[side_index] * bound_rs[side_index] +
+                              bound_rz[side_index];
+                          res_bound_complementarity[side_index] =
+                              bound_ds[side_index] / bound_w[side_index] +
+                              bound_dz[side_index] + bound_rs[side_index];
+                        });
 
     lin_sys_error = 0.0;
 
-    const int full_dim = x_dim + y_dim + s_dim + s_dim;
+    const int full_dim = x_dim + y_dim + s_dim + s_dim + 2 * num_bound_sides;
     for (int i = 0; i < full_dim; ++i) {
       lin_sys_error = std::max(lin_sys_error, std::fabs(residual[i]));
     }
@@ -921,16 +1159,18 @@ auto compute_search_direction(const Input &input, const Settings &settings,
     const MeritSlope observed_merit_slope =
         get_observed_merit_slope(input, settings, mu, psi, tau, workspace);
 
-    fmt::print(
-        fg(fmt::color::green),
-        // clang-format off
+    fmt::print(fg(fmt::color::green),
+               // clang-format off
                    "{:^10} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g}\n",
-        // clang-format on
-        "", lin_sys_error, alpha_s_max, alpha_z_max, current_merit_slope.total,
-        observed_merit_slope.total, current_merit_slope.x,
-        observed_merit_slope.x, current_merit_slope.s, observed_merit_slope.s,
-        current_merit_slope.y, observed_merit_slope.y, current_merit_slope.z,
-        observed_merit_slope.z, norm(rx, x_dim), norm(rs, s_dim));
+               // clang-format on
+               "", lin_sys_error, alpha_s_max, alpha_z_max,
+               current_merit_slope.total, observed_merit_slope.total,
+               current_merit_slope.x, observed_merit_slope.x,
+               current_merit_slope.s, observed_merit_slope.s,
+               current_merit_slope.y, observed_merit_slope.y,
+               current_merit_slope.z, observed_merit_slope.z, norm(rx, x_dim),
+               std::sqrt(squared_norm(rs, s_dim) +
+                         squared_norm(bound_rs, num_bound_sides)));
     const bool suspicious_derivatives =
         (observed_merit_slope.x > 0.0 && current_merit_slope.x < 0.0) ||
         (observed_merit_slope.total > 0.0 && current_merit_slope.total < 0.0) ||
@@ -957,11 +1197,13 @@ auto do_line_search(const Input &input, const Settings &settings,
     -> std::tuple<bool, double, double, double> {
   const int s_dim = input.dimensions.s_dim;
   const int y_dim = input.dimensions.y_dim;
+  const int num_bound_sides = workspace.num_bound_sides;
 
-  const auto initial_merit =
-      merit_function(input, settings, workspace, workspace.vars.x,
-                     workspace.vars.s, workspace.vars.y, workspace.vars.z,
-                     workspace.miscellaneous_workspace.g_plus_s, mu, psi);
+  const auto initial_merit = merit_function(
+      input, settings, workspace, workspace.vars.x, workspace.vars.s,
+      workspace.vars.y, workspace.vars.z, workspace.vars.bound_s,
+      workspace.vars.bound_z, workspace.miscellaneous_workspace.g_plus_s,
+      workspace.miscellaneous_workspace.bound_g_plus_s, mu, psi);
   const double m0_f = std::get<0>(initial_merit);
   const double m0 = std::get<5>(initial_merit);
 
@@ -997,7 +1239,10 @@ auto do_line_search(const Input &input, const Settings &settings,
     const double next_ctc = squared_norm(input.get_c(), y_dim);
     const double next_gsetgse =
         squared_norm(workspace.miscellaneous_workspace.g_plus_s, s_dim);
-    const double next_sq_constraint_violation_norm = next_ctc + next_gsetgse;
+    const double next_bound_residual_norm = squared_norm(
+        workspace.miscellaneous_workspace.bound_g_plus_s, num_bound_sides);
+    const double next_sq_constraint_violation_norm =
+        next_ctc + next_gsetgse + next_bound_residual_norm;
     const double next_theta = std::sqrt(next_sq_constraint_violation_norm);
 
     const double *trial_y = uses_dual_center(settings.mode)
@@ -1006,10 +1251,14 @@ auto do_line_search(const Input &input, const Settings &settings,
     const double *trial_z = uses_dual_center(settings.mode)
                                 ? workspace.next_vars.z
                                 : workspace.vars.z;
-    const auto trial_merit =
-        merit_function(input, settings, workspace, workspace.next_vars.x,
-                       workspace.next_vars.s, trial_y, trial_z,
-                       workspace.miscellaneous_workspace.g_plus_s, mu, psi);
+    const double *trial_bound_z = uses_dual_center(settings.mode)
+                                      ? workspace.next_vars.bound_z
+                                      : workspace.vars.bound_z;
+    const auto trial_merit = merit_function(
+        input, settings, workspace, workspace.next_vars.x,
+        workspace.next_vars.s, trial_y, trial_z, workspace.next_vars.bound_s,
+        trial_bound_z, workspace.miscellaneous_workspace.g_plus_s,
+        workspace.miscellaneous_workspace.bound_g_plus_s, mu, psi);
     const double m_f = std::get<0>(trial_merit);
     const double m = std::get<5>(trial_merit);
 
@@ -1027,21 +1276,31 @@ auto do_line_search(const Input &input, const Settings &settings,
         filter_accepts(filter, settings, next_theta, m_f);
     if (settings.logging.print_line_search_logs) {
       double *g_plus_current_s = workspace.csd_workspace.residual;
+      double *bound_g_plus_current_s = g_plus_current_s + s_dim;
       for (int i = 0; i < s_dim; ++i) {
         g_plus_current_s[i] = input.get_g()[i] + workspace.vars.s[i];
       }
-      const double merit_after_x = std::get<5>(merit_function(
-          input, settings, workspace, workspace.next_vars.x, workspace.vars.s,
-          workspace.vars.y, workspace.vars.z, g_plus_current_s, mu, psi));
+      set_bound_residuals(input, workspace.next_vars.x, workspace.vars.bound_s,
+                          workspace.bound_sides, num_bound_sides,
+                          bound_g_plus_current_s);
+      const double merit_after_x = std::get<5>(
+          merit_function(input, settings, workspace, workspace.next_vars.x,
+                         workspace.vars.s, workspace.vars.y, workspace.vars.z,
+                         workspace.vars.bound_s, workspace.vars.bound_z,
+                         g_plus_current_s, bound_g_plus_current_s, mu, psi));
 
       const double merit_after_s = std::get<5>(merit_function(
           input, settings, workspace, workspace.next_vars.x,
           workspace.next_vars.s, workspace.vars.y, workspace.vars.z,
-          workspace.miscellaneous_workspace.g_plus_s, mu, psi));
-      const double merit_after_y = std::get<5>(
-          merit_function(input, settings, workspace, workspace.next_vars.x,
-                         workspace.next_vars.s, trial_y, workspace.vars.z,
-                         workspace.miscellaneous_workspace.g_plus_s, mu, psi));
+          workspace.next_vars.bound_s, workspace.vars.bound_z,
+          workspace.miscellaneous_workspace.g_plus_s,
+          workspace.miscellaneous_workspace.bound_g_plus_s, mu, psi));
+      const double merit_after_y = std::get<5>(merit_function(
+          input, settings, workspace, workspace.next_vars.x,
+          workspace.next_vars.s, trial_y, workspace.vars.z,
+          workspace.next_vars.bound_s, workspace.vars.bound_z,
+          workspace.miscellaneous_workspace.g_plus_s,
+          workspace.miscellaneous_workspace.bound_g_plus_s, mu, psi));
 
       const double dm_x = merit_after_x - m0;
       const double dm_s = merit_after_s - merit_after_x;
@@ -1053,8 +1312,8 @@ auto do_line_search(const Input &input, const Settings &settings,
                        "{:^10} {:^+10} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g}\n",
                  // clang-format on
                  "", total_ls_iterations, alpha, m, m_f, std::sqrt(next_ctc),
-                 std::sqrt(next_gsetgse), merit_delta, merit_delta / alpha,
-                 dm_x, dm_s, dm_y, dm_z);
+                 std::sqrt(next_gsetgse + next_bound_residual_norm),
+                 merit_delta, merit_delta / alpha, dm_x, dm_s, dm_y, dm_z);
     }
 
     ++total_ls_iterations;
@@ -1193,6 +1452,31 @@ auto check_settings(const Settings &settings) -> bool {
   return true;
 }
 
+auto check_input(const Input &input, const Workspace &workspace,
+                 const int num_bound_sides) -> bool {
+  constexpr double infinity = std::numeric_limits<double>::infinity();
+  if (input.lower_bounds != nullptr || input.upper_bounds != nullptr) {
+    for (int i = 0; i < input.dimensions.x_dim; ++i) {
+      const double lower =
+          input.lower_bounds == nullptr ? -infinity : input.lower_bounds[i];
+      const double upper =
+          input.upper_bounds == nullptr ? infinity : input.upper_bounds[i];
+      if (std::isnan(lower) || std::isnan(upper) || lower >= upper) {
+        return false;
+      }
+    }
+  }
+  for (int i = 0; i < num_bound_sides; ++i) {
+    if (!std::isfinite(workspace.vars.bound_s[i]) ||
+        workspace.vars.bound_s[i] <= 0.0 ||
+        !std::isfinite(workspace.vars.bound_z[i]) ||
+        workspace.vars.bound_z[i] <= 0.0) {
+      return false;
+    }
+  }
+  return true;
+}
+
 } // namespace
 
 auto solve(const Input &input, const Settings &settings, Workspace &workspace)
@@ -1210,9 +1494,17 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
     input.model_callback(mci);
   }
 
-  if (!check_settings(settings)) {
+  const int x_dim = input.dimensions.x_dim;
+  const int s_dim = input.dimensions.s_dim;
+  const int y_dim = input.dimensions.y_dim;
+  workspace.num_bound_sides =
+      initialize_bound_sides(input, workspace.bound_sides);
+  const int num_bound_sides = workspace.num_bound_sides;
+
+  if (!check_settings(settings) ||
+      !check_input(input, workspace, num_bound_sides)) {
     if (settings.assert_checks_pass) {
-      assert(false && "check_settings returned false.");
+      assert(false && "check_settings or check_input returned false.");
     } else {
       return Output{
           .exit_status = Status::FAILED_CHECK,
@@ -1223,10 +1515,6 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
       };
     }
   }
-
-  const int x_dim = input.dimensions.x_dim;
-  const int s_dim = input.dimensions.s_dim;
-  const int y_dim = input.dimensions.y_dim;
 
   for (int i = 0; i < s_dim; ++i) {
     if (workspace.vars.s[i] <= 0.0) {
@@ -1261,12 +1549,19 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
 
   add(input.get_g(), workspace.vars.s, s_dim,
       workspace.miscellaneous_workspace.g_plus_s);
+  set_bound_residuals(input, workspace.vars.x, workspace.vars.bound_s,
+                      workspace.bound_sides, num_bound_sides,
+                      workspace.miscellaneous_workspace.bound_g_plus_s);
 
   if (!settings.penalty.warm_start_penalties) {
     std::fill_n(workspace.penalties.y, y_dim,
                 settings.penalty.initial_penalty_parameter);
     std::fill_n(workspace.penalties.z, s_dim,
                 settings.penalty.initial_penalty_parameter);
+    if (num_bound_sides > 0) {
+      std::fill_n(workspace.penalties.bound_z, num_bound_sides,
+                  settings.penalty.initial_penalty_parameter);
+    }
   }
 
   double mu = settings.barrier.initial_mu;
@@ -1288,8 +1583,10 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
     const double ctc = squared_norm(input.get_c(), y_dim);
     const double gsetgse =
         squared_norm(workspace.miscellaneous_workspace.g_plus_s, s_dim);
+    const double bound_gsetgse = squared_norm(
+        workspace.miscellaneous_workspace.bound_g_plus_s, num_bound_sides);
 
-    const double sq_constraint_violation_norm = ctc + gsetgse;
+    const double sq_constraint_violation_norm = ctc + gsetgse + bound_gsetgse;
 
     const auto [factorization_ok, dx, ds, dy, dz, merit_slope, alpha_s_max,
                 alpha_z_max, dual_residual, max_constraint_violation,
@@ -1297,12 +1594,21 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
                 num_regularization_increases] =
         compute_search_direction(input, settings, mu, psi, tau, workspace);
 
+    const double inequality_residual_norm = std::sqrt(gsetgse + bound_gsetgse);
+    const double ds_norm =
+        std::sqrt(squared_norm(ds, s_dim) +
+                  squared_norm(workspace.delta_vars.bound_s, num_bound_sides));
+    const double dz_norm =
+        std::sqrt(squared_norm(dz, s_dim) +
+                  squared_norm(workspace.delta_vars.bound_z, num_bound_sides));
+
     if (!factorization_ok) {
       return Output{
           .exit_status = Status::FACTORIZATION_FAILURE,
           .num_iterations = iteration,
           .num_ls_iterations = total_ls_iterations,
-          .max_primal_violation = max_primal_violation(input),
+          .max_primal_violation = max_primal_violation(
+              input, workspace, num_bound_sides, workspace.vars.x),
           .max_dual_violation = std::numeric_limits<double>::signaling_NaN(),
       };
     }
@@ -1320,16 +1626,18 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
           settings.logging.print_search_direction_logs) {
         print_log_header();
       }
-      const double eta = mean_penalty_parameter(workspace, s_dim, y_dim);
+      const double eta =
+          mean_penalty_parameter(workspace, s_dim, y_dim, num_bound_sides);
       fmt::print(
           fg(fmt::color::red),
           // clang-format off
                        "{:^+10} {:^10} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^10} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^10} {:^+10.4g} {:^+10.4g} {:^+10.4g}\n",
           // clang-format on
-          iteration, "", input.get_f(), std::sqrt(ctc), std::sqrt(gsetgse), "",
-          norm(dx, x_dim), norm(ds, s_dim), norm(dy, y_dim), norm(dz, s_dim),
-          mu, eta, tau, psi, num_regularization_increases, max_complementarity,
-          dual_residual, kkt_error);
+          iteration, "", input.get_f(), std::sqrt(ctc),
+          inequality_residual_norm, "", norm(dx, x_dim), ds_norm,
+          norm(dy, y_dim), dz_norm, mu, eta, tau, psi,
+          num_regularization_increases, max_complementarity, dual_residual,
+          kkt_error);
     }
 
     if (termination.stalled) {
@@ -1353,7 +1661,8 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
                                            : Status::LOCALLY_INFEASIBLE),
           .num_iterations = iteration,
           .num_ls_iterations = total_ls_iterations,
-          .max_primal_violation = max_primal_violation(input),
+          .max_primal_violation = max_primal_violation(
+              input, workspace, num_bound_sides, workspace.vars.x),
           .max_dual_violation = inf_norm(workspace.nrhs.x, x_dim),
       };
     }
@@ -1372,7 +1681,8 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
           .exit_status = Status::LINE_SEARCH_ITERATION_LIMIT,
           .num_iterations = iteration,
           .num_ls_iterations = total_ls_iterations,
-          .max_primal_violation = max_primal_violation(input),
+          .max_primal_violation = max_primal_violation(
+              input, workspace, num_bound_sides, workspace.vars.x),
           .max_dual_violation = inf_norm(workspace.nrhs.x, x_dim),
       };
     }
@@ -1399,16 +1709,17 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
         print_log_header();
       }
 
-      const double eta = mean_penalty_parameter(workspace, s_dim, y_dim);
+      const double eta =
+          mean_penalty_parameter(workspace, s_dim, y_dim, num_bound_sides);
       fmt::print(
           fg(fmt::color::red),
           // clang-format off
                        "{:^+10} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g} {:^+10.4g}  {:^+10.4g} {:^+10.4g} {:^10} {:^+10.4g} {:^+10.4g} {:^+10.4g}\n",
           // clang-format on
-          iteration, alpha, f0, std::sqrt(ctc), std::sqrt(gsetgse), m0,
-          norm(dx, x_dim), norm(ds, s_dim), norm(dy, y_dim), norm(dz, s_dim),
-          mu, eta, tau, psi, num_regularization_increases, max_complementarity,
-          dual_residual, kkt_error);
+          iteration, alpha, f0, std::sqrt(ctc), inequality_residual_norm, m0,
+          norm(dx, x_dim), ds_norm, norm(dy, y_dim), dz_norm, mu, eta, tau, psi,
+          num_regularization_increases, max_complementarity, dual_residual,
+          kkt_error);
     }
 
     if (settings.line_search.enable_line_search_failures && !ls_succeeded) {
@@ -1416,7 +1727,8 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
           .exit_status = Status::LINE_SEARCH_FAILURE,
           .num_iterations = iteration,
           .num_ls_iterations = total_ls_iterations,
-          .max_primal_violation = max_primal_violation(input),
+          .max_primal_violation = max_primal_violation(
+              input, workspace, num_bound_sides, workspace.vars.x),
           .max_dual_violation = inf_norm(workspace.nrhs.x, x_dim),
       };
     }
@@ -1429,7 +1741,8 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
           .exit_status = Status::TIMEOUT,
           .num_iterations = iteration,
           .num_ls_iterations = total_ls_iterations,
-          .max_primal_violation = max_primal_violation(input),
+          .max_primal_violation = max_primal_violation(
+              input, workspace, num_bound_sides, workspace.vars.x),
           .max_dual_violation = inf_norm(workspace.nrhs.x, x_dim),
       };
     }
@@ -1453,7 +1766,8 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
       .exit_status = Status::ITERATION_LIMIT,
       .num_iterations = settings.max_iterations,
       .num_ls_iterations = total_ls_iterations,
-      .max_primal_violation = max_primal_violation(input),
+      .max_primal_violation = max_primal_violation(
+          input, workspace, num_bound_sides, workspace.vars.x),
       .max_dual_violation = inf_norm(workspace.nrhs.x, x_dim),
   };
 }

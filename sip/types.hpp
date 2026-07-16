@@ -178,31 +178,38 @@ struct ModelCallbackInput {
   bool new_z;
 };
 
+auto num_bound_sides(const double *lower_bounds, const double *upper_bounds,
+                     int x_dim) -> int;
+
 struct Input {
   // NOTE: the user may ensure that no dynamic memory allocation happens
   //       when passing in the callbacks below, for example, by declaring
   //       them as lambdas and wrapping them with std::cref.
 
   // NOTE: the factor/solve callbacks should solve Kv = b, where:
-  // 1. K = [ H + r1 I_x       C.T          G.T    ]
-  //        [     C        -diag(r2)         0     ]
-  //        [     G             0       -diag(r3)  ]
-  // 2. r1, r2, r3 are non-negative regularization parameters;
+  // 1. K = [ H + r1 I_x + diag(d)       C.T              G.T       ]
+  //        [           C            -diag(r2)             0        ]
+  //        [           G                 0       -diag(w + r3)     ]
+  // 2. w has s_dim positive entries;
+  // 3. r1, r2, r3 are non-negative regularization parameters;
   //    r2 has length y_dim and r3 has length s_dim;
-  // 3. the callback should return whether the factorization succeeded and the
+  // 4. d contains diagonal contributions from eliminated variable bounds and
+  //    has length x_dim, or is null when there are no finite bound sides;
+  // 5. the callback should return whether the factorization succeeded and the
   //    KKT matrix has the desired inertia.
   //
   // NOTE: the user is responsible for storing H, C, G on their side.
 
-  using FactorCallback = std::function<bool(
-      const double *w, const double r1, const double *r2, const double *r3)>;
+  using FactorCallback =
+      std::function<bool(const double *w, const double r1, const double *r2,
+                         const double *r3, const double *bound_diagonal)>;
 
   using SolveCallback = std::function<void(const double *b, double *v)>;
 
   using Block3x3KKTProductCallback = std::function<void(
       const double *w, const double r1, const double *r2, const double *r3,
-      const double *x_x, const double *x_y, const double *x_z, double *y_x,
-      double *y_y, double *y_z)>;
+      const double *bound_diagonal, const double *x_x, const double *x_y,
+      const double *x_z, double *y_x, double *y_y, double *y_z)>;
 
   using MatrixVectorMultiplicationCallback =
       std::function<void(const double *x, double *y)>;
@@ -249,8 +256,14 @@ struct Input {
   ModelCallback model_callback;
   // Callback for (optionally) declaring a timeout. Return true for timeout.
   TimeoutCallback timeout_callback;
+  // Variable bounds. Null pointers denote unbounded sides; individual entries
+  // may be infinite.
+  const double *lower_bounds;
+  const double *upper_bounds;
   // The problem dimensions.
   Dimensions dimensions;
+
+  auto num_bound_sides() const -> int;
 };
 
 struct Output {
@@ -271,45 +284,59 @@ struct VariablesWorkspace {
   double *y;
   // The dual variables associated with inequality constraints.
   double *z;
+  // The slack variables associated with finite variable-bound sides.
+  double *bound_s;
+  // The dual variables associated with finite variable-bound sides.
+  double *bound_z;
 
   // To dynamically allocate the required memory.
-  void reserve(int x_dim, int s_dim, int y_dim);
+  void reserve(int x_dim, int s_dim, int y_dim, int num_bound_sides);
   void free();
 
   // For using pre-allocated (possibly statically allocated) memory.
-  auto mem_assign(int x_dim, int s_dim, int y_dim, unsigned char *mem_ptr)
-      -> int;
+  auto mem_assign(int x_dim, int s_dim, int y_dim, int num_bound_sides,
+                  unsigned char *mem_ptr) -> int;
 
   // For knowing how much memory to pre-allocate.
-  static constexpr auto num_bytes(int x_dim, int s_dim, int y_dim) -> int {
-    return (x_dim + y_dim + 2 * s_dim) * sizeof(double);
+  static constexpr auto num_bytes(int x_dim, int s_dim, int y_dim,
+                                  int num_bound_sides) -> int {
+    return (x_dim + y_dim + 2 * s_dim + 2 * num_bound_sides) * sizeof(double);
   }
 };
 
 struct MiscellaneousWorkspace {
   // Stores g(x) + s.
   double *g_plus_s;
+  // Stores the residuals of finite variable-bound sides.
+  double *bound_g_plus_s;
 
   // To dynamically allocate the required memory.
-  void reserve(int s_dim);
+  void reserve(int s_dim, int num_bound_sides);
   void free();
 
   // For using pre-allocated (possibly statically allocated) memory.
-  auto mem_assign(int s_dim, unsigned char *mem_ptr) -> int;
+  auto mem_assign(int s_dim, int num_bound_sides, unsigned char *mem_ptr)
+      -> int;
 
   // For knowing how much memory to pre-allocate.
-  static constexpr auto num_bytes(int s_dim) -> int {
-    return s_dim * sizeof(double);
+  static constexpr auto num_bytes(int s_dim, int num_bound_sides) -> int {
+    return (s_dim + num_bound_sides) * sizeof(double);
   }
 };
 
 struct ComputeSearchDirectionWorkspace {
-  // Stores S^{-1} Z
+  // Stores positive inequality-row diagonal values.
   double *w;
   // Stores the equality-constraint inverse penalty parameters.
   double *r2;
   // Stores the inequality-constraint inverse penalty parameters.
   double *r3;
+  // Stores positive bound-side diagonal values.
+  double *bound_w;
+  // Stores the variable-bound inverse penalty parameters.
+  double *bound_r3;
+  // Stores the diagonal contribution from eliminated variable bounds.
+  double *bound_diagonal;
   // The RHS of the reduced block-3x3 Newton-KKT system.
   double *rhs_block_3x3;
   // The solution of the reduced block-3x3 Newton-KKT system.
@@ -320,17 +347,21 @@ struct ComputeSearchDirectionWorkspace {
   double *residual;
 
   // To dynamically allocate the required memory.
-  void reserve(int s_dim, int y_dim, int kkt_dim, int full_dim);
+  void reserve(int x_dim, int s_dim, int y_dim, int num_bound_sides,
+               int kkt_dim, int full_dim);
   void free();
 
   // For using pre-allocated (possibly statically allocated) memory.
-  auto mem_assign(int s_dim, int y_dim, int kkt_dim, int full_dim,
-                  unsigned char *mem_ptr) -> int;
+  auto mem_assign(int x_dim, int s_dim, int y_dim, int num_bound_sides,
+                  int kkt_dim, int full_dim, unsigned char *mem_ptr) -> int;
 
   // For knowing how much memory to pre-allocate.
-  static constexpr auto num_bytes(int s_dim, int y_dim, int kkt_dim,
+  static constexpr auto num_bytes(int x_dim, int s_dim, int y_dim,
+                                  int num_bound_sides, int kkt_dim,
                                   int full_dim) -> int {
-    return (2 * s_dim + y_dim + 3 * kkt_dim + full_dim) * sizeof(double);
+    return ((num_bound_sides > 0 ? x_dim : 0) + 2 * s_dim + y_dim +
+            2 * num_bound_sides + 3 * kkt_dim + full_dim) *
+           sizeof(double);
   }
 };
 
@@ -339,17 +370,21 @@ struct PenaltyParameterWorkspace {
   double *y;
   // Inequality-constraint penalty parameters.
   double *z;
+  // Variable-bound penalty parameters.
+  double *bound_z;
 
   // To dynamically allocate the required memory.
-  void reserve(int s_dim, int y_dim);
+  void reserve(int s_dim, int y_dim, int num_bound_sides);
   void free();
 
   // For using pre-allocated (possibly statically allocated) memory.
-  auto mem_assign(int s_dim, int y_dim, unsigned char *mem_ptr) -> int;
+  auto mem_assign(int s_dim, int y_dim, int num_bound_sides,
+                  unsigned char *mem_ptr) -> int;
 
   // For knowing how much memory to pre-allocate.
-  static constexpr auto num_bytes(int s_dim, int y_dim) -> int {
-    return (s_dim + y_dim) * sizeof(double);
+  static constexpr auto num_bytes(int s_dim, int y_dim, int num_bound_sides)
+      -> int {
+    return (s_dim + y_dim + num_bound_sides) * sizeof(double);
   }
 };
 
@@ -392,26 +427,35 @@ struct Workspace {
   PenaltyParameterWorkspace penalties;
   // Stores the line-search filter entries.
   FilterWorkspace filter;
+  // Encodes finite bound sides as 2 * variable_index for lower bounds and
+  // 2 * variable_index + 1 for upper bounds.
+  int *bound_sides;
+  // Number of entries populated in bound_sides by solve.
+  int num_bound_sides;
 
   // To dynamically allocate the required memory.
-  void reserve(int x_dim, int s_dim, int y_dim, const Settings &settings);
+  void reserve(int x_dim, int s_dim, int y_dim, int num_bound_sides,
+               const Settings &settings);
   void free();
 
   // For using pre-allocated (possibly statically allocated) memory.
-  auto mem_assign(int x_dim, int s_dim, int y_dim, const Settings &settings,
-                  unsigned char *mem_ptr) -> int;
+  auto mem_assign(int x_dim, int s_dim, int y_dim, int num_bound_sides,
+                  const Settings &settings, unsigned char *mem_ptr) -> int;
 
   // For knowing how much memory to pre-allocate.
   static constexpr auto num_bytes(int x_dim, int s_dim, int y_dim,
-                                  const Settings &settings) -> int {
+                                  int num_bound_sides, const Settings &settings)
+      -> int {
     const int kkt_dim = x_dim + s_dim + y_dim;
-    const int full_dim = kkt_dim + s_dim;
-    return 4 * VariablesWorkspace::num_bytes(x_dim, s_dim, y_dim) +
-           MiscellaneousWorkspace::num_bytes(s_dim) +
-           ComputeSearchDirectionWorkspace::num_bytes(s_dim, y_dim, kkt_dim,
-                                                      full_dim) +
-           PenaltyParameterWorkspace::num_bytes(s_dim, y_dim) +
-           FilterWorkspace::num_bytes(filter_capacity(settings));
+    const int full_dim = kkt_dim + s_dim + 2 * num_bound_sides;
+    return 4 * VariablesWorkspace::num_bytes(x_dim, s_dim, y_dim,
+                                             num_bound_sides) +
+           MiscellaneousWorkspace::num_bytes(s_dim, num_bound_sides) +
+           ComputeSearchDirectionWorkspace::num_bytes(
+               x_dim, s_dim, y_dim, num_bound_sides, kkt_dim, full_dim) +
+           PenaltyParameterWorkspace::num_bytes(s_dim, y_dim, num_bound_sides) +
+           FilterWorkspace::num_bytes(filter_capacity(settings)) +
+           num_bound_sides * sizeof(int);
   }
 
 private:

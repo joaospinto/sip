@@ -1,6 +1,7 @@
 #include "sip/types.hpp"
 
 #include <cassert>
+#include <cmath>
 #include <fmt/color.h>
 #include <fmt/core.h>
 #include <ostream>
@@ -40,11 +41,31 @@ auto operator<<(std::ostream &os, Status const &status) -> std::ostream & {
   return os;
 }
 
-void VariablesWorkspace::reserve(int x_dim, int s_dim, int y_dim) {
+auto num_bound_sides(const double *lower_bounds, const double *upper_bounds,
+                     const int x_dim) -> int {
+  if (lower_bounds == nullptr && upper_bounds == nullptr) {
+    return 0;
+  }
+  int result = 0;
+  for (int i = 0; i < x_dim; ++i) {
+    result += lower_bounds != nullptr && std::isfinite(lower_bounds[i]) ? 1 : 0;
+    result += upper_bounds != nullptr && std::isfinite(upper_bounds[i]) ? 1 : 0;
+  }
+  return result;
+}
+
+auto Input::num_bound_sides() const -> int {
+  return sip::num_bound_sides(lower_bounds, upper_bounds, dimensions.x_dim);
+}
+
+void VariablesWorkspace::reserve(int x_dim, int s_dim, int y_dim,
+                                 int num_bound_sides) {
   x = new double[x_dim];
   s = new double[s_dim];
   y = new double[y_dim];
   z = new double[s_dim];
+  bound_s = num_bound_sides > 0 ? new double[num_bound_sides] : nullptr;
+  bound_z = num_bound_sides > 0 ? new double[num_bound_sides] : nullptr;
 }
 
 void VariablesWorkspace::free() {
@@ -52,10 +73,13 @@ void VariablesWorkspace::free() {
   delete[] s;
   delete[] y;
   delete[] z;
+  delete[] bound_s;
+  delete[] bound_z;
 }
 
 auto VariablesWorkspace::mem_assign(int x_dim, int s_dim, int y_dim,
-                                    unsigned char *mem_ptr) -> int {
+                                    int num_bound_sides, unsigned char *mem_ptr)
+    -> int {
   int cum_size = 0;
 
   x = reinterpret_cast<decltype(x)>(mem_ptr + cum_size);
@@ -70,30 +94,53 @@ auto VariablesWorkspace::mem_assign(int x_dim, int s_dim, int y_dim,
   z = reinterpret_cast<decltype(z)>(mem_ptr + cum_size);
   cum_size += s_dim * sizeof(double);
 
+  bound_s = num_bound_sides > 0
+                ? reinterpret_cast<decltype(bound_s)>(mem_ptr + cum_size)
+                : nullptr;
+  cum_size += num_bound_sides * sizeof(double);
+
+  bound_z = num_bound_sides > 0
+                ? reinterpret_cast<decltype(bound_z)>(mem_ptr + cum_size)
+                : nullptr;
+  cum_size += num_bound_sides * sizeof(double);
+
   return cum_size;
 }
 
-void MiscellaneousWorkspace::reserve(int s_dim) {
+void MiscellaneousWorkspace::reserve(int s_dim, int num_bound_sides) {
   g_plus_s = new double[s_dim];
+  bound_g_plus_s = num_bound_sides > 0 ? new double[num_bound_sides] : nullptr;
 }
 
-void MiscellaneousWorkspace::free() { delete[] g_plus_s; }
+void MiscellaneousWorkspace::free() {
+  delete[] g_plus_s;
+  delete[] bound_g_plus_s;
+}
 
-auto MiscellaneousWorkspace::mem_assign(int s_dim, unsigned char *mem_ptr)
-    -> int {
+auto MiscellaneousWorkspace::mem_assign(int s_dim, int num_bound_sides,
+                                        unsigned char *mem_ptr) -> int {
   int cum_size = 0;
 
   g_plus_s = reinterpret_cast<decltype(g_plus_s)>(mem_ptr + cum_size);
   cum_size += s_dim * sizeof(double);
+  bound_g_plus_s =
+      num_bound_sides > 0
+          ? reinterpret_cast<decltype(bound_g_plus_s)>(mem_ptr + cum_size)
+          : nullptr;
+  cum_size += num_bound_sides * sizeof(double);
 
   return cum_size;
 }
 
-void ComputeSearchDirectionWorkspace::reserve(int s_dim, int y_dim, int kkt_dim,
+void ComputeSearchDirectionWorkspace::reserve(int x_dim, int s_dim, int y_dim,
+                                              int num_bound_sides, int kkt_dim,
                                               int full_dim) {
   w = new double[s_dim];
   r2 = new double[y_dim];
   r3 = new double[s_dim];
+  bound_w = num_bound_sides > 0 ? new double[num_bound_sides] : nullptr;
+  bound_r3 = num_bound_sides > 0 ? new double[num_bound_sides] : nullptr;
+  bound_diagonal = num_bound_sides > 0 ? new double[x_dim] : nullptr;
   rhs_block_3x3 = new double[kkt_dim];
   sol_block_3x3 = new double[kkt_dim];
   iterative_refinement_error_sol = new double[kkt_dim];
@@ -104,13 +151,17 @@ void ComputeSearchDirectionWorkspace::free() {
   delete[] w;
   delete[] r2;
   delete[] r3;
+  delete[] bound_w;
+  delete[] bound_r3;
+  delete[] bound_diagonal;
   delete[] rhs_block_3x3;
   delete[] sol_block_3x3;
   delete[] iterative_refinement_error_sol;
   delete[] residual;
 }
 
-auto ComputeSearchDirectionWorkspace::mem_assign(int s_dim, int y_dim,
+auto ComputeSearchDirectionWorkspace::mem_assign(int x_dim, int s_dim,
+                                                 int y_dim, int num_bound_sides,
                                                  int kkt_dim, int full_dim,
                                                  unsigned char *mem_ptr)
     -> int {
@@ -122,6 +173,19 @@ auto ComputeSearchDirectionWorkspace::mem_assign(int s_dim, int y_dim,
   cum_size += y_dim * sizeof(double);
   r3 = reinterpret_cast<decltype(r3)>(mem_ptr + cum_size);
   cum_size += s_dim * sizeof(double);
+  bound_w = num_bound_sides > 0
+                ? reinterpret_cast<decltype(bound_w)>(mem_ptr + cum_size)
+                : nullptr;
+  cum_size += num_bound_sides * sizeof(double);
+  bound_r3 = num_bound_sides > 0
+                 ? reinterpret_cast<decltype(bound_r3)>(mem_ptr + cum_size)
+                 : nullptr;
+  cum_size += num_bound_sides * sizeof(double);
+  bound_diagonal =
+      num_bound_sides > 0
+          ? reinterpret_cast<decltype(bound_diagonal)>(mem_ptr + cum_size)
+          : nullptr;
+  cum_size += (num_bound_sides > 0 ? x_dim : 0) * sizeof(double);
   rhs_block_3x3 = reinterpret_cast<decltype(rhs_block_3x3)>(mem_ptr + cum_size);
   cum_size += kkt_dim * sizeof(double);
   sol_block_3x3 = reinterpret_cast<decltype(sol_block_3x3)>(mem_ptr + cum_size);
@@ -136,17 +200,21 @@ auto ComputeSearchDirectionWorkspace::mem_assign(int s_dim, int y_dim,
   return cum_size;
 }
 
-void PenaltyParameterWorkspace::reserve(int s_dim, int y_dim) {
+void PenaltyParameterWorkspace::reserve(int s_dim, int y_dim,
+                                        int num_bound_sides) {
   y = new double[y_dim];
   z = new double[s_dim];
+  bound_z = num_bound_sides > 0 ? new double[num_bound_sides] : nullptr;
 }
 
 void PenaltyParameterWorkspace::free() {
   delete[] y;
   delete[] z;
+  delete[] bound_z;
 }
 
 auto PenaltyParameterWorkspace::mem_assign(int s_dim, int y_dim,
+                                           int num_bound_sides,
                                            unsigned char *mem_ptr) -> int {
   int cum_size = 0;
 
@@ -155,6 +223,11 @@ auto PenaltyParameterWorkspace::mem_assign(int s_dim, int y_dim,
 
   z = reinterpret_cast<decltype(z)>(mem_ptr + cum_size);
   cum_size += s_dim * sizeof(double);
+
+  bound_z = num_bound_sides > 0
+                ? reinterpret_cast<decltype(bound_z)>(mem_ptr + cum_size)
+                : nullptr;
+  cum_size += num_bound_sides * sizeof(double);
 
   return cum_size;
 }
@@ -183,18 +256,20 @@ auto FilterWorkspace::mem_assign(int filter_capacity, unsigned char *mem_ptr)
   return cum_size;
 }
 
-void Workspace::reserve(int x_dim, int s_dim, int y_dim,
+void Workspace::reserve(int x_dim, int s_dim, int y_dim, int num_bound_sides,
                         const Settings &settings) {
-  vars.reserve(x_dim, s_dim, y_dim);
-  delta_vars.reserve(x_dim, s_dim, y_dim);
-  next_vars.reserve(x_dim, s_dim, y_dim);
-  nrhs.reserve(x_dim, s_dim, y_dim);
-  miscellaneous_workspace.reserve(s_dim);
+  vars.reserve(x_dim, s_dim, y_dim, num_bound_sides);
+  delta_vars.reserve(x_dim, s_dim, y_dim, num_bound_sides);
+  next_vars.reserve(x_dim, s_dim, y_dim, num_bound_sides);
+  nrhs.reserve(x_dim, s_dim, y_dim, num_bound_sides);
+  miscellaneous_workspace.reserve(s_dim, num_bound_sides);
   const int kkt_dim = x_dim + s_dim + y_dim;
-  const int full_dim = kkt_dim + s_dim;
-  csd_workspace.reserve(s_dim, y_dim, kkt_dim, full_dim);
-  penalties.reserve(s_dim, y_dim);
+  const int full_dim = kkt_dim + s_dim + 2 * num_bound_sides;
+  csd_workspace.reserve(x_dim, s_dim, y_dim, num_bound_sides, kkt_dim,
+                        full_dim);
+  penalties.reserve(s_dim, y_dim, num_bound_sides);
   filter.reserve(filter_capacity(settings));
+  bound_sides = num_bound_sides > 0 ? new int[num_bound_sides] : nullptr;
 }
 
 void Workspace::free() {
@@ -206,24 +281,36 @@ void Workspace::free() {
   csd_workspace.free();
   penalties.free();
   filter.free();
+  delete[] bound_sides;
 }
 
-auto Workspace::mem_assign(int x_dim, int s_dim, int y_dim,
+auto Workspace::mem_assign(int x_dim, int s_dim, int y_dim, int num_bound_sides,
                            const Settings &settings, unsigned char *mem_ptr)
     -> int {
   int cum_size = 0;
 
-  cum_size += vars.mem_assign(x_dim, s_dim, y_dim, mem_ptr + cum_size);
-  cum_size += delta_vars.mem_assign(x_dim, s_dim, y_dim, mem_ptr + cum_size);
-  cum_size += next_vars.mem_assign(x_dim, s_dim, y_dim, mem_ptr + cum_size);
-  cum_size += nrhs.mem_assign(x_dim, s_dim, y_dim, mem_ptr + cum_size);
-  cum_size += miscellaneous_workspace.mem_assign(s_dim, mem_ptr + cum_size);
+  cum_size +=
+      vars.mem_assign(x_dim, s_dim, y_dim, num_bound_sides, mem_ptr + cum_size);
+  cum_size += delta_vars.mem_assign(x_dim, s_dim, y_dim, num_bound_sides,
+                                    mem_ptr + cum_size);
+  cum_size += next_vars.mem_assign(x_dim, s_dim, y_dim, num_bound_sides,
+                                   mem_ptr + cum_size);
+  cum_size +=
+      nrhs.mem_assign(x_dim, s_dim, y_dim, num_bound_sides, mem_ptr + cum_size);
+  cum_size += miscellaneous_workspace.mem_assign(s_dim, num_bound_sides,
+                                                 mem_ptr + cum_size);
   const int kkt_dim = x_dim + s_dim + y_dim;
-  const int full_dim = kkt_dim + s_dim;
-  cum_size += csd_workspace.mem_assign(s_dim, y_dim, kkt_dim, full_dim,
-                                       mem_ptr + cum_size);
-  cum_size += penalties.mem_assign(s_dim, y_dim, mem_ptr + cum_size);
+  const int full_dim = kkt_dim + s_dim + 2 * num_bound_sides;
+  cum_size += csd_workspace.mem_assign(x_dim, s_dim, y_dim, num_bound_sides,
+                                       kkt_dim, full_dim, mem_ptr + cum_size);
+  cum_size +=
+      penalties.mem_assign(s_dim, y_dim, num_bound_sides, mem_ptr + cum_size);
   cum_size += filter.mem_assign(filter_capacity(settings), mem_ptr + cum_size);
+  bound_sides =
+      num_bound_sides > 0
+          ? reinterpret_cast<decltype(bound_sides)>(mem_ptr + cum_size)
+          : nullptr;
+  cum_size += num_bound_sides * sizeof(int);
 
   return cum_size;
 }

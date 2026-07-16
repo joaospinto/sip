@@ -7,7 +7,8 @@ $$
 \begin{aligned}
 \min_x \quad & f(x) \\
 \textrm{s.t.}\quad & c(x) = 0, \\
-& g(x) \leq 0.
+& g(x) \leq 0, \\
+& l \leq x \leq u.
 \end{aligned}
 $$
 
