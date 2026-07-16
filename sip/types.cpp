@@ -259,6 +259,7 @@ void Workspace::reserve(int x_dim, int s_dim, int y_dim, int num_bound_sides,
   delta_vars.reserve(x_dim, s_dim, y_dim, num_bound_sides);
   next_vars.reserve(x_dim, s_dim, y_dim, num_bound_sides);
   nrhs.reserve(x_dim, s_dim, y_dim, num_bound_sides);
+  proximal_centers.reserve(x_dim, s_dim, y_dim, num_bound_sides);
   miscellaneous_workspace.reserve(s_dim, num_bound_sides);
   const int kkt_dim = x_dim + s_dim + y_dim;
   const int full_dim = kkt_dim + s_dim + 2 * num_bound_sides;
@@ -274,6 +275,7 @@ void Workspace::free() {
   delta_vars.free();
   next_vars.free();
   nrhs.free();
+  proximal_centers.free();
   miscellaneous_workspace.free();
   csd_workspace.free();
   penalties.free();
@@ -294,6 +296,8 @@ auto Workspace::mem_assign(int x_dim, int s_dim, int y_dim, int num_bound_sides,
                                    mem_ptr + cum_size);
   cum_size +=
       nrhs.mem_assign(x_dim, s_dim, y_dim, num_bound_sides, mem_ptr + cum_size);
+  cum_size += proximal_centers.mem_assign(x_dim, s_dim, y_dim, num_bound_sides,
+                                          mem_ptr + cum_size);
   cum_size += miscellaneous_workspace.mem_assign(s_dim, num_bound_sides,
                                                  mem_ptr + cum_size);
   const int kkt_dim = x_dim + s_dim + y_dim;

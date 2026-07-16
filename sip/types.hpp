@@ -419,6 +419,8 @@ struct Workspace {
   VariablesWorkspace next_vars;
   // The negative Newton-KKT RHS storage (for both primal and dual variables).
   VariablesWorkspace nrhs;
+  // Proximal centers retained across accepted iterations.
+  VariablesWorkspace proximal_centers;
   // Stores miscellaneous items.
   MiscellaneousWorkspace miscellaneous_workspace;
   // Stores the workspace used in compute_search_direction.
@@ -448,7 +450,7 @@ struct Workspace {
       -> int {
     const int kkt_dim = x_dim + s_dim + y_dim;
     const int full_dim = kkt_dim + s_dim + 2 * num_bound_sides;
-    return 4 * VariablesWorkspace::num_bytes(x_dim, s_dim, y_dim,
+    return 5 * VariablesWorkspace::num_bytes(x_dim, s_dim, y_dim,
                                              num_bound_sides) +
            MiscellaneousWorkspace::num_bytes(s_dim, num_bound_sides) +
            ComputeSearchDirectionWorkspace::num_bytes(
