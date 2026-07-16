@@ -196,13 +196,17 @@ struct Input {
   // 2. w has s_dim positive entries;
   // 3. r1, r2, r3 contain non-negative diagonal shifts and have lengths x_dim,
   //    y_dim, and s_dim, respectively;
-  // 4. the callback should return whether the factorization succeeded and the
+  // 4. factorization_regularization is a non-negative scalar that may be added
+  //    to the three diagonal blocks, with the same signs as r1, r2, and r3,
+  //    solely to stabilize the factorization. It is not part of K;
+  // 5. the callback should return whether the factorization succeeded and the
   //    KKT matrix has the desired inertia.
   //
   // NOTE: the user is responsible for storing H, C, G on their side.
 
   using FactorCallback = std::function<bool(
-      const double *w, const double *r1, const double *r2, const double *r3)>;
+      const double *w, const double *r1, const double *r2, const double *r3,
+      double factorization_regularization)>;
 
   using SolveCallback = std::function<void(const double *b, double *v)>;
 
