@@ -969,8 +969,15 @@ auto compute_search_direction(const Input &input, const Settings &settings,
   double *vy = vx + x_dim;
   double *vz = vy + y_dim;
 
+  const bool use_exact_barrier_diagonal =
+      settings.barrier.use_predictor_corrector &&
+      uses_primal_center(settings.mode);
   for (int i = 0; i < s_dim; ++i) {
-    w[i] = std::clamp(s[i] / z[i], 1e-18, 1e18);
+    const double ratio = s[i] / z[i];
+    w[i] = use_exact_barrier_diagonal
+               ? std::clamp(ratio, std::numeric_limits<double>::min(),
+                            std::numeric_limits<double>::max())
+               : std::clamp(ratio, 1e-18, 1e18);
   }
 
   for (int i = 0; i < y_dim; ++i) {
@@ -984,8 +991,12 @@ auto compute_search_direction(const Input &input, const Settings &settings,
       input, workspace.bound_sides, num_bound_sides,
       [&](const int side_index, const int variable_index, const double,
           const double) {
+        const double ratio = bound_s[side_index] / bound_z[side_index];
         bound_w[side_index] =
-            std::clamp(bound_s[side_index] / bound_z[side_index], 1e-18, 1e18);
+            use_exact_barrier_diagonal
+                ? std::clamp(ratio, std::numeric_limits<double>::min(),
+                             std::numeric_limits<double>::max())
+                : std::clamp(ratio, 1e-18, 1e18);
         bound_r3[side_index] = 1.0 / workspace.penalties.bound_z[side_index];
         bound_rz[side_index] =
             bound_gps[side_index] +
