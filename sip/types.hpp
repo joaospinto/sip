@@ -23,8 +23,10 @@ enum class Mode {
   REGULARIZED_IPM = 0,
   // Interpret primal regularization as a centered proximal term.
   PRIMAL_PROXIMAL_IPM = 1,
+  // Interpret dual regularization as a centered proximal term.
+  DUAL_PROXIMAL_IPM = 2,
   // Interpret primal and dual regularization as centered proximal terms.
-  PRIMAL_DUAL_PROXIMAL_IPM = 2,
+  PRIMAL_DUAL_PROXIMAL_IPM = 3,
 };
 
 // For nicer googletest outputs.

@@ -17,11 +17,17 @@ namespace sip {
 namespace {
 
 constexpr auto uses_primal_center(const Mode mode) -> bool {
-  return mode != Mode::REGULARIZED_IPM;
+  return mode == Mode::PRIMAL_PROXIMAL_IPM ||
+         mode == Mode::PRIMAL_DUAL_PROXIMAL_IPM;
 }
 
 constexpr auto uses_dual_center(const Mode mode) -> bool {
-  return mode == Mode::PRIMAL_DUAL_PROXIMAL_IPM;
+  return mode == Mode::DUAL_PROXIMAL_IPM ||
+         mode == Mode::PRIMAL_DUAL_PROXIMAL_IPM;
+}
+
+constexpr auto uses_proximal_center(const Mode mode) -> bool {
+  return uses_primal_center(mode) || uses_dual_center(mode);
 }
 
 auto mean_penalty_parameter(const Workspace &workspace, const int s_dim,
@@ -968,7 +974,7 @@ auto do_line_search(const Input &input, const Settings &settings,
   bool ls_succeeded = false;
   double alpha =
       settings.line_search.start_ls_with_alpha_s_max ? alpha_s_max : 1.0;
-  if (uses_primal_center(settings.mode)) {
+  if (uses_proximal_center(settings.mode)) {
     alpha = std::min(alpha, alpha_s_max);
   }
   if (uses_dual_center(settings.mode)) {
@@ -1059,7 +1065,7 @@ auto do_line_search(const Input &input, const Settings &settings,
 
     ++total_ls_iterations;
 
-    if (uses_primal_center(settings.mode)) {
+    if (uses_proximal_center(settings.mode)) {
       const bool skip_line_search =
           merit_slope <= 0.0 &&
           merit_slope >
@@ -1132,7 +1138,7 @@ auto check_settings(const Settings &settings) -> bool {
       settings.line_search.tau > 1.0) {
     return false;
   }
-  if (uses_primal_center(settings.mode) && settings.line_search.tau == 1.0) {
+  if (uses_proximal_center(settings.mode) && settings.line_search.tau == 1.0) {
     return false;
   }
   if (!is_finite_nonnegative(settings.barrier.initial_mu) ||
