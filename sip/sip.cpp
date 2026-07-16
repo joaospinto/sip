@@ -24,6 +24,35 @@ constexpr auto uses_dual_center(const Mode mode) -> bool {
   return mode == Mode::PRIMAL_DUAL_PROXIMAL_IPM;
 }
 
+auto original_coordinate_max_abs(const double *values, const double *scaling,
+                                 const int size) -> double {
+  if (scaling == nullptr) {
+    return max_abs_or_inf(values, size);
+  }
+  double result = 0.0;
+  for (int i = 0; i < size; ++i) {
+    const double value = std::fabs(values[i] / scaling[i]);
+    result = std::isnan(value) ? std::numeric_limits<double>::infinity()
+                               : std::max(result, value);
+  }
+  return result;
+}
+
+auto original_coordinate_max_positive(const double *values,
+                                      const double *scaling, const int size)
+    -> double {
+  if (scaling == nullptr) {
+    return max_positive_or_inf(values, size);
+  }
+  double result = 0.0;
+  for (int i = 0; i < size; ++i) {
+    const double value = values[i] / scaling[i];
+    result = std::isnan(value) ? std::numeric_limits<double>::infinity()
+                               : std::max(result, value);
+  }
+  return result;
+}
+
 auto proximal_centers(const Settings &settings, const Workspace &workspace)
     -> const VariablesWorkspace & {
   return settings.barrier.use_predictor_corrector ? workspace.proximal_centers
@@ -117,17 +146,23 @@ auto max_primal_violation(const Input &input, const Workspace &workspace,
     -> double {
   const int s_dim = input.dimensions.s_dim;
   const int y_dim = input.dimensions.y_dim;
-  double result = std::max(max_abs_or_inf(input.get_c(), y_dim),
-                           max_positive_or_inf(input.get_g(), s_dim));
-  for_each_bound_side(input, workspace.bound_sides, num_bound_sides,
-                      [&](const int, const int variable_index,
-                          const double endpoint, const double jacobian) {
-                        const double violation = bound_constraint_value(
-                            x[variable_index], endpoint, jacobian);
-                        result = std::isnan(violation)
-                                     ? std::numeric_limits<double>::infinity()
-                                     : std::max(result, violation);
-                      });
+  double result =
+      std::max(original_coordinate_max_abs(
+                   input.get_c(), input.residual_scaling.equality, y_dim),
+               original_coordinate_max_positive(
+                   input.get_g(), input.residual_scaling.inequality, s_dim));
+  for_each_bound_side(
+      input, workspace.bound_sides, num_bound_sides,
+      [&](const int side_index, const int variable_index, const double endpoint,
+          const double jacobian) {
+        double violation =
+            bound_constraint_value(x[variable_index], endpoint, jacobian);
+        if (input.residual_scaling.bound_inequality != nullptr) {
+          violation /= input.residual_scaling.bound_inequality[side_index];
+        }
+        result = std::isnan(violation) ? std::numeric_limits<double>::infinity()
+                                       : std::max(result, violation);
+      });
   return result;
 }
 
@@ -150,11 +185,15 @@ auto unregularized_residuals(const Input &input, Workspace &workspace)
                       });
 
   const double primal = std::max(
-      {max_abs_or_inf(input.get_c(), y_dim),
-       max_abs_or_inf(workspace.miscellaneous_workspace.g_plus_s, s_dim),
-       max_abs_or_inf(workspace.miscellaneous_workspace.bound_g_plus_s,
-                      num_bound_sides)});
-  return {primal, max_abs_or_inf(dual, x_dim)};
+      {original_coordinate_max_abs(input.get_c(),
+                                   input.residual_scaling.equality, y_dim),
+       original_coordinate_max_abs(workspace.miscellaneous_workspace.g_plus_s,
+                                   input.residual_scaling.inequality, s_dim),
+       original_coordinate_max_abs(
+           workspace.miscellaneous_workspace.bound_g_plus_s,
+           input.residual_scaling.bound_inequality, num_bound_sides)});
+  return {primal, original_coordinate_max_abs(dual, input.residual_scaling.dual,
+                                              x_dim)};
 }
 
 auto merit_function(const Input &input, const Settings &settings,
@@ -1201,14 +1240,15 @@ auto compute_search_direction(const Input &input, const Settings &settings,
   const auto current_merit_slope =
       merit_slope(input, settings, workspace, mu, psi, dx, ds, dy, dz);
 
-  for (int i = 0; i < y_dim; ++i) {
-    max_constraint_violation =
-        std::max(max_constraint_violation, std::fabs(c[i]));
-  }
+  max_constraint_violation =
+      original_coordinate_max_abs(c, input.residual_scaling.equality, y_dim);
 
   for (int i = 0; i < s_dim; ++i) {
+    const double scale = input.residual_scaling.inequality == nullptr
+                             ? 1.0
+                             : input.residual_scaling.inequality[i];
     const double abs_gps =
-        std::fabs(workspace.miscellaneous_workspace.g_plus_s[i]);
+        std::fabs(workspace.miscellaneous_workspace.g_plus_s[i] / scale);
     max_constraint_violation =
         std::isnan(abs_gps) ? std::numeric_limits<double>::infinity()
                             : std::max(max_constraint_violation, abs_gps);
@@ -1220,7 +1260,11 @@ auto compute_search_direction(const Input &input, const Settings &settings,
   for_each_bound_side(
       input, workspace.bound_sides, num_bound_sides,
       [&](const int side_index, const int, const double, const double) {
-        const double abs_gps = std::fabs(bound_gps[side_index]);
+        const double scale =
+            input.residual_scaling.bound_inequality == nullptr
+                ? 1.0
+                : input.residual_scaling.bound_inequality[side_index];
+        const double abs_gps = std::fabs(bound_gps[side_index] / scale);
         max_constraint_violation =
             std::isnan(abs_gps) ? std::numeric_limits<double>::infinity()
                                 : std::max(max_constraint_violation, abs_gps);
@@ -1230,11 +1274,8 @@ auto compute_search_direction(const Input &input, const Settings &settings,
                                   : std::max(max_complementarity, sz);
       });
 
-  for (int i = 0; i < x_dim; ++i) {
-    const double abs_rx = std::fabs(rx[i]);
-    dual_residual = std::isnan(abs_rx) ? std::numeric_limits<double>::infinity()
-                                       : std::max(dual_residual, abs_rx);
-  }
+  dual_residual =
+      original_coordinate_max_abs(rx, input.residual_scaling.dual, x_dim);
 
   kkt_error = dual_residual;
   kkt_error = std::max(kkt_error, max_constraint_violation);
@@ -1626,6 +1667,25 @@ auto check_input(const Input &input, const Workspace &workspace,
       return false;
     }
   }
+  const auto valid_scaling = [](const double *scaling, const int size) {
+    if (scaling == nullptr) {
+      return true;
+    }
+    for (int i = 0; i < size; ++i) {
+      if (!std::isfinite(scaling[i]) || scaling[i] <= 0.0) {
+        return false;
+      }
+    }
+    return true;
+  };
+  if (!valid_scaling(input.residual_scaling.dual, input.dimensions.x_dim) ||
+      !valid_scaling(input.residual_scaling.equality, input.dimensions.y_dim) ||
+      !valid_scaling(input.residual_scaling.inequality,
+                     input.dimensions.s_dim) ||
+      !valid_scaling(input.residual_scaling.bound_inequality,
+                     num_bound_sides)) {
+    return false;
+  }
   return true;
 }
 
@@ -1823,7 +1883,8 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
           .num_ls_iterations = total_ls_iterations,
           .max_primal_violation = max_primal_violation(
               input, workspace, num_bound_sides, workspace.vars.x),
-          .max_dual_violation = inf_norm(workspace.nrhs.x, x_dim),
+          .max_dual_violation = original_coordinate_max_abs(
+              workspace.nrhs.x, input.residual_scaling.dual, x_dim),
       };
     }
 
@@ -1843,7 +1904,8 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
           .num_ls_iterations = total_ls_iterations,
           .max_primal_violation = max_primal_violation(
               input, workspace, num_bound_sides, workspace.vars.x),
-          .max_dual_violation = inf_norm(workspace.nrhs.x, x_dim),
+          .max_dual_violation = original_coordinate_max_abs(
+              workspace.nrhs.x, input.residual_scaling.dual, x_dim),
       };
     }
 
@@ -1895,7 +1957,8 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
           .num_ls_iterations = total_ls_iterations,
           .max_primal_violation = max_primal_violation(
               input, workspace, num_bound_sides, workspace.vars.x),
-          .max_dual_violation = inf_norm(workspace.nrhs.x, x_dim),
+          .max_dual_violation = original_coordinate_max_abs(
+              workspace.nrhs.x, input.residual_scaling.dual, x_dim),
       };
     }
 
@@ -1911,7 +1974,8 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
           .num_ls_iterations = total_ls_iterations,
           .max_primal_violation = max_primal_violation(
               input, workspace, num_bound_sides, workspace.vars.x),
-          .max_dual_violation = inf_norm(workspace.nrhs.x, x_dim),
+          .max_dual_violation = original_coordinate_max_abs(
+              workspace.nrhs.x, input.residual_scaling.dual, x_dim),
       };
     }
 
@@ -2075,7 +2139,8 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
       .num_ls_iterations = total_ls_iterations,
       .max_primal_violation = max_primal_violation(
           input, workspace, num_bound_sides, workspace.vars.x),
-      .max_dual_violation = inf_norm(workspace.nrhs.x, x_dim),
+      .max_dual_violation = original_coordinate_max_abs(
+          workspace.nrhs.x, input.residual_scaling.dual, x_dim),
   };
 }
 

@@ -228,6 +228,13 @@ struct Input {
     int y_dim;
   };
 
+  struct ResidualScaling {
+    const double *dual{nullptr};
+    const double *equality{nullptr};
+    const double *inequality{nullptr};
+    const double *bound_inequality{nullptr};
+  };
+
   // Callback for factoring the reduced-block-3x3 Newton-KKT system.
   FactorCallback factor;
   // Callback for solving the reduced-block-3x3 Newton-KKT system.
@@ -260,6 +267,8 @@ struct Input {
   // may be infinite.
   const double *lower_bounds;
   const double *upper_bounds;
+  // Multipliers applied to model residuals by an external equilibration.
+  ResidualScaling residual_scaling;
   // The problem dimensions.
   Dimensions dimensions;
 
