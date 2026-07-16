@@ -225,6 +225,22 @@ struct Input {
     int y_dim;
   };
 
+  struct ResidualScaling {
+    // Positive elementwise multipliers mapping original-coordinate residuals
+    // to the externally scaled model residuals. SIP divides by these values
+    // for convergence checks and output reporting. Each pointer is required
+    // when its corresponding dimension is nonzero, and the arrays remain owned
+    // by the caller.
+    // Length: dimensions.x_dim.
+    const double *dual{nullptr};
+    // Length: dimensions.y_dim.
+    const double *equality{nullptr};
+    // Length: dimensions.s_dim.
+    const double *inequality{nullptr};
+    // Length: dimensions.x_dim. Both bounds of a variable share its scale.
+    const double *variable_bound{nullptr};
+  };
+
   // Callback for factoring the reduced-block-3x3 Newton-KKT system.
   FactorCallback factor;
   // Callback for solving the reduced-block-3x3 Newton-KKT system.
@@ -257,6 +273,9 @@ struct Input {
   // may be infinite.
   const double *lower_bounds;
   const double *upper_bounds;
+  // Multipliers applied to model residuals. Use unit-valued arrays when the
+  // model is not externally scaled.
+  ResidualScaling residual_scaling;
   // The problem dimensions.
   Dimensions dimensions;
 
