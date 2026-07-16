@@ -1820,7 +1820,7 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
                     settings.barrier.mu_min);
     }
     if (settings.barrier.use_predictor_corrector &&
-        uses_primal_center(settings.mode)) {
+        uses_primal_center(settings.mode) && s_dim + num_bound_sides > 0) {
       const double current_complementarity =
           mean_complementarity(workspace, s_dim, num_bound_sides);
       const double complementarity_ratio =
