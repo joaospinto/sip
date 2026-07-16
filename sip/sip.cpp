@@ -350,6 +350,28 @@ struct TerminationChecks {
   bool advance_barrier;
 };
 
+struct CenterUpdateRejections {
+  void reject(const double residual) {
+    if (count == 0) {
+      residual_at_start = residual;
+    }
+    ++count;
+  }
+
+  void reset() {
+    count = 0;
+    residual_at_start = std::numeric_limits<double>::infinity();
+  }
+
+  auto has_reduced_residual(const double residual,
+                            const double reduction_factor) const -> bool {
+    return residual < reduction_factor * residual_at_start;
+  }
+
+  int count{0};
+  double residual_at_start{std::numeric_limits<double>::infinity()};
+};
+
 auto cost_change_satisfied(const Settings &settings,
                            const std::optional<double> previous_cost,
                            const double current_cost) -> bool {
@@ -1699,6 +1721,8 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
   int total_ls_iterations = 0;
   // A single poorly conditioned solve can produce a spurious flat direction.
   int num_consecutive_stalled_iterations = 0;
+  CenterUpdateRejections primal_center_update_rejections;
+  CenterUpdateRejections dual_center_update_rejections;
   std::optional<double> previous_cost;
   workspace.filter.size = 0;
 
@@ -1880,27 +1904,6 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
       };
     }
 
-    if (settings.barrier.use_predictor_corrector &&
-        uses_primal_center(settings.mode)) {
-      constexpr double residual_reduction_factor = 0.95;
-      const auto [new_primal_residual, new_dual_residual] =
-          unregularized_residuals(input, workspace);
-      if (new_dual_residual < residual_reduction_factor * dual_residual ||
-          new_dual_residual < settings.termination.max_dual_residual) {
-        std::copy_n(workspace.vars.x, x_dim, workspace.proximal_centers.x);
-      }
-      if (uses_dual_center(settings.mode) &&
-          (new_primal_residual <
-               residual_reduction_factor * max_constraint_violation ||
-           new_primal_residual <
-               settings.termination.max_constraint_violation)) {
-        std::copy_n(workspace.vars.y, y_dim, workspace.proximal_centers.y);
-        std::copy_n(workspace.vars.z, s_dim, workspace.proximal_centers.z);
-        std::copy_n(workspace.vars.bound_z, num_bound_sides,
-                    workspace.proximal_centers.bound_z);
-      }
-    }
-
     if (kkt_error <= settings.barrier.mu_update_kappa * mu) {
       mu = std::max(mu * settings.barrier.mu_update_factor,
                     settings.barrier.mu_min);
@@ -1914,21 +1917,131 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
               ? std::clamp(current_complementarity / previous_complementarity,
                            0.0, 1.0)
               : 1.0;
-      psi = std::max(settings.regularization.first_positive,
-                     complementarity_ratio * psi);
+      constexpr double residual_reduction_factor = 0.95;
+      constexpr double proximal_residual_threshold = 0.9;
+      constexpr double inexact_residual_ratio = 0.1;
+      constexpr double rejected_reduction_scale = 0.666;
+      constexpr int startup_iterations = 5;
+      constexpr int max_update_rejections = 8;
+
+      const auto [new_primal_residual, new_dual_residual] =
+          unregularized_residuals(input, workspace);
+      double dual_proximal_residual = 0.0;
+      for (int i = 0; i < x_dim; ++i) {
+        const double displacement =
+            workspace.vars.x[i] - workspace.proximal_centers.x[i];
+        dual_proximal_residual =
+            std::max(dual_proximal_residual, std::fabs(psi * displacement));
+        workspace.nrhs.x[i] += psi * displacement;
+      }
+      const double regularized_dual_residual =
+          max_abs_or_inf(workspace.nrhs.x, x_dim);
+
+      const bool primal_center_accepted =
+          new_dual_residual < residual_reduction_factor * dual_residual ||
+          new_dual_residual < settings.termination.max_dual_residual;
+      if (primal_center_accepted) {
+        std::copy_n(workspace.vars.x, x_dim, workspace.proximal_centers.x);
+        primal_center_update_rejections.reset();
+        psi = std::max(settings.regularization.first_positive,
+                       complementarity_ratio * psi);
+      } else {
+        primal_center_update_rejections.reject(dual_residual);
+        if (iteration < startup_iterations ||
+            dual_proximal_residual < proximal_residual_threshold) {
+          const double factor =
+              1.0 - rejected_reduction_scale * (1.0 - complementarity_ratio);
+          psi = std::max(settings.regularization.first_positive, factor * psi);
+        }
+        if (primal_center_update_rejections.has_reduced_residual(
+                new_dual_residual, residual_reduction_factor)) {
+          primal_center_update_rejections.reset();
+        } else if (primal_center_update_rejections.count >=
+                       max_update_rejections &&
+                   dual_proximal_residual >= proximal_residual_threshold &&
+                   regularized_dual_residual <
+                       std::max(settings.termination.max_dual_residual,
+                                inexact_residual_ratio * new_dual_residual)) {
+          std::copy_n(workspace.vars.x, x_dim, workspace.proximal_centers.x);
+          primal_center_update_rejections.reset();
+        }
+      }
+
       if (uses_dual_center(settings.mode)) {
-        const auto update = [&](double *penalties, const int size) {
+        double primal_proximal_residual = 0.0;
+        double regularized_primal_residual = 0.0;
+        const auto update_residuals =
+            [&](const double *residual, const double *value,
+                const double *center, const double *penalties, const int size) {
+              for (int i = 0; i < size; ++i) {
+                const double proximal = (center[i] - value[i]) / penalties[i];
+                primal_proximal_residual =
+                    std::max(primal_proximal_residual, std::fabs(proximal));
+                regularized_primal_residual =
+                    std::max(regularized_primal_residual,
+                             std::fabs(residual[i] + proximal));
+              }
+            };
+        update_residuals(input.get_c(), workspace.vars.y,
+                         workspace.proximal_centers.y, workspace.penalties.y,
+                         y_dim);
+        update_residuals(workspace.miscellaneous_workspace.g_plus_s,
+                         workspace.vars.z, workspace.proximal_centers.z,
+                         workspace.penalties.z, s_dim);
+        update_residuals(workspace.miscellaneous_workspace.bound_g_plus_s,
+                         workspace.vars.bound_z,
+                         workspace.proximal_centers.bound_z,
+                         workspace.penalties.bound_z, num_bound_sides);
+
+        const bool dual_center_accepted =
+            new_primal_residual <
+                residual_reduction_factor * max_constraint_violation ||
+            new_primal_residual < settings.termination.max_constraint_violation;
+        double regularization_factor = 1.0;
+        if (dual_center_accepted) {
+          std::copy_n(workspace.vars.y, y_dim, workspace.proximal_centers.y);
+          std::copy_n(workspace.vars.z, s_dim, workspace.proximal_centers.z);
+          std::copy_n(workspace.vars.bound_z, num_bound_sides,
+                      workspace.proximal_centers.bound_z);
+          dual_center_update_rejections.reset();
+          regularization_factor = complementarity_ratio;
+        } else {
+          dual_center_update_rejections.reject(max_constraint_violation);
+          if (iteration < startup_iterations ||
+              primal_proximal_residual < proximal_residual_threshold) {
+            regularization_factor =
+                1.0 - rejected_reduction_scale * (1.0 - complementarity_ratio);
+          }
+          if (dual_center_update_rejections.has_reduced_residual(
+                  new_primal_residual, residual_reduction_factor)) {
+            dual_center_update_rejections.reset();
+          } else if (dual_center_update_rejections.count >=
+                         max_update_rejections &&
+                     primal_proximal_residual >= proximal_residual_threshold &&
+                     regularized_primal_residual <
+                         std::max(settings.termination.max_constraint_violation,
+                                  inexact_residual_ratio *
+                                      new_primal_residual)) {
+            std::copy_n(workspace.vars.y, y_dim, workspace.proximal_centers.y);
+            std::copy_n(workspace.vars.z, s_dim, workspace.proximal_centers.z);
+            std::copy_n(workspace.vars.bound_z, num_bound_sides,
+                        workspace.proximal_centers.bound_z);
+            dual_center_update_rejections.reset();
+          }
+        }
+
+        const auto update_penalties = [&](double *penalties, const int size) {
           for (int i = 0; i < size; ++i) {
             penalties[i] =
-                complementarity_ratio > 0.0
+                regularization_factor > 0.0
                     ? std::min(settings.penalty.max_penalty_parameter,
-                               penalties[i] / complementarity_ratio)
+                               penalties[i] / regularization_factor)
                     : settings.penalty.max_penalty_parameter;
           }
         };
-        update(workspace.penalties.y, y_dim);
-        update(workspace.penalties.z, s_dim);
-        update(workspace.penalties.bound_z, num_bound_sides);
+        update_penalties(workspace.penalties.y, y_dim);
+        update_penalties(workspace.penalties.z, s_dim);
+        update_penalties(workspace.penalties.bound_z, num_bound_sides);
       } else {
         update_penalty_parameters(input, settings, workspace);
       }
