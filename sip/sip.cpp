@@ -94,6 +94,18 @@ auto mean_penalty_parameter(const Workspace &workspace, const int s_dim,
   return dim == 0 ? 0.0 : sum / dim;
 }
 
+auto mean_complementarity(const Workspace &workspace, const int s_dim,
+                          const int num_bound_sides) -> double {
+  const int dim = s_dim + num_bound_sides;
+  if (dim == 0) {
+    return 0.0;
+  }
+  return (dot(workspace.vars.s, workspace.vars.z, s_dim) +
+          dot(workspace.vars.bound_s, workspace.vars.bound_z,
+              num_bound_sides)) /
+         dim;
+}
+
 auto max_primal_violation(const Input &input, const Workspace &workspace,
                           const int num_bound_sides, const double *x)
     -> double {
@@ -1787,6 +1799,8 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
       };
     }
 
+    const double previous_complementarity =
+        mean_complementarity(workspace, s_dim, num_bound_sides);
     std::swap(workspace.vars, workspace.next_vars);
     previous_cost = f0;
 
@@ -1805,14 +1819,43 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
       mu = std::max(mu * settings.barrier.mu_update_factor,
                     settings.barrier.mu_min);
     }
-    psi = decreased_regularization(settings, psi);
-
-    const bool any_penalty_increased =
+    if (settings.barrier.use_predictor_corrector &&
+        uses_primal_center(settings.mode)) {
+      const double current_complementarity =
+          mean_complementarity(workspace, s_dim, num_bound_sides);
+      const double complementarity_ratio =
+          previous_complementarity > 0.0
+              ? std::clamp(current_complementarity / previous_complementarity,
+                           0.0, 1.0)
+              : 1.0;
+      psi = std::max(settings.regularization.first_positive,
+                     complementarity_ratio * psi);
+      if (uses_dual_center(settings.mode)) {
+        const auto update = [&](double *penalties, const int size) {
+          for (int i = 0; i < size; ++i) {
+            penalties[i] =
+                complementarity_ratio > 0.0
+                    ? std::min(settings.penalty.max_penalty_parameter,
+                               penalties[i] / complementarity_ratio)
+                    : settings.penalty.max_penalty_parameter;
+          }
+        };
+        update(workspace.penalties.y, y_dim);
+        update(workspace.penalties.z, s_dim);
+        update(workspace.penalties.bound_z, num_bound_sides);
+      } else {
         update_penalty_parameters(input, settings, workspace);
-    if (any_penalty_increased) {
-      // Reset regularization when penalty increases, to stabilize the
-      // modified KKT system.
-      psi = std::max(psi, settings.regularization.initial);
+      }
+    } else {
+      psi = decreased_regularization(settings, psi);
+
+      const bool any_penalty_increased =
+          update_penalty_parameters(input, settings, workspace);
+      if (any_penalty_increased) {
+        // Reset regularization when penalty increases, to stabilize the
+        // modified KKT system.
+        psi = std::max(psi, settings.regularization.initial);
+      }
     }
   }
 
