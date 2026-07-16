@@ -1065,7 +1065,24 @@ auto compute_search_direction(const Input &input, const Settings &settings,
   bool factorization_ok = false;
   for (int attempt = 0; attempt < settings.regularization.max_attempts;
        ++attempt) {
-    factorization_ok = input.factor(w, r1, r2, r3, numerical_regularization);
+    const double *factor_r1 = r1;
+    const double *factor_r2 = r2;
+    const double *factor_r3 = r3;
+    if (numerical_regularization > 0.0) {
+      for (int i = 0; i < x_dim; ++i) {
+        bx[i] = r1[i] + numerical_regularization;
+      }
+      for (int i = 0; i < y_dim; ++i) {
+        by[i] = r2[i] + numerical_regularization;
+      }
+      for (int i = 0; i < s_dim; ++i) {
+        bz[i] = r3[i] + numerical_regularization;
+      }
+      factor_r1 = bx;
+      factor_r2 = by;
+      factor_r3 = bz;
+    }
+    factorization_ok = input.factor(w, factor_r1, factor_r2, factor_r3);
     if (factorization_ok) {
       break;
     }
@@ -1795,7 +1812,7 @@ auto initialize_from_linearized_model(const Input &input,
     for (int i = 0; i < x_dim; ++i) {
       r1[i] += primal_regularization;
     }
-    factorization_ok = input.factor(w, r1, r2, r3, 0.0);
+    factorization_ok = input.factor(w, r1, r2, r3);
     for (int i = 0; i < x_dim; ++i) {
       r1[i] -= primal_regularization;
     }
