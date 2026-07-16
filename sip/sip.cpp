@@ -26,8 +26,7 @@ constexpr auto uses_dual_center(const Mode mode) -> bool {
 
 constexpr auto uses_adaptive_proximal_updates(const Settings &settings)
     -> bool {
-  return settings.barrier.use_predictor_corrector &&
-         settings.barrier.use_adaptive_proximal_updates &&
+  return settings.barrier.use_adaptive_proximal_updates &&
          uses_primal_center(settings.mode);
 }
 
@@ -1029,8 +1028,7 @@ auto compute_search_direction(const Input &input, const Settings &settings,
   double *vz = vy + y_dim;
 
   const bool use_exact_barrier_diagonal =
-      settings.barrier.use_predictor_corrector &&
-      uses_primal_center(settings.mode);
+      settings.barrier.use_full_range_barrier_diagonal;
   for (int i = 0; i < s_dim; ++i) {
     const double ratio = s[i] / z[i];
     w[i] = use_exact_barrier_diagonal
@@ -1961,7 +1959,7 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
     }
   }
 
-  if (uses_adaptive_proximal_updates(settings) &&
+  if (settings.use_linearized_model_initialization &&
       uses_dual_center(settings.mode) &&
       !initialize_from_linearized_model(input, settings, workspace)) {
     return Output{

@@ -54,6 +54,8 @@ struct BarrierSettings {
   bool use_predictor_corrector = false;
   // Adapt proximal centers and regularization from unregularized residuals.
   bool use_adaptive_proximal_updates = false;
+  // Clamp barrier diagonals only at the finite range of a double.
+  bool use_full_range_barrier_diagonal = false;
   // A parameter of the merit function and descent direction computation.
   double initial_mu = 1e-3;
   // Determines how much mu decreases per iteration.
@@ -155,6 +157,8 @@ struct Settings {
   int max_iterations = 100;
   // The number of iterative refinement steps.
   int num_iterative_refinement_steps = 1;
+  // Initialize primal and dual variables from the linearized model.
+  bool use_linearized_model_initialization = false;
   // Handle checks with assert calls.
   bool assert_checks_pass = false;
   // Settings for barrier parameter updates.
