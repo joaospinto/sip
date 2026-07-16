@@ -189,7 +189,7 @@ void Workspace::reserve(int x_dim, int s_dim, int y_dim,
   delta_vars.reserve(x_dim, s_dim, y_dim);
   next_vars.reserve(x_dim, s_dim, y_dim);
   nrhs.reserve(x_dim, s_dim, y_dim);
-  if (settings.proximal_qp.enabled) {
+  if (settings.mode == Mode::PROXIMAL_PREDICTOR_CORRECTOR_QP) {
     proximal_centers.reserve(x_dim, s_dim, y_dim);
   } else {
     proximal_centers = {};
@@ -223,7 +223,7 @@ auto Workspace::mem_assign(int x_dim, int s_dim, int y_dim,
   cum_size += delta_vars.mem_assign(x_dim, s_dim, y_dim, mem_ptr + cum_size);
   cum_size += next_vars.mem_assign(x_dim, s_dim, y_dim, mem_ptr + cum_size);
   cum_size += nrhs.mem_assign(x_dim, s_dim, y_dim, mem_ptr + cum_size);
-  if (settings.proximal_qp.enabled) {
+  if (settings.mode == Mode::PROXIMAL_PREDICTOR_CORRECTOR_QP) {
     cum_size +=
         proximal_centers.mem_assign(x_dim, s_dim, y_dim, mem_ptr + cum_size);
   } else {

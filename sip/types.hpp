@@ -25,6 +25,8 @@ enum class Mode {
   PRIMAL_PROXIMAL_IPM = 1,
   // Interpret primal and dual regularization as centered proximal terms.
   PRIMAL_DUAL_PROXIMAL_IPM = 2,
+  // Use a proximal predictor-corrector method for quadratic programs.
+  PROXIMAL_PREDICTOR_CORRECTOR_QP = 3,
 };
 
 // For nicer googletest outputs.
@@ -57,9 +59,6 @@ struct BarrierSettings {
 };
 
 struct ProximalQpSettings {
-  // Use the proximal predictor-corrector method for quadratic programs. This
-  // reconstructs the affine QP data and replaces the supplied warm start.
-  bool enabled = false;
   // Initial regularization of the primal variables.
   double initial_primal_regularization = 1e-6;
   // Initial regularization of the constraint multipliers.
@@ -445,7 +444,7 @@ struct Workspace {
     const int kkt_dim = x_dim + s_dim + y_dim;
     const int full_dim = kkt_dim + s_dim;
     const int proximal_centers_bytes =
-        settings.proximal_qp.enabled
+        settings.mode == Mode::PROXIMAL_PREDICTOR_CORRECTOR_QP
             ? VariablesWorkspace::num_bytes(x_dim, s_dim, y_dim)
             : 0;
     return 4 * VariablesWorkspace::num_bytes(x_dim, s_dim, y_dim) +

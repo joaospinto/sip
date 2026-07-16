@@ -24,6 +24,10 @@ constexpr auto uses_dual_center(const Mode mode) -> bool {
   return mode == Mode::PRIMAL_DUAL_PROXIMAL_IPM;
 }
 
+constexpr auto uses_proximal_qp(const Mode mode) -> bool {
+  return mode == Mode::PROXIMAL_PREDICTOR_CORRECTOR_QP;
+}
+
 auto unscaled_max_abs(const double *values, const double *scaling,
                       const int size) -> double {
   if (scaling == nullptr) {
@@ -839,12 +843,10 @@ auto compute_search_direction(const Input &input, const Settings &settings,
   double *vy = vx + x_dim;
   double *vz = vy + y_dim;
 
+  const bool use_proximal_qp = uses_proximal_qp(settings.mode);
   for (int i = 0; i < s_dim; ++i) {
-    w[i] = settings.proximal_qp.enabled ? s[i] / z[i]
-                                        : std::clamp(s[i] / z[i], 1e-18, 1e18);
+    w[i] = use_proximal_qp ? s[i] / z[i] : std::clamp(s[i] / z[i], 1e-18, 1e18);
   }
-
-  const bool use_proximal_qp = settings.proximal_qp.enabled;
   for (int i = 0; i < y_dim; ++i) {
     r2[i] = use_proximal_qp ? proximal_delta : 1.0 / workspace.penalties.y[i];
   }
@@ -999,7 +1001,7 @@ auto compute_search_direction(const Input &input, const Settings &settings,
   };
 
   double stationarity_merit_slope;
-  if (settings.proximal_qp.enabled && s_dim > 0) {
+  if (use_proximal_qp && s_dim > 0) {
     solve_direction(mu, nullptr, nullptr);
     stationarity_merit_slope =
         merit_slope(input, settings, workspace, mu, dx, ds, dy, dz).total;
@@ -1338,6 +1340,10 @@ auto check_settings(const Settings &settings) -> bool {
   if (uses_primal_center(settings.mode) && settings.line_search.tau == 1.0) {
     return false;
   }
+  if (uses_proximal_qp(settings.mode) &&
+      !settings.line_search.skip_line_search) {
+    return false;
+  }
   if (!is_finite_nonnegative(settings.barrier.initial_mu) ||
       !is_finite_nonnegative(settings.barrier.mu_update_factor) ||
       settings.barrier.mu_update_factor > 1.0 ||
@@ -1550,34 +1556,39 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
   const int x_dim = input.dimensions.x_dim;
   const int s_dim = input.dimensions.s_dim;
   const int y_dim = input.dimensions.y_dim;
+  const bool use_proximal_qp = uses_proximal_qp(settings.mode);
 
-  for (int i = 0; i < s_dim; ++i) {
-    if (workspace.vars.s[i] <= 0.0) {
-      if (settings.assert_checks_pass) {
-        assert(false && "workspace.vars.s[i] <= 0.0.");
-      } else {
-        return Output{
-            .exit_status = Status::FAILED_CHECK,
-            .num_iterations = 0,
-            .num_ls_iterations = 0,
-            .max_primal_violation =
-                std::numeric_limits<double>::signaling_NaN(),
-            .max_dual_violation = -std::numeric_limits<double>::signaling_NaN(),
-        };
+  if (!use_proximal_qp) {
+    for (int i = 0; i < s_dim; ++i) {
+      if (workspace.vars.s[i] <= 0.0) {
+        if (settings.assert_checks_pass) {
+          assert(false && "workspace.vars.s[i] <= 0.0.");
+        } else {
+          return Output{
+              .exit_status = Status::FAILED_CHECK,
+              .num_iterations = 0,
+              .num_ls_iterations = 0,
+              .max_primal_violation =
+                  std::numeric_limits<double>::signaling_NaN(),
+              .max_dual_violation =
+                  -std::numeric_limits<double>::signaling_NaN(),
+          };
+        }
       }
-    }
-    if (workspace.vars.z[i] <= 0.0) {
-      if (settings.assert_checks_pass) {
-        assert(false && "workspace.vars.z[i] <= 0.0.");
-      } else {
-        return Output{
-            .exit_status = Status::FAILED_CHECK,
-            .num_iterations = 0,
-            .num_ls_iterations = 0,
-            .max_primal_violation =
-                std::numeric_limits<double>::signaling_NaN(),
-            .max_dual_violation = -std::numeric_limits<double>::signaling_NaN(),
-        };
+      if (workspace.vars.z[i] <= 0.0) {
+        if (settings.assert_checks_pass) {
+          assert(false && "workspace.vars.z[i] <= 0.0.");
+        } else {
+          return Output{
+              .exit_status = Status::FAILED_CHECK,
+              .num_iterations = 0,
+              .num_ls_iterations = 0,
+              .max_primal_violation =
+                  std::numeric_limits<double>::signaling_NaN(),
+              .max_dual_violation =
+                  -std::numeric_limits<double>::signaling_NaN(),
+          };
+        }
       }
     }
   }
@@ -1612,7 +1623,7 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
   ProximalCenterUpdateRejections dual_center_update_rejections;
   const double tau = settings.line_search.tau;
 
-  if (settings.proximal_qp.enabled) {
+  if (use_proximal_qp) {
     if (!initialize_proximal_qp(input, settings, workspace)) {
       return Output{
           .exit_status = Status::FACTORIZATION_FAILURE,
@@ -1637,7 +1648,7 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
   workspace.filter.size = 0;
 
   for (int iteration = 0; iteration < settings.max_iterations; ++iteration) {
-    if (settings.proximal_qp.enabled) {
+    if (use_proximal_qp) {
       const double epsilon = std::numeric_limits<double>::epsilon();
       bool shifted_from_boundary = false;
       for (int i = 0; i < s_dim; ++i) {
@@ -1659,7 +1670,7 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
       }
     }
 
-    if (settings.proximal_qp.enabled) {
+    if (use_proximal_qp) {
       const double dual_proximal_residual =
           proximal_rho * unscaled_max_difference(
                              workspace.vars.x, workspace.proximal_centers.x,
@@ -1728,7 +1739,7 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
           settings.logging.print_search_direction_logs) {
         print_log_header();
       }
-      const double eta = settings.proximal_qp.enabled
+      const double eta = use_proximal_qp
                              ? 1.0 / proximal_delta
                              : mean_penalty_parameter(workspace, s_dim, y_dim);
       fmt::print(
@@ -1738,12 +1749,12 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
           // clang-format on
           iteration, "", input.get_f(), std::sqrt(ctc), std::sqrt(gsetgse), "",
           norm(dx, x_dim), norm(ds, s_dim), norm(dy, y_dim), norm(dz, s_dim),
-          mu, eta, tau, settings.proximal_qp.enabled ? proximal_rho : psi,
+          mu, eta, tau, use_proximal_qp ? proximal_rho : psi,
           num_regularization_increases, max_complementarity, dual_residual,
           kkt_error);
     }
 
-    if (termination.stalled && !settings.proximal_qp.enabled) {
+    if (termination.stalled && !use_proximal_qp) {
       ++num_consecutive_stalled_iterations;
     } else {
       num_consecutive_stalled_iterations = 0;
@@ -1769,7 +1780,7 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
       };
     }
 
-    if (termination.advance_barrier && !settings.proximal_qp.enabled) {
+    if (termination.advance_barrier && !use_proximal_qp) {
       const double next_mu = std::max(mu * settings.barrier.mu_update_factor,
                                       settings.barrier.mu_min);
       if (next_mu < mu) {
@@ -1791,17 +1802,15 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
     bool ls_succeeded;
     double alpha, m0;
     if (settings.line_search.skip_line_search) {
-      const double dual_alpha =
-          settings.proximal_qp.enabled ? alpha_z_max : alpha_s_max;
-      alpha = settings.proximal_qp.enabled
-                  ? alpha_s_max
-                  : (uses_dual_center(settings.mode)
-                         ? std::min(alpha_s_max, alpha_z_max)
-                         : alpha_s_max);
+      const double dual_alpha = use_proximal_qp ? alpha_z_max : alpha_s_max;
+      alpha = use_proximal_qp ? alpha_s_max
+                              : (uses_dual_center(settings.mode)
+                                     ? std::min(alpha_s_max, alpha_z_max)
+                                     : alpha_s_max);
       update_next_primal_vars(input, tau, workspace, alpha, true, true);
       update_next_dual_vars(input, tau, workspace,
-                            settings.proximal_qp.enabled ? dual_alpha : alpha,
-                            true, true, !settings.proximal_qp.enabled);
+                            use_proximal_qp ? dual_alpha : alpha, true, true,
+                            !use_proximal_qp);
       ls_succeeded = true;
       m0 = 0.0;
     } else {
@@ -1816,7 +1825,7 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
         print_log_header();
       }
 
-      const double eta = settings.proximal_qp.enabled
+      const double eta = use_proximal_qp
                              ? 1.0 / proximal_delta
                              : mean_penalty_parameter(workspace, s_dim, y_dim);
       fmt::print(
@@ -1826,7 +1835,7 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
           // clang-format on
           iteration, alpha, f0, std::sqrt(ctc), std::sqrt(gsetgse), m0,
           norm(dx, x_dim), norm(ds, s_dim), norm(dy, y_dim), norm(dz, s_dim),
-          mu, eta, tau, settings.proximal_qp.enabled ? proximal_rho : psi,
+          mu, eta, tau, use_proximal_qp ? proximal_rho : psi,
           num_regularization_increases, max_complementarity, dual_residual,
           kkt_error);
     }
@@ -1856,7 +1865,7 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
       };
     }
 
-    if (settings.proximal_qp.enabled) {
+    if (use_proximal_qp) {
       const auto [new_primal_residual, new_dual_residual] =
           unregularized_residuals(input, workspace);
       const double new_complementarity = mean_complementarity(workspace, s_dim);
