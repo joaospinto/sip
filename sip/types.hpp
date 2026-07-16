@@ -37,6 +37,9 @@ struct RegularizationSettings {
   double first_positive = 1e-8;
   // The largest x-regularization value to try.
   double maximum = 1e8;
+  // The largest temporary all-block diagonal shift used only to factor the KKT
+  // matrix. Zero preserves the exact-KKT factorization path.
+  double maximum_factorization_shift = 0.0;
   // The maximum number of factorization attempts per iteration.
   int max_attempts = 16;
   // The multiplicative increase of the x-regularization coefficient.
@@ -49,6 +52,8 @@ struct BarrierSettings {
   // Use a Mehrotra predictor-corrector direction. This requires line searches
   // to be disabled.
   bool use_predictor_corrector = false;
+  // Adapt proximal centers and regularization from unregularized residuals.
+  bool use_adaptive_proximal_updates = false;
   // A parameter of the merit function and descent direction computation.
   double initial_mu = 1e-3;
   // Determines how much mu decreases per iteration.
