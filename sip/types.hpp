@@ -27,6 +27,8 @@ enum class Mode {
   PRIMAL_DUAL_PROXIMAL_IPM = 2,
   // Use a proximal predictor-corrector method for quadratic programs.
   PROXIMAL_PREDICTOR_CORRECTOR_QP = 3,
+  // Interpret dual regularization as a centered proximal term.
+  DUAL_PROXIMAL_IPM = 4,
 };
 
 // For nicer googletest outputs.
