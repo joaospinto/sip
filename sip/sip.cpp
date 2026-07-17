@@ -927,8 +927,16 @@ auto compute_search_direction(const Input &input, const Settings &settings,
   double *vy = vx + x_dim;
   double *vz = vy + y_dim;
 
+  const auto barrier_diagonal = [&](const double slack, const double dual) {
+    const double ratio = slack / dual;
+    if (settings.barrier.use_predictor_corrector) {
+      return std::clamp(ratio, std::numeric_limits<double>::min(),
+                        std::numeric_limits<double>::max());
+    }
+    return std::clamp(ratio, 1e-18, 1e18);
+  };
   for (int i = 0; i < s_dim; ++i) {
-    w[i] = std::clamp(s[i] / z[i], 1e-18, 1e18);
+    w[i] = barrier_diagonal(s[i], z[i]);
   }
 
   for (int i = 0; i < y_dim; ++i) {
@@ -938,17 +946,17 @@ auto compute_search_direction(const Input &input, const Settings &settings,
     r3[i] = 1.0 / workspace.penalties.z[i];
   }
   std::fill_n(r1, x_dim, psi);
-  for_each_bound_side(
-      input, workspace.bound_sides, num_bound_sides,
-      [&](const int side_index, const int variable_index, const double,
-          const double) {
-        bound_w[side_index] =
-            std::clamp(bound_s[side_index] / bound_z[side_index], 1e-18, 1e18);
-        bound_r3[side_index] = 1.0 / workspace.penalties.bound_z[side_index];
-        bound_rz[side_index] = bound_gps[side_index];
-        r1[variable_index] +=
-            1.0 / (bound_w[side_index] + bound_r3[side_index]);
-      });
+  for_each_bound_side(input, workspace.bound_sides, num_bound_sides,
+                      [&](const int side_index, const int variable_index,
+                          const double, const double) {
+                        bound_w[side_index] = barrier_diagonal(
+                            bound_s[side_index], bound_z[side_index]);
+                        bound_r3[side_index] =
+                            1.0 / workspace.penalties.bound_z[side_index];
+                        bound_rz[side_index] = bound_gps[side_index];
+                        r1[variable_index] +=
+                            1.0 / (bound_w[side_index] + bound_r3[side_index]);
+                      });
 
   int num_regularization_increases = 0;
   bool factorization_ok = false;
