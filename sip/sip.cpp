@@ -435,6 +435,57 @@ auto update_penalty_parameters(const Input &input, const Settings &settings,
   return any_increased;
 }
 
+auto update_penalties_for_multiplier_step(const Input &input,
+                                          const Settings &settings,
+                                          Workspace &workspace) -> bool {
+  const int s_dim = input.dimensions.s_dim;
+  const int y_dim = input.dimensions.y_dim;
+  const int num_bound_sides = workspace.num_bound_sides;
+  bool any_increased = update_penalty_parameters(input, settings, workspace);
+  const double contraction =
+      std::sqrt(settings.penalty.min_acceptable_constraint_violation_ratio);
+  const double tolerance = settings.termination.max_constraint_violation;
+
+  const auto update = [&](const double residual, const double scaling,
+                          const double value, const double previous_value,
+                          double &penalty) {
+    const double target =
+        std::max(tolerance * scaling, contraction * std::fabs(residual));
+    const double multiplier_step = std::fabs(value - previous_value);
+    const double required_penalty =
+        target > 0.0
+            ? multiplier_step / target
+            : (multiplier_step > 0.0 ? settings.penalty.max_penalty_parameter
+                                     : penalty);
+    const double next_penalty =
+        std::max(penalty, std::min(required_penalty,
+                                   settings.penalty.max_penalty_parameter));
+    any_increased |= next_penalty > penalty;
+    penalty = next_penalty;
+  };
+  for (int i = 0; i < y_dim; ++i) {
+    update(input.get_c()[i], input.residual_scaling.equality[i],
+           workspace.vars.y[i], workspace.next_vars.y[i],
+           workspace.penalties.y[i]);
+  }
+  for (int i = 0; i < s_dim; ++i) {
+    update(workspace.miscellaneous_workspace.g_plus_s[i],
+           input.residual_scaling.inequality[i], workspace.vars.z[i],
+           workspace.next_vars.z[i], workspace.penalties.z[i]);
+  }
+  for_each_bound_side(
+      input, workspace.bound_sides, num_bound_sides,
+      [&](const int side_index, const int variable_index, const double,
+          const double) {
+        update(workspace.miscellaneous_workspace.bound_g_plus_s[side_index],
+               input.residual_scaling.variable_bound[variable_index],
+               workspace.vars.bound_z[side_index],
+               workspace.next_vars.bound_z[side_index],
+               workspace.penalties.bound_z[side_index]);
+      });
+  return any_increased;
+}
+
 void update_next_primal_vars(const Input &input, const double tau,
                              Workspace &workspace, const double alpha,
                              const bool update_x, const bool update_s) {
@@ -1870,8 +1921,15 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
     }
     psi = decreased_regularization(settings, psi);
 
-    const bool any_penalty_increased =
-        update_penalty_parameters(input, settings, workspace);
+    bool any_penalty_increased;
+    if (settings.barrier.use_predictor_corrector &&
+        s_dim + num_bound_sides > 0) {
+      any_penalty_increased =
+          update_penalties_for_multiplier_step(input, settings, workspace);
+    } else {
+      any_penalty_increased =
+          update_penalty_parameters(input, settings, workspace);
+    }
     if (any_penalty_increased) {
       // Reset regularization when penalty increases, to stabilize the
       // modified KKT system.
