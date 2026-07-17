@@ -339,32 +339,12 @@ struct TerminationChecks {
   bool advance_barrier;
 };
 
-auto cost_change_satisfied(const Settings &settings,
-                           const std::optional<double> previous_cost,
-                           const double current_cost) -> bool {
-  if (!settings.termination.enable_cost_change_termination ||
-      !previous_cost.has_value() || !std::isfinite(*previous_cost) ||
-      !std::isfinite(current_cost)) {
-    return false;
-  }
-
-  const double cost_change = std::fabs(current_cost - *previous_cost);
-  const double cost_scale = std::max(1.0, std::fabs(*previous_cost));
-  const double max_cost_change =
-      settings.termination.max_cost_change +
-      settings.termination.max_relative_cost_change * cost_scale;
-  return cost_change <= max_cost_change;
-}
-
-auto check_termination(const Settings &settings,
-                       const std::optional<double> previous_cost,
-                       const double current_cost, const double merit_slope,
+auto check_termination(const Settings &settings, const double merit_slope,
                        const double dual_residual,
                        const double max_constraint_violation,
                        const double max_complementarity,
-                       const double duality_gap) -> TerminationChecks {
-  const bool duality_gap_satisfied =
-      duality_gap <= settings.termination.max_duality_gap;
+                       const std::optional<bool> custom_termination_satisfied)
+    -> TerminationChecks {
   const bool primal_feasibility_satisfied =
       max_constraint_violation < settings.termination.max_constraint_violation;
   const bool dual_residual_satisfied =
@@ -373,21 +353,15 @@ auto check_termination(const Settings &settings,
       max_complementarity < settings.termination.max_complementarity_gap;
   const bool merit_slope_too_small =
       merit_slope > -settings.termination.max_merit_slope;
-  const bool cost_change_ok =
-      cost_change_satisfied(settings, previous_cost, current_cost);
-
   const bool kkt_optimality_satisfied = dual_residual_satisfied &&
                                         primal_feasibility_satisfied &&
                                         complementarity_satisfied;
-  const bool cost_change_optimality_satisfied =
-      cost_change_ok && primal_feasibility_satisfied;
   const bool advance_barrier =
       merit_slope_too_small && primal_feasibility_satisfied &&
       dual_residual_satisfied && !complementarity_satisfied;
 
   return TerminationChecks{
-      .solved = duality_gap_satisfied &&
-                (kkt_optimality_satisfied || cost_change_optimality_satisfied),
+      .solved = custom_termination_satisfied.value_or(kkt_optimality_satisfied),
       .stalled = merit_slope_too_small && !advance_barrier,
       .advance_barrier = advance_barrier,
   };
@@ -867,7 +841,7 @@ auto compute_search_direction(const Input &input, const Settings &settings,
                               Workspace &workspace)
     -> std::tuple<bool, const double *, const double *, const double *,
                   const double *, double, double, double, double, double,
-                  double, double, double, double, int> {
+                  double, double, double, int> {
   const int x_dim = input.dimensions.x_dim;
   const int s_dim = input.dimensions.s_dim;
   const int y_dim = input.dimensions.y_dim;
@@ -878,7 +852,6 @@ auto compute_search_direction(const Input &input, const Settings &settings,
   double max_constraint_violation = 0.0;
   double max_complementarity = 0.0;
   double kkt_error = 0.0;
-  double duality_gap = 0.0;
   double lin_sys_error = std::numeric_limits<double>::signaling_NaN();
 
   const double *s = workspace.vars.s;
@@ -975,7 +948,7 @@ auto compute_search_direction(const Input &input, const Settings &settings,
                            std::numeric_limits<double>::infinity(),
                            std::numeric_limits<double>::infinity(),
                            std::numeric_limits<double>::infinity(),
-                           std::numeric_limits<double>::infinity(), 0.0,
+                           std::numeric_limits<double>::infinity(),
                            lin_sys_error, num_regularization_increases);
   }
 
@@ -988,24 +961,6 @@ auto compute_search_direction(const Input &input, const Settings &settings,
                           const double, const double jacobian) {
                         rx[variable_index] += jacobian * bound_z[side_index];
                       });
-
-  if (std::isfinite(settings.termination.max_duality_gap)) {
-    const double *g = input.get_g();
-    duality_gap =
-        dot(workspace.vars.x, rx, x_dim) - dot(c, y, y_dim) - dot(g, z, s_dim);
-    for_each_bound_side(input, workspace.bound_sides, num_bound_sides,
-                        [&](const int side_index, const int variable_index,
-                            const double endpoint, const double jacobian) {
-                          duality_gap -= bound_constraint_value(
-                                             workspace.vars.x[variable_index],
-                                             endpoint, jacobian) *
-                                         bound_z[side_index];
-                        });
-    duality_gap = std::fabs(duality_gap);
-    if (std::isnan(duality_gap)) {
-      duality_gap = std::numeric_limits<double>::infinity();
-    }
-  }
 
   std::copy_n(c, y_dim, ry);
   std::copy_n(gps, s_dim, rz);
@@ -1217,7 +1172,7 @@ auto compute_search_direction(const Input &input, const Settings &settings,
   return std::make_tuple(
       true, dx, ds, dy, dz, current_merit_slope.total, alpha_s_max, alpha_z_max,
       dual_residual, max_constraint_violation, max_complementarity, kkt_error,
-      duality_gap, lin_sys_error, num_regularization_increases);
+      lin_sys_error, num_regularization_increases);
 }
 
 auto do_line_search(const Input &input, const Settings &settings,
@@ -1397,10 +1352,6 @@ auto check_settings(const Settings &settings) -> bool {
   const auto is_finite_positive = [](const double value) {
     return std::isfinite(value) && value > 0.0;
   };
-  const auto is_nonnegative_or_inf = [](const double value) {
-    return !std::isnan(value) && value >= 0.0;
-  };
-
   if (settings.max_iterations < 0 || settings.line_search.max_iterations < 0 ||
       settings.line_search.filter_min_total_line_search_iterations < 0 ||
       settings.num_iterative_refinement_steps < 0 ||
@@ -1411,9 +1362,6 @@ auto check_settings(const Settings &settings) -> bool {
   if (!is_finite_nonnegative(settings.termination.max_dual_residual) ||
       !is_finite_nonnegative(settings.termination.max_constraint_violation) ||
       !is_finite_nonnegative(settings.termination.max_complementarity_gap) ||
-      !is_nonnegative_or_inf(settings.termination.max_duality_gap) ||
-      !is_finite_nonnegative(settings.termination.max_cost_change) ||
-      !is_finite_nonnegative(settings.termination.max_relative_cost_change) ||
       !is_finite_nonnegative(
           settings.termination.max_suboptimal_constraint_violation) ||
       !is_finite_nonnegative(settings.termination.max_merit_slope)) {
@@ -1625,7 +1573,6 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
   int total_ls_iterations = 0;
   // A single poorly conditioned solve can produce a spurious flat direction.
   int num_consecutive_stalled_iterations = 0;
-  std::optional<double> previous_cost;
   workspace.filter.size = 0;
 
   for (int iteration = 0; iteration < settings.max_iterations; ++iteration) {
@@ -1641,7 +1588,7 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
 
     const auto [factorization_ok, dx, ds, dy, dz, merit_slope, alpha_s_max,
                 alpha_z_max, dual_residual, max_constraint_violation,
-                max_complementarity, kkt_error, duality_gap, lin_sys_error,
+                max_complementarity, kkt_error, lin_sys_error,
                 num_regularization_increases] =
         compute_search_direction(input, settings, mu, psi, tau, workspace);
 
@@ -1664,9 +1611,31 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
       };
     }
 
+    std::optional<bool> custom_termination_satisfied;
+    if (input.termination_callback) {
+      custom_termination_satisfied =
+          input.termination_callback(TerminationCallbackInput{
+              .objective = f0,
+              .x = workspace.vars.x,
+              .s = workspace.vars.s,
+              .y = workspace.vars.y,
+              .z = workspace.vars.z,
+              .bound_s = workspace.vars.bound_s,
+              .bound_z = workspace.vars.bound_z,
+              .objective_gradient = input.get_grad_f(),
+              .dual_residual = workspace.nrhs.x,
+              .equality_residual = input.get_c(),
+              .inequality_residual = workspace.miscellaneous_workspace.g_plus_s,
+              .bound_residual =
+                  workspace.miscellaneous_workspace.bound_g_plus_s,
+              .max_primal_violation = max_constraint_violation,
+              .max_dual_violation = dual_residual,
+              .max_complementarity = max_complementarity,
+          });
+    }
     const TerminationChecks termination = check_termination(
-        settings, previous_cost, f0, merit_slope, dual_residual,
-        max_constraint_violation, max_complementarity, duality_gap);
+        settings, merit_slope, dual_residual, max_constraint_violation,
+        max_complementarity, custom_termination_satisfied);
 
     const bool hit_ls_iteration_limit =
         total_ls_iterations >= settings.line_search.max_iterations;
@@ -1788,7 +1757,6 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
     }
 
     std::swap(workspace.vars, workspace.next_vars);
-    previous_cost = f0;
 
     if (input.timeout_callback()) {
       return Output{

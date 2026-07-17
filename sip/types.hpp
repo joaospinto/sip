@@ -1,7 +1,6 @@
 #pragma once
 
 #include <functional>
-#include <limits>
 #include <ostream>
 
 namespace sip {
@@ -78,15 +77,6 @@ struct TerminationSettings {
   double max_constraint_violation = 1e-8;
   // The maximum allowed complementarity gap max_i s_i z_i.
   double max_complementarity_gap = 1e-8;
-  // The maximum allowed QP-style duality gap. Disabled when infinite.
-  double max_duality_gap = std::numeric_limits<double>::infinity();
-  // Enable cost-change termination based on objective change and primal
-  // feasibility.
-  bool enable_cost_change_termination = false;
-  // The absolute objective-change tolerance for cost-change termination.
-  double max_cost_change = 1e-8;
-  // The relative objective-change tolerance for cost-change termination.
-  double max_relative_cost_change = 1e-8;
   // The maximum allowed constraint violation to declare suboptimality.
   double max_suboptimal_constraint_violation = 1e-2;
   // The maximum allowed merit function slope.
@@ -178,6 +168,29 @@ struct ModelCallbackInput {
   bool new_z;
 };
 
+struct TerminationCallbackInput {
+  // The current objective value.
+  double objective;
+  // Current primal, slack, and dual variables.
+  const double *x;
+  const double *s;
+  const double *y;
+  const double *z;
+  const double *bound_s;
+  const double *bound_z;
+  // Current objective gradient.
+  const double *objective_gradient;
+  // Current stationarity, equality, inequality, and variable-bound residuals.
+  const double *dual_residual;
+  const double *equality_residual;
+  const double *inequality_residual;
+  const double *bound_residual;
+  // Original-coordinate residual maxima.
+  double max_primal_violation;
+  double max_dual_violation;
+  double max_complementarity;
+};
+
 auto num_bound_sides(const double *lower_bounds, const double *upper_bounds,
                      int x_dim) -> int;
 
@@ -216,6 +229,9 @@ struct Input {
   using VectorGetter = std::function<const double *(void)>;
 
   using ModelCallback = std::function<void(const ModelCallbackInput &)>;
+
+  using TerminationCallback =
+      std::function<bool(const TerminationCallbackInput &)>;
 
   using TimeoutCallback = std::function<bool(void)>;
 
@@ -267,6 +283,8 @@ struct Input {
   VectorGetter get_g;
   // Callback for evaluating the user model.
   ModelCallback model_callback;
+  // Optional replacement for SIP's built-in successful-termination criterion.
+  TerminationCallback termination_callback{};
   // Callback for (optionally) declaring a timeout. Return true for timeout.
   TimeoutCallback timeout_callback;
   // Variable bounds. Null pointers denote unbounded sides; individual entries
