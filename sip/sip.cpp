@@ -1660,7 +1660,7 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
           kkt_error);
     }
 
-    if (termination.stalled) {
+    if (termination.stalled && !custom_termination_satisfied.has_value()) {
       ++num_consecutive_stalled_iterations;
     } else {
       num_consecutive_stalled_iterations = 0;
