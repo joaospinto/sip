@@ -343,6 +343,7 @@ auto check_termination(const Settings &settings, const double merit_slope,
                        const double dual_residual,
                        const double max_constraint_violation,
                        const double max_complementarity,
+                       const bool barrier_progress_satisfied,
                        const std::optional<bool> custom_termination_satisfied)
     -> TerminationChecks {
   const bool primal_feasibility_satisfied =
@@ -356,9 +357,9 @@ auto check_termination(const Settings &settings, const double merit_slope,
   const bool kkt_optimality_satisfied = dual_residual_satisfied &&
                                         primal_feasibility_satisfied &&
                                         complementarity_satisfied;
-  const bool advance_barrier =
-      merit_slope_too_small && primal_feasibility_satisfied &&
-      dual_residual_satisfied && !complementarity_satisfied;
+  const bool advance_barrier = merit_slope_too_small &&
+                               barrier_progress_satisfied &&
+                               !complementarity_satisfied;
 
   return TerminationChecks{
       .solved = custom_termination_satisfied.value_or(kkt_optimality_satisfied),
@@ -851,7 +852,7 @@ auto compute_search_direction(const Input &input, const Settings &settings,
   double dual_residual = 0.0;
   double max_constraint_violation = 0.0;
   double max_complementarity = 0.0;
-  double kkt_error = 0.0;
+  double scaled_kkt_error = 0.0;
   double lin_sys_error = std::numeric_limits<double>::signaling_NaN();
 
   const double *s = workspace.vars.s;
@@ -1075,12 +1076,10 @@ auto compute_search_direction(const Input &input, const Settings &settings,
   dual_residual =
       original_coordinate_max_abs(rx, input.residual_scaling.dual, x_dim);
 
-  kkt_error = dual_residual;
-  kkt_error = std::max(kkt_error, max_constraint_violation);
-  kkt_error = std::max(kkt_error, max_complementarity);
-  if (std::isnan(kkt_error)) {
-    kkt_error = std::numeric_limits<double>::infinity();
-  }
+  scaled_kkt_error = std::max(
+      {max_abs_or_inf(rx, x_dim), max_abs_or_inf(c, y_dim),
+       max_abs_or_inf(gps, s_dim), max_abs_or_inf(bound_gps, num_bound_sides),
+       max_complementarity});
 
   const auto alpha_s_max =
       std::min(get_fraction_to_boundary_step(s_dim, tau, workspace.vars.s,
@@ -1171,8 +1170,8 @@ auto compute_search_direction(const Input &input, const Settings &settings,
 
   return std::make_tuple(
       true, dx, ds, dy, dz, current_merit_slope.total, alpha_s_max, alpha_z_max,
-      dual_residual, max_constraint_violation, max_complementarity, kkt_error,
-      lin_sys_error, num_regularization_increases);
+      dual_residual, max_constraint_violation, max_complementarity,
+      scaled_kkt_error, lin_sys_error, num_regularization_increases);
 }
 
 auto do_line_search(const Input &input, const Settings &settings,
@@ -1588,9 +1587,13 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
 
     const auto [factorization_ok, dx, ds, dy, dz, merit_slope, alpha_s_max,
                 alpha_z_max, dual_residual, max_constraint_violation,
-                max_complementarity, kkt_error, lin_sys_error,
+                max_complementarity, scaled_kkt_error, lin_sys_error,
                 num_regularization_increases] =
         compute_search_direction(input, settings, mu, psi, tau, workspace);
+
+    const double scaled_dual_residual =
+        settings.logging.print_logs ? max_abs_or_inf(workspace.nrhs.x, x_dim)
+                                    : 0.0;
 
     const double inequality_residual_norm = std::sqrt(gsetgse + bound_gsetgse);
     const double ds_norm =
@@ -1633,9 +1636,12 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
               .max_complementarity = max_complementarity,
           });
     }
+    const bool barrier_progress_satisfied =
+        scaled_kkt_error <= settings.barrier.mu_update_kappa * mu;
     const TerminationChecks termination = check_termination(
         settings, merit_slope, dual_residual, max_constraint_violation,
-        max_complementarity, custom_termination_satisfied);
+        max_complementarity, barrier_progress_satisfied,
+        custom_termination_satisfied);
 
     const bool hit_ls_iteration_limit =
         total_ls_iterations >= settings.line_search.max_iterations;
@@ -1656,8 +1662,8 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
           iteration, "", input.get_f(), std::sqrt(ctc),
           inequality_residual_norm, "", norm(dx, x_dim), ds_norm,
           norm(dy, y_dim), dz_norm, mu, eta, tau, psi,
-          num_regularization_increases, max_complementarity, dual_residual,
-          kkt_error);
+          num_regularization_increases, max_complementarity,
+          scaled_dual_residual, scaled_kkt_error);
     }
 
     if (termination.stalled && !custom_termination_satisfied.has_value()) {
@@ -1740,8 +1746,8 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
           // clang-format on
           iteration, alpha, f0, std::sqrt(ctc), inequality_residual_norm, m0,
           norm(dx, x_dim), ds_norm, norm(dy, y_dim), dz_norm, mu, eta, tau, psi,
-          num_regularization_increases, max_complementarity, dual_residual,
-          kkt_error);
+          num_regularization_increases, max_complementarity,
+          scaled_dual_residual, scaled_kkt_error);
     }
 
     if (settings.line_search.enable_line_search_failures && !ls_succeeded) {
@@ -1770,7 +1776,7 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
       };
     }
 
-    if (kkt_error <= settings.barrier.mu_update_kappa * mu) {
+    if (barrier_progress_satisfied) {
       mu = std::max(mu * settings.barrier.mu_update_factor,
                     settings.barrier.mu_min);
     }
