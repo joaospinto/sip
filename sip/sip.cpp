@@ -123,6 +123,27 @@ auto mean_penalty_parameter(const Workspace &workspace, const int s_dim,
   return dim == 0 ? 0.0 : sum / dim;
 }
 
+void enforce_barrier_penalty_floor(const Settings &settings, const double mu,
+                                   const int s_dim, const int y_dim,
+                                   const int num_bound_sides,
+                                   Workspace &workspace) {
+  if (mu <= 0.0 || settings.penalty.min_penalty_barrier_product <= 0.0) {
+    return;
+  }
+  const double penalty_floor =
+      std::min(settings.penalty.min_penalty_barrier_product / mu,
+               settings.penalty.max_penalty_parameter);
+  const auto enforce_floor = [penalty_floor](double *penalties,
+                                             const int size) {
+    for (int i = 0; i < size; ++i) {
+      penalties[i] = std::max(penalties[i], penalty_floor);
+    }
+  };
+  enforce_floor(workspace.penalties.y, y_dim);
+  enforce_floor(workspace.penalties.z, s_dim);
+  enforce_floor(workspace.penalties.bound_z, num_bound_sides);
+}
+
 auto max_primal_violation(const Input &input, const Workspace &workspace,
                           const int num_bound_sides, const double *x)
     -> double {
@@ -1381,6 +1402,7 @@ auto check_settings(const Settings &settings) -> bool {
     return false;
   }
   if (!is_finite_positive(settings.penalty.initial_penalty_parameter) ||
+      !is_finite_nonnegative(settings.penalty.min_penalty_barrier_product) ||
       !is_finite_nonnegative(
           settings.penalty.min_acceptable_constraint_violation_ratio) ||
       !is_finite_positive(settings.penalty.penalty_parameter_increase_factor) ||
@@ -1575,6 +1597,8 @@ auto solve(const Input &input, const Settings &settings, Workspace &workspace)
   workspace.filter.size = 0;
 
   for (int iteration = 0; iteration < settings.max_iterations; ++iteration) {
+    enforce_barrier_penalty_floor(settings, mu, s_dim, y_dim, num_bound_sides,
+                                  workspace);
     const double f0 = input.get_f();
 
     const double ctc = squared_norm(input.get_c(), y_dim);
